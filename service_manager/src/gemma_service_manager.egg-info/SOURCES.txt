@@ -1,0 +1,17 @@
+pyproject.toml
+src/gemma_service_manager.egg-info/PKG-INFO
+src/gemma_service_manager.egg-info/SOURCES.txt
+src/gemma_service_manager.egg-info/dependency_links.txt
+src/gemma_service_manager.egg-info/entry_points.txt
+src/gemma_service_manager.egg-info/requires.txt
+src/gemma_service_manager.egg-info/top_level.txt
+src/service_manager/__init__.py
+src/service_manager/__main__.py
+src/service_manager/config.py
+src/service_manager/main.py
+src/service_manager/services/__init__.py
+src/service_manager/services/process_manager.py
+src/service_manager/ui/__init__.py
+src/service_manager/ui/log_panel.py
+src/service_manager/ui/main_window.py
+src/service_manager/ui/sidebar.py

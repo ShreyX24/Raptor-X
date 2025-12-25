@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "queue-service"
+version = "1.0.0"
+description = "OmniParser Queue Service - Middleware for handling multiple SUT requests with terminal dashboard"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "httpx>=0.25.0",
+    "pydantic>=2.0.0",
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[project.scripts]
+queue-service = "queue_service:main"
+queue-dashboard = "queue_service.dashboard.rich_ui:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/queue_service"]

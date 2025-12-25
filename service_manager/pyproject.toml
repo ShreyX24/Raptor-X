@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gemma-service-manager"
+version = "1.0.0"
+description = "GUI application to manage all Gemma services"
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6>=6.6.0",
+]
+
+[project.scripts]
+gemma-manager = "service_manager:main"
+
+[project.gui-scripts]
+gemma-manager-gui = "service_manager:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/service_manager"]

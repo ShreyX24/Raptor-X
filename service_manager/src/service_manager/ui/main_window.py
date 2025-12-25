@@ -1,0 +1,260 @@
+"""
+Main Window - Assembles all components
+"""
+
+from PySide6.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QSplitter, QToolBar, QStatusBar, QLabel, QMessageBox
+)
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QAction, QKeySequence
+
+from .sidebar import ServiceSidebar
+from .log_panel import LogPanel, LogPanelContainer
+from .setup_wizard import SetupWizard
+from .settings_dialog import SettingsDialog
+from ..services.process_manager import ProcessManager
+from ..config import SERVICES, apply_settings_to_services
+from ..settings import get_settings_manager
+
+
+class MainWindow(QMainWindow):
+    """Main application window"""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Gemma Service Manager")
+        self.resize(1400, 900)
+
+        # Initialize settings
+        self._init_settings()
+
+        self.process_manager = ProcessManager(self)
+        self._setup_ui()
+        self._setup_toolbar()
+        self._setup_statusbar()
+        self._setup_connections()
+        self._init_log_panels()
+        self._apply_service_settings()
+
+        self.status_timer = QTimer(self)
+        self.status_timer.timeout.connect(self._update_status_bar)
+        self.status_timer.start(1000)
+
+    def _init_settings(self):
+        """Initialize settings, show wizard if first run"""
+        settings = get_settings_manager()
+
+        if settings.is_first_run:
+            # Show setup wizard
+            wizard = SetupWizard(self)
+            if wizard.exec() == SetupWizard.Accepted:
+                settings.load()
+            else:
+                # User cancelled - create default config
+                settings.create_default_config(SERVICES)
+                settings.save()
+        else:
+            settings.load()
+
+        # Apply settings to service configs
+        apply_settings_to_services()
+
+    def _setup_ui(self):
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        layout = QHBoxLayout(central_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.main_splitter = QSplitter(Qt.Horizontal)
+        self.sidebar = ServiceSidebar()
+        self.sidebar.setMinimumWidth(180)
+        self.sidebar.setMaximumWidth(300)
+        self.log_container = LogPanelContainer()
+        self.main_splitter.addWidget(self.sidebar)
+        self.main_splitter.addWidget(self.log_container)
+        self.main_splitter.setSizes([200, 1200])
+        layout.addWidget(self.main_splitter)
+
+    def _setup_toolbar(self):
+        toolbar = QToolBar("Main Toolbar")
+        toolbar.setMovable(False)
+        self.addToolBar(toolbar)
+
+        self.start_all_action = QAction("Start All", self)
+        self.start_all_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        self.start_all_action.triggered.connect(self._start_all_services)
+        toolbar.addAction(self.start_all_action)
+
+        self.stop_all_action = QAction("Stop All", self)
+        self.stop_all_action.setShortcut(QKeySequence("Ctrl+Shift+X"))
+        self.stop_all_action.triggered.connect(self._stop_all_services)
+        toolbar.addAction(self.stop_all_action)
+
+        self.restart_all_action = QAction("Restart All", self)
+        self.restart_all_action.setShortcut(QKeySequence("Ctrl+Shift+R"))
+        self.restart_all_action.triggered.connect(self._restart_all_services)
+        toolbar.addAction(self.restart_all_action)
+
+        toolbar.addSeparator()
+
+        self.clear_logs_action = QAction("Clear All Logs", self)
+        self.clear_logs_action.triggered.connect(self._clear_all_logs)
+        toolbar.addAction(self.clear_logs_action)
+
+        toolbar.addSeparator()
+
+        self.settings_action = QAction("Settings", self)
+        self.settings_action.setShortcut(QKeySequence("Ctrl+,"))
+        self.settings_action.triggered.connect(self._show_settings)
+        toolbar.addAction(self.settings_action)
+
+    def _setup_statusbar(self):
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+        self.status_label = QLabel("Ready")
+        self.running_label = QLabel("0/0 services running")
+        self.ports_label = QLabel("")
+        self.status_bar.addWidget(self.status_label)
+        self.status_bar.addPermanentWidget(self.ports_label)
+        self.status_bar.addPermanentWidget(self.running_label)
+
+    def _setup_connections(self):
+        self.process_manager.output_received.connect(self._on_output_received)
+        self.process_manager.error_received.connect(self._on_error_received)
+        self.process_manager.status_changed.connect(self._on_status_changed)
+        self.sidebar.service_start_requested.connect(self._start_service)
+        self.sidebar.service_stop_requested.connect(self._stop_service)
+        self.sidebar.service_restart_requested.connect(self._restart_service)
+        self.sidebar.settings_requested.connect(self._show_settings)
+        self.log_container.start_requested.connect(self._start_service)
+        self.log_container.stop_requested.connect(self._stop_service)
+        self.log_container.restart_requested.connect(self._restart_service)
+
+    def _init_log_panels(self):
+        for config in SERVICES:
+            # Only add panels for enabled services
+            if config.enabled:
+                self.log_container.add_panel(config.name, config.display_name)
+        self.log_container.arrange_panels()
+
+    def _on_output_received(self, service_name: str, text: str):
+        panel = self.log_container.get_panel(service_name)
+        if panel:
+            panel.append_output(text)
+
+    def _on_error_received(self, service_name: str, text: str):
+        panel = self.log_container.get_panel(service_name)
+        if panel:
+            panel.append_error(text)
+
+    def _on_status_changed(self, service_name: str, status: str):
+        self.sidebar.update_status(service_name, status)
+        panel = self.log_container.get_panel(service_name)
+        if panel:
+            panel.set_status(status)
+        self._update_status_bar()
+
+    def _start_service(self, service_name: str):
+        self.status_label.setText(f"Starting {service_name}...")
+        self.process_manager.start_service(service_name)
+
+    def _stop_service(self, service_name: str):
+        self.status_label.setText(f"Stopping {service_name}...")
+        self.process_manager.stop_service(service_name)
+
+    def _restart_service(self, service_name: str):
+        self.status_label.setText(f"Restarting {service_name}...")
+        self.process_manager.restart_service(service_name)
+
+    def _start_selected(self):
+        service = self.sidebar.get_selected_service()
+        if service:
+            self._start_service(service)
+
+    def _stop_selected(self):
+        service = self.sidebar.get_selected_service()
+        if service:
+            self._stop_service(service)
+
+    def _restart_selected(self):
+        service = self.sidebar.get_selected_service()
+        if service:
+            self._restart_service(service)
+
+    def _start_all_services(self):
+        self.status_label.setText("Starting all services...")
+        self.process_manager.start_all()
+
+    def _stop_all_services(self):
+        self.status_label.setText("Stopping all services...")
+        self.process_manager.stop_all()
+
+    def _restart_all_services(self):
+        self.status_label.setText("Restarting all services...")
+        self.process_manager.stop_all()
+        # Start all after a short delay
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(1000, self.process_manager.start_all)
+
+    def _clear_all_logs(self):
+        for panel in self.log_container.panels.values():
+            panel.clear_log()
+
+    def _apply_service_settings(self):
+        """Apply settings to all log panels and sidebar"""
+        for config in SERVICES:
+            # Update log panel
+            panel = self.log_container.get_panel(config.name)
+            if panel:
+                panel.set_host_port(config.host, config.port)
+                panel.set_remote(config.remote)
+
+            # Update sidebar
+            self.sidebar.update_host_port(config.name, config.host, config.port)
+
+    def _show_settings(self):
+        """Show settings dialog"""
+        dialog = SettingsDialog(self)
+        dialog.settings_changed.connect(self._on_settings_changed)
+        dialog.exec()
+
+    def _on_settings_changed(self):
+        """Handle settings change"""
+        # Reload and apply settings
+        apply_settings_to_services()
+        self._apply_service_settings()
+        self.sidebar.refresh_all()
+
+    def _update_status_bar(self):
+        running = self.process_manager.get_running_count()
+        total = self.process_manager.get_total_count()
+        self.running_label.setText(f"{running}/{total} services running")
+        ports = []
+        for config in SERVICES:
+            if self.process_manager.is_running(config.name) and config.port:
+                ports.append(f"{config.display_name}: {config.port}")
+        if ports:
+            self.ports_label.setText(" | ".join(ports[:4]))
+        else:
+            self.ports_label.setText("")
+        if running > 0:
+            self.status_label.setText("Services running")
+        else:
+            self.status_label.setText("Ready")
+
+    def closeEvent(self, event):
+        running = self.process_manager.get_running_count()
+        if running > 0:
+            reply = QMessageBox.question(
+                self,
+                "Stop Services?",
+                f"There are {running} services running. Stop before exiting?",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel
+            )
+            if reply == QMessageBox.Cancel:
+                event.ignore()
+                return
+            if reply == QMessageBox.Yes:
+                self.process_manager.stop_all()
+        event.accept()
