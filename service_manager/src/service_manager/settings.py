@@ -5,7 +5,7 @@ Settings Manager - JSON configuration for service manager
 import json
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import os
 
 
@@ -59,6 +59,29 @@ class Profile:
         )
 
 
+@dataclass
+class OmniParserServer:
+    """Configuration for an OmniParser server instance"""
+    name: str
+    url: str
+    enabled: bool = True
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "url": self.url,
+            "enabled": self.enabled,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "OmniParserServer":
+        return cls(
+            name=data.get("name", ""),
+            url=data.get("url", ""),
+            enabled=data.get("enabled", True),
+        )
+
+
 class SettingsManager:
     """Manages JSON configuration for the service manager"""
 
@@ -66,6 +89,7 @@ class SettingsManager:
         self._config: Dict[str, Any] = {}
         self._services: Dict[str, ServiceSettings] = {}
         self._profiles: Dict[str, Profile] = {}
+        self._omniparser_servers: List[OmniParserServer] = []
         self._active_profile: str = "local"
         self._loaded = False
 
@@ -100,6 +124,12 @@ class SettingsManager:
             for name, data in self._config.get("profiles", {}).items():
                 self._profiles[name] = Profile.from_dict(name, data)
 
+            # Parse OmniParser servers
+            self._omniparser_servers = [
+                OmniParserServer.from_dict(s)
+                for s in self._config.get("omniparser_servers", [])
+            ]
+
             self._active_profile = self._config.get("active_profile", "local")
             self._loaded = True
             return True
@@ -126,6 +156,9 @@ class SettingsManager:
                     name: profile.to_dict()
                     for name, profile in self._profiles.items()
                 },
+                "omniparser_servers": [
+                    server.to_dict() for server in self._omniparser_servers
+                ],
                 "active_profile": self._active_profile,
             }
 
@@ -206,6 +239,19 @@ class SettingsManager:
     def apply_wizard_config(self, service_settings: Dict[str, ServiceSettings]):
         """Apply configuration from setup wizard"""
         self._services.update(service_settings)
+
+    def get_omniparser_servers(self) -> List[OmniParserServer]:
+        """Get all configured OmniParser servers"""
+        return self._omniparser_servers.copy()
+
+    def set_omniparser_servers(self, servers: List[OmniParserServer]):
+        """Set the OmniParser server list"""
+        self._omniparser_servers = servers
+
+    def get_omniparser_urls_env(self) -> str:
+        """Get enabled servers as comma-separated URLs for OMNIPARSER_URLS env var"""
+        enabled = [s.url for s in self._omniparser_servers if s.enabled]
+        return ",".join(enabled) if enabled else ""
 
 
 # Global settings instance

@@ -13,6 +13,8 @@ from .sidebar import ServiceSidebar
 from .log_panel import LogPanel, LogPanelContainer
 from .setup_wizard import SetupWizard
 from .settings_dialog import SettingsDialog
+from .dashboard_panel import DashboardPanel
+from .flow_diagram import FlowDiagramContainer
 from ..services.process_manager import ProcessManager
 from ..config import SERVICES, apply_settings_to_services
 from ..settings import get_settings_manager
@@ -66,15 +68,62 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(central_widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+
         self.main_splitter = QSplitter(Qt.Horizontal)
+
+        # Sidebar
         self.sidebar = ServiceSidebar()
         self.sidebar.setMinimumWidth(180)
         self.sidebar.setMaximumWidth(300)
+
+        # Right panel with content splitter (dashboard + logs)
+        self.right_panel = QWidget()
+        right_layout = QVBoxLayout(self.right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
+
+        self.content_splitter = QSplitter(Qt.Vertical)
+
+        # Dashboard container (hidden by default)
+        self.dashboard_container = QWidget()
+        dashboard_layout = QHBoxLayout(self.dashboard_container)
+        dashboard_layout.setContentsMargins(4, 4, 4, 4)
+        dashboard_layout.setSpacing(4)
+
+        # Flow diagram
+        self.flow_diagram = FlowDiagramContainer()
+        self.flow_diagram.setMinimumWidth(350)
+
+        # Dashboard panel
+        self.dashboard_panel = DashboardPanel()
+        self.dashboard_panel.setMinimumWidth(500)
+
+        # Dashboard splitter for flow + stats
+        self.dashboard_splitter = QSplitter(Qt.Horizontal)
+        self.dashboard_splitter.addWidget(self.flow_diagram)
+        self.dashboard_splitter.addWidget(self.dashboard_panel)
+        self.dashboard_splitter.setSizes([400, 600])
+
+        dashboard_layout.addWidget(self.dashboard_splitter)
+        self.dashboard_container.setVisible(False)  # Hidden by default
+
+        # Log container
         self.log_container = LogPanelContainer()
+
+        self.content_splitter.addWidget(self.dashboard_container)
+        self.content_splitter.addWidget(self.log_container)
+        self.content_splitter.setSizes([350, 550])
+
+        right_layout.addWidget(self.content_splitter)
+
         self.main_splitter.addWidget(self.sidebar)
-        self.main_splitter.addWidget(self.log_container)
+        self.main_splitter.addWidget(self.right_panel)
         self.main_splitter.setSizes([200, 1200])
+
         layout.addWidget(self.main_splitter)
+
+        # Track dashboard visibility state
+        self._dashboard_visible = False
 
     def _setup_toolbar(self):
         toolbar = QToolBar("Main Toolbar")
@@ -104,6 +153,15 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
+        self.dashboard_action = QAction("Dashboard", self)
+        self.dashboard_action.setShortcut(QKeySequence("Ctrl+D"))
+        self.dashboard_action.setCheckable(True)
+        self.dashboard_action.setChecked(False)
+        self.dashboard_action.triggered.connect(self._toggle_dashboard_view)
+        toolbar.addAction(self.dashboard_action)
+
+        toolbar.addSeparator()
+
         self.settings_action = QAction("Settings", self)
         self.settings_action.setShortcut(QKeySequence("Ctrl+,"))
         self.settings_action.triggered.connect(self._show_settings)
@@ -123,6 +181,7 @@ class MainWindow(QMainWindow):
         self.process_manager.output_received.connect(self._on_output_received)
         self.process_manager.error_received.connect(self._on_error_received)
         self.process_manager.status_changed.connect(self._on_status_changed)
+        self.process_manager.status_changed.connect(self.flow_diagram.update_status)
         self.sidebar.service_start_requested.connect(self._start_service)
         self.sidebar.service_stop_requested.connect(self._stop_service)
         self.sidebar.service_restart_requested.connect(self._restart_service)
@@ -201,6 +260,47 @@ class MainWindow(QMainWindow):
         for panel in self.log_container.panels.values():
             panel.clear_log()
 
+    def _toggle_dashboard_view(self, checked: bool):
+        """Toggle dashboard visibility and adjust log panel layout"""
+        self._dashboard_visible = checked
+        self.dashboard_container.setVisible(checked)
+
+        if checked:
+            # Load OmniParser instances into flow diagram
+            settings = get_settings_manager()
+            omniparser_servers = settings.get_omniparser_servers()
+            instances = [{"name": s.name, "url": s.url, "enabled": s.enabled} for s in omniparser_servers]
+            self.flow_diagram.set_omniparser_instances(instances)
+
+            # Start dashboard refresh
+            self.dashboard_panel.start_refresh()
+            # Collapse frontend log panels to header only
+            self._collapse_frontend_panels()
+        else:
+            # Stop dashboard refresh to save resources
+            self.dashboard_panel.stop_refresh()
+            # Restore frontend panels
+            self._expand_frontend_panels()
+
+    def _collapse_frontend_panels(self):
+        """Collapse frontend log panels to header only when dashboard is shown"""
+        frontend_services = ["gemma-frontend", "pm-frontend"]
+        for name in frontend_services:
+            panel = self.log_container.get_panel(name)
+            if panel:
+                # Hide the log text area, keep header visible
+                panel.log_text.setVisible(False)
+                panel.setMaximumHeight(45)
+
+    def _expand_frontend_panels(self):
+        """Restore frontend log panels to full size"""
+        frontend_services = ["gemma-frontend", "pm-frontend"]
+        for name in frontend_services:
+            panel = self.log_container.get_panel(name)
+            if panel:
+                panel.log_text.setVisible(True)
+                panel.setMaximumHeight(16777215)  # Qt default max
+
     def _apply_service_settings(self):
         """Apply settings to all log panels and sidebar"""
         for config in SERVICES:
@@ -225,6 +325,13 @@ class MainWindow(QMainWindow):
         apply_settings_to_services()
         self._apply_service_settings()
         self.sidebar.refresh_all()
+
+        # Update flow diagram if dashboard is visible
+        if self._dashboard_visible:
+            settings = get_settings_manager()
+            omniparser_servers = settings.get_omniparser_servers()
+            instances = [{"name": s.name, "url": s.url, "enabled": s.enabled} for s in omniparser_servers]
+            self.flow_diagram.set_omniparser_instances(instances)
 
     def _update_status_bar(self):
         running = self.process_manager.get_running_count()

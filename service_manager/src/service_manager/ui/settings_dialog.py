@@ -9,10 +9,11 @@ from PySide6.QtWidgets import (
     QGroupBox, QFormLayout, QListWidget, QListWidgetItem,
     QMessageBox, QInputDialog, QTextEdit
 )
+from PySide6.QtGui import QColor
 from PySide6.QtCore import Qt, Signal
 
 from ..config import SERVICES
-from ..settings import ServiceSettings, Profile, get_settings_manager
+from ..settings import ServiceSettings, Profile, OmniParserServer, get_settings_manager
 
 
 class ServicesTab(QWidget):
@@ -318,6 +319,181 @@ class ProfilesTab(QWidget):
         return self.profile_combo.currentText()
 
 
+class OmniParserServerDialog(QDialog):
+    """Dialog for adding/editing an OmniParser server"""
+
+    def __init__(self, parent=None, server: OmniParserServer = None):
+        super().__init__(parent)
+        self.server = server
+        self.setWindowTitle("Edit Server" if server else "Add Server")
+        self.setMinimumWidth(400)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QFormLayout(self)
+
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("e.g., GPU Server 1")
+        self.url_edit = QLineEdit()
+        self.url_edit.setPlaceholderText("e.g., http://192.168.1.100:8000")
+        self.enabled_check = QCheckBox("Enabled")
+        self.enabled_check.setChecked(True)
+
+        if self.server:
+            self.name_edit.setText(self.server.name)
+            self.url_edit.setText(self.server.url)
+            self.enabled_check.setChecked(self.server.enabled)
+
+        layout.addRow("Name:", self.name_edit)
+        layout.addRow("URL:", self.url_edit)
+        layout.addRow("", self.enabled_check)
+
+        btn_layout = QHBoxLayout()
+        cancel_btn = QPushButton("Cancel")
+        ok_btn = QPushButton("OK")
+        cancel_btn.clicked.connect(self.reject)
+        ok_btn.clicked.connect(self._validate_and_accept)
+        btn_layout.addStretch()
+        btn_layout.addWidget(cancel_btn)
+        btn_layout.addWidget(ok_btn)
+        layout.addRow(btn_layout)
+
+    def _validate_and_accept(self):
+        """Validate input before accepting"""
+        name = self.name_edit.text().strip()
+        url = self.url_edit.text().strip()
+
+        if not name:
+            QMessageBox.warning(self, "Validation Error", "Name is required.")
+            return
+        if not url:
+            QMessageBox.warning(self, "Validation Error", "URL is required.")
+            return
+        if not url.startswith("http://") and not url.startswith("https://"):
+            QMessageBox.warning(self, "Validation Error", "URL must start with http:// or https://")
+            return
+
+        self.accept()
+
+    def get_server(self) -> OmniParserServer:
+        return OmniParserServer(
+            name=self.name_edit.text().strip(),
+            url=self.url_edit.text().strip(),
+            enabled=self.enabled_check.isChecked(),
+        )
+
+
+class OmniParserServersTab(QWidget):
+    """Tab for managing OmniParser server instances"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._servers = []
+        self._setup_ui()
+        self._load_servers()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Description
+        desc = QLabel(
+            "Configure OmniParser servers for the Queue Service.\n"
+            "Enabled servers are passed via OMNIPARSER_URLS environment variable."
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #888; margin-bottom: 10px;")
+        layout.addWidget(desc)
+
+        # Server list
+        self.server_list = QListWidget()
+        self.server_list.setSelectionMode(QListWidget.SingleSelection)
+        self.server_list.itemSelectionChanged.connect(self._on_selection_changed)
+        self.server_list.itemDoubleClicked.connect(self._edit_server)
+        layout.addWidget(self.server_list)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+
+        self.add_btn = QPushButton("Add")
+        self.add_btn.clicked.connect(self._add_server)
+        btn_layout.addWidget(self.add_btn)
+
+        self.edit_btn = QPushButton("Edit")
+        self.edit_btn.clicked.connect(self._edit_server)
+        self.edit_btn.setEnabled(False)
+        btn_layout.addWidget(self.edit_btn)
+
+        self.remove_btn = QPushButton("Remove")
+        self.remove_btn.clicked.connect(self._remove_server)
+        self.remove_btn.setEnabled(False)
+        btn_layout.addWidget(self.remove_btn)
+
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
+
+    def _load_servers(self):
+        """Load servers from settings"""
+        settings = get_settings_manager()
+        self._servers = settings.get_omniparser_servers()
+        self._refresh_list()
+
+    def _refresh_list(self):
+        """Refresh the list display"""
+        self.server_list.clear()
+        for server in self._servers:
+            status = "\u2713" if server.enabled else "\u2717"  # checkmark or X
+            color = "#4ec9b0" if server.enabled else "#808080"
+            item = QListWidgetItem(f"{status} {server.name} - {server.url}")
+            item.setForeground(Qt.GlobalColor.white if server.enabled else Qt.GlobalColor.gray)
+            self.server_list.addItem(item)
+
+    def _on_selection_changed(self):
+        """Update buttons when selection changes"""
+        has_selection = self.server_list.currentRow() >= 0
+        self.edit_btn.setEnabled(has_selection)
+        self.remove_btn.setEnabled(has_selection)
+
+    def _add_server(self):
+        """Add a new server"""
+        dialog = OmniParserServerDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            server = dialog.get_server()
+            self._servers.append(server)
+            self._refresh_list()
+
+    def _edit_server(self):
+        """Edit selected server"""
+        row = self.server_list.currentRow()
+        if row < 0 or row >= len(self._servers):
+            return
+
+        server = self._servers[row]
+        dialog = OmniParserServerDialog(self, server)
+        if dialog.exec() == QDialog.Accepted:
+            self._servers[row] = dialog.get_server()
+            self._refresh_list()
+
+    def _remove_server(self):
+        """Remove selected server"""
+        row = self.server_list.currentRow()
+        if row < 0 or row >= len(self._servers):
+            return
+
+        server = self._servers[row]
+        reply = QMessageBox.question(
+            self, "Remove Server",
+            f"Remove '{server.name}'?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            self._servers.pop(row)
+            self._refresh_list()
+
+    def get_servers(self):
+        """Get current server list"""
+        return self._servers.copy()
+
+
 class SettingsDialog(QDialog):
     """Settings dialog with tabs"""
 
@@ -341,6 +517,9 @@ class SettingsDialog(QDialog):
 
         self.profiles_tab = ProfilesTab()
         self.tabs.addTab(self.profiles_tab, "Profiles")
+
+        self.omniparser_tab = OmniParserServersTab()
+        self.tabs.addTab(self.omniparser_tab, "OmniParser Servers")
 
         layout.addWidget(self.tabs)
 
@@ -383,5 +562,8 @@ class SettingsDialog(QDialog):
 
         # Save active profile
         settings.active_profile = self.profiles_tab.get_active_profile()
+
+        # Save OmniParser servers
+        settings.set_omniparser_servers(self.omniparser_tab.get_servers())
 
         settings.save()

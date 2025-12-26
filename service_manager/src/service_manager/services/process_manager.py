@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, QProcess, Signal, QProcessEnvironment, QTime
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PySide6.QtCore import QUrl
 from ..config import ServiceConfig, SERVICES
+from ..settings import get_settings_manager
 
 
 class ProcessManager(QObject):
@@ -72,6 +73,15 @@ class ProcessManager(QObject):
         env = QProcessEnvironment.systemEnvironment()
         for key, value in config.env_vars.items():
             env.insert(key, value)
+
+        # Special handling for queue-service: inject OmniParser server URLs
+        if name == "queue-service":
+            settings = get_settings_manager()
+            omniparser_urls = settings.get_omniparser_urls_env()
+            if omniparser_urls:
+                env.insert("OMNIPARSER_URLS", omniparser_urls)
+                self.output_received.emit(name, f"OmniParser URLs: {omniparser_urls}\n")
+
         process.setProcessEnvironment(env)
         
         process.readyReadStandardOutput.connect(lambda p=process, n=name: self._handle_stdout(n, p))

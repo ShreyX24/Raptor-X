@@ -298,13 +298,25 @@ class LogPanelContainer(QWidget):
         # Arrange in 2-column grid
         for i in range(0, len(panels), 2):
             row_splitter = QSplitter(Qt.Horizontal)
+            row_splitter.setChildrenCollapsible(False)
             row_splitter.addWidget(panels[i])
 
             if i + 1 < len(panels):
                 row_splitter.addWidget(panels[i + 1])
+                # Equal horizontal split
+                row_splitter.setSizes([500, 500])
+            else:
+                row_splitter.setSizes([1000])
 
             self.row_splitters.append(row_splitter)
             self.main_splitter.addWidget(row_splitter)
+
+        # Set equal heights for all rows
+        self.main_splitter.setChildrenCollapsible(False)
+        row_count = len(self.row_splitters)
+        if row_count > 0:
+            equal_height = 300  # Base height per row
+            self.main_splitter.setSizes([equal_height] * row_count)
 
     def get_panel(self, service_name: str) -> "LogPanel":
         """Get panel by service name"""
