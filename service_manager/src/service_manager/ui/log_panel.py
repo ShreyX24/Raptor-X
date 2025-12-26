@@ -295,6 +295,17 @@ class LogPanelContainer(QWidget):
         if not panels:
             return
 
+        # Clear existing row splitters
+        for splitter in self.row_splitters:
+            # Remove widgets from splitter (but don't delete - they're in self.panels)
+            while splitter.count() > 0:
+                widget = splitter.widget(0)
+                if widget:
+                    widget.setParent(None)
+            splitter.setParent(None)
+            splitter.deleteLater()
+        self.row_splitters.clear()
+
         # Arrange in 2-column grid
         for i in range(0, len(panels), 2):
             row_splitter = QSplitter(Qt.Horizontal)

@@ -195,6 +195,14 @@ class MainWindow(QMainWindow):
             # Only add panels for enabled services
             if config.enabled:
                 self.log_container.add_panel(config.name, config.display_name)
+
+        # Also add panels for OmniParser services
+        for name in self.process_manager.get_omniparser_services():
+            config = self.process_manager.configs.get(name)
+            if config:
+                self.log_container.add_panel(config.name, config.display_name)
+                self.sidebar.add_dynamic_service(config)
+
         self.log_container.arrange_panels()
 
     def _on_output_received(self, service_name: str, text: str):
@@ -315,22 +323,68 @@ class MainWindow(QMainWindow):
 
     def _show_settings(self):
         """Show settings dialog"""
+        # Capture current OmniParser config before dialog
+        settings = get_settings_manager()
+        old_omniparser_urls = settings.get_omniparser_urls_env()
+
         dialog = SettingsDialog(self)
-        dialog.settings_changed.connect(self._on_settings_changed)
+        dialog.settings_changed.connect(lambda: self._on_settings_changed(old_omniparser_urls))
         dialog.exec()
 
-    def _on_settings_changed(self):
+    def _on_settings_changed(self, old_omniparser_urls: str = ""):
         """Handle settings change"""
         # Reload and apply settings
         apply_settings_to_services()
         self._apply_service_settings()
+
+        # Update OmniParser instances in process manager
+        settings = get_settings_manager()
+        instance_count = settings.get_omniparser_instance_count()
+        old_omniparser = self.process_manager.get_omniparser_services()
+
+        self.process_manager.register_omniparser_instances(instance_count)
+
+        new_omniparser = self.process_manager.get_omniparser_services()
+
+        # Remove log panels and sidebar items for removed OmniParser services
+        for name in old_omniparser:
+            if name not in new_omniparser:
+                self.log_container.remove_panel(name)
+                self.sidebar.remove_dynamic_service(name)
+
+        # Add log panels and sidebar items for new OmniParser services
+        for name in new_omniparser:
+            if name not in old_omniparser:
+                config = self.process_manager.configs.get(name)
+                if config:
+                    self.log_container.add_panel(config.name, config.display_name)
+                    self.sidebar.add_dynamic_service(config)
+
+        # Rearrange panels and refresh sidebar
+        self.log_container.arrange_panels()
         self.sidebar.refresh_all()
+
+        # Check if OmniParser URLs changed - if so, restart queue-service
+        new_omniparser_urls = settings.get_omniparser_urls_env()
+        if old_omniparser_urls != new_omniparser_urls:
+            if self.process_manager.is_running("queue-service"):
+                panel = self.log_container.get_panel("queue-service")
+                if panel:
+                    panel.append_output(f"\n--- OmniParser URLs changed: {new_omniparser_urls or '(none)'} ---\n")
+                    panel.append_output("--- Restarting to apply new configuration ---\n")
+                self.process_manager.restart_service("queue-service")
 
         # Update flow diagram if dashboard is visible
         if self._dashboard_visible:
-            settings = get_settings_manager()
             omniparser_servers = settings.get_omniparser_servers()
-            instances = [{"name": s.name, "url": s.url, "enabled": s.enabled} for s in omniparser_servers]
+            # If local instances are configured, show those instead
+            if instance_count > 0:
+                instances = [
+                    {"name": f"OmniParser {8000 + i}", "url": f"http://localhost:{8000 + i}", "enabled": True}
+                    for i in range(instance_count)
+                ]
+            else:
+                instances = [{"name": s.name, "url": s.url, "enabled": s.enabled} for s in omniparser_servers]
             self.flow_diagram.set_omniparser_instances(instances)
 
     def _update_status_bar(self):

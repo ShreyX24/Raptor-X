@@ -8,6 +8,11 @@ from typing import Optional, List
 
 BASE_DIR = Path("D:/Code/Gemma")
 
+# OmniParser configuration
+OMNIPARSER_DIR = Path("D:/Code/Gemma/Omniparser server/omnitool/omniparserserver")
+OMNIPARSER_BASE_PORT = 8000
+OMNIPARSER_MAX_INSTANCES = 5
+
 
 @dataclass
 class ServiceConfig:
@@ -136,3 +141,17 @@ def get_host_port_display(service: ServiceConfig) -> str:
     if service.port:
         return f"{service.host}:{service.port}"
     return service.host
+
+
+def create_omniparser_config(instance: int) -> ServiceConfig:
+    """Create config for an OmniParser instance (0-indexed)"""
+    port = OMNIPARSER_BASE_PORT + instance
+    return ServiceConfig(
+        name=f"omniparser-{port}",
+        display_name=f"OmniParser {port}",
+        command=["python", "-m", "omniparserserver", "--use_paddleocr", "--port", str(port)],
+        working_dir=OMNIPARSER_DIR,
+        port=port,
+        group="OmniParser",
+        enabled=True,
+    )

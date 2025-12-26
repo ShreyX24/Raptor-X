@@ -7,7 +7,7 @@ from typing import Dict, Optional
 from PySide6.QtCore import QObject, QProcess, Signal, QProcessEnvironment, QTimer
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PySide6.QtCore import QUrl
-from ..config import ServiceConfig, SERVICES
+from ..config import ServiceConfig, SERVICES, create_omniparser_config, OMNIPARSER_MAX_INSTANCES
 from ..settings import get_settings_manager
 
 
@@ -28,6 +28,10 @@ class ProcessManager(QObject):
         for config in SERVICES:
             self.register_service(config)
 
+        # Register OmniParser instances based on settings
+        settings = get_settings_manager()
+        self.register_omniparser_instances(settings.get_omniparser_instance_count())
+
         # Timer for health checks on remote services
         self.health_check_timer = QTimer(self)
         self.health_check_timer.timeout.connect(self._check_remote_services)
@@ -35,7 +39,39 @@ class ProcessManager(QObject):
     
     def register_service(self, config: ServiceConfig):
         self.configs[config.name] = config
-    
+
+    def unregister_service(self, name: str):
+        """Remove a service from the manager"""
+        # Stop the service first if running
+        if name in self.processes and self.processes[name].state() == QProcess.Running:
+            self.stop_service(name)
+        # Remove from configs
+        if name in self.configs:
+            del self.configs[name]
+        # Clean up remote status if any
+        if name in self.remote_statuses:
+            del self.remote_statuses[name]
+
+    def register_omniparser_instances(self, count: int):
+        """Register OmniParser instances based on settings.
+
+        Args:
+            count: Number of instances to register (0 = none, 1-5 = create that many)
+        """
+        # First, remove all existing omniparser-* services
+        omniparser_services = [name for name in self.configs if name.startswith("omniparser-")]
+        for name in omniparser_services:
+            self.unregister_service(name)
+
+        # Create and register new configs based on count
+        for i in range(count):
+            config = create_omniparser_config(i)
+            self.register_service(config)
+
+    def get_omniparser_services(self) -> list:
+        """Get list of registered OmniParser service names"""
+        return [name for name in self.configs if name.startswith("omniparser-")]
+
     def is_running(self, name: str) -> bool:
         return name in self.processes and self.processes[name].state() == QProcess.Running
     

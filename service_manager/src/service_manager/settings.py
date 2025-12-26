@@ -90,6 +90,7 @@ class SettingsManager:
         self._services: Dict[str, ServiceSettings] = {}
         self._profiles: Dict[str, Profile] = {}
         self._omniparser_servers: List[OmniParserServer] = []
+        self._omniparser_instance_count: int = 0  # 0 = disabled, 1-5 = local instances
         self._active_profile: str = "local"
         self._loaded = False
 
@@ -130,6 +131,9 @@ class SettingsManager:
                 for s in self._config.get("omniparser_servers", [])
             ]
 
+            # Parse OmniParser instance count
+            self._omniparser_instance_count = self._config.get("omniparser_instance_count", 0)
+
             self._active_profile = self._config.get("active_profile", "local")
             self._loaded = True
             return True
@@ -159,6 +163,7 @@ class SettingsManager:
                 "omniparser_servers": [
                     server.to_dict() for server in self._omniparser_servers
                 ],
+                "omniparser_instance_count": self._omniparser_instance_count,
                 "active_profile": self._active_profile,
             }
 
@@ -248,8 +253,26 @@ class SettingsManager:
         """Set the OmniParser server list"""
         self._omniparser_servers = servers
 
+    def get_omniparser_instance_count(self) -> int:
+        """Get the number of local OmniParser instances to manage"""
+        return self._omniparser_instance_count
+
+    def set_omniparser_instance_count(self, count: int):
+        """Set the number of local OmniParser instances to manage (0-5)"""
+        self._omniparser_instance_count = max(0, min(5, count))
+
     def get_omniparser_urls_env(self) -> str:
-        """Get enabled servers as comma-separated URLs for OMNIPARSER_URLS env var"""
+        """Get enabled servers as comma-separated URLs for OMNIPARSER_URLS env var.
+
+        If local instances are configured, generates localhost URLs for them.
+        Otherwise, uses manually configured server URLs.
+        """
+        # If local instances are configured, generate URLs for them
+        if self._omniparser_instance_count > 0:
+            urls = [f"http://localhost:{8000 + i}" for i in range(self._omniparser_instance_count)]
+            return ",".join(urls)
+
+        # Otherwise use manually configured servers
         enabled = [s.url for s in self._omniparser_servers if s.enabled]
         return ",".join(enabled) if enabled else ""
 

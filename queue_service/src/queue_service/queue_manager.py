@@ -97,16 +97,24 @@ class QueueStats:
 
 
 class QueueManager:
-    """Manages the request queue and forwards requests to OmniParser server."""
+    """Manages the request queue and forwards requests to OmniParser servers.
 
-    def __init__(self, target_url: str = None, timeout: int = None):
+    Supports multiple OmniParser servers with round-robin load balancing
+    and automatic failover for unhealthy servers.
+    """
+
+    def __init__(self, target_urls: List[str] = None, timeout: int = None):
         config = get_config()
-        self.target_url = target_url or config.omniparser_url
+        self.target_urls = target_urls or config.omniparser_urls
         self.timeout = timeout or config.request_timeout
         self.max_queue_size = config.max_queue_size
 
         self.request_queue: asyncio.Queue = None
         self.worker_task: Optional[asyncio.Task] = None
+
+        # Round-robin state
+        self._current_server_index = 0
+        self._server_health: Dict[str, bool] = {url: True for url in self.target_urls}
 
         # Statistics tracking
         self._stats = QueueStats()
@@ -121,7 +129,22 @@ class QueueManager:
         # Queue depth history for graphing
         self._queue_depth_history: deque = deque(maxlen=config.stats_history_size)
 
-        logger.info(f"QueueManager initialized with target: {self.target_url}")
+        logger.info(f"QueueManager initialized with {len(self.target_urls)} server(s): {self.target_urls}")
+
+    def _get_next_server(self) -> str:
+        """Round-robin server selection, skipping unhealthy servers."""
+        attempts = 0
+        while attempts < len(self.target_urls):
+            url = self.target_urls[self._current_server_index]
+            self._current_server_index = (self._current_server_index + 1) % len(self.target_urls)
+
+            if self._server_health.get(url, True):
+                return url
+            attempts += 1
+
+        # All unhealthy - try first server anyway
+        logger.warning("All OmniParser servers unhealthy, trying first server")
+        return self.target_urls[0]
 
     async def start(self):
         """Start the queue manager and worker."""
@@ -222,18 +245,30 @@ class QueueManager:
                 await asyncio.sleep(1)  # Avoid tight loop on errors
 
     async def _forward_to_omniparser(self, queued_request: QueuedRequest) -> Dict[str, Any]:
-        """Forward a request to the OmniParser server."""
+        """Forward a request to the next available OmniParser server."""
+        target_url = self._get_next_server()
+        logger.debug(f"Forwarding request {queued_request.request_id} to {target_url}")
+
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{self.target_url}/parse/",
-                json=queued_request.payload,
-                headers={"Content-Type": "application/json"},
-            )
+            try:
+                response = await client.post(
+                    f"{target_url}/parse/",
+                    json=queued_request.payload,
+                    headers={"Content-Type": "application/json"},
+                )
 
-            if response.status_code != 200:
-                raise Exception(f"OmniParser error {response.status_code}: {response.text}")
+                if response.status_code != 200:
+                    self._server_health[target_url] = False
+                    raise Exception(f"OmniParser error {response.status_code}: {response.text}")
 
-            return response.json()
+                # Mark server as healthy on success
+                self._server_health[target_url] = True
+                return response.json()
+
+            except httpx.ConnectError as e:
+                self._server_health[target_url] = False
+                logger.error(f"Connection failed to {target_url}: {e}")
+                raise
 
     async def enqueue_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Add a request to the queue and wait for its result."""
@@ -306,24 +341,34 @@ class QueueManager:
         """Get queue depth history for graphing."""
         return list(self._queue_depth_history)[-limit:]
 
-    async def health_check(self) -> Dict[str, Any]:
-        """Check health of the OmniParser server."""
-        try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                response = await client.get(f"{self.target_url}/probe")
-                response.raise_for_status()
-                return {
-                    "status": "healthy",
-                    "omniparser_server": self.target_url,
-                    "omniparser_response": response.json(),
-                }
-        except Exception as e:
-            logger.error(f"Health check failed: {e}")
-            return {
-                "status": "unhealthy",
-                "omniparser_server": self.target_url,
-                "error": str(e),
-            }
+    async def health_check(self) -> List[Dict[str, Any]]:
+        """Check health of all OmniParser servers."""
+        results = []
+        async with httpx.AsyncClient(timeout=5, follow_redirects=True) as client:
+            for url in self.target_urls:
+                try:
+                    # Use trailing slash - OmniParser requires it
+                    response = await client.get(f"{url}/probe/")
+                    response.raise_for_status()
+                    self._server_health[url] = True
+                    results.append({
+                        "url": url,
+                        "status": "healthy",
+                        "response": response.json(),
+                    })
+                except Exception as e:
+                    self._server_health[url] = False
+                    logger.error(f"Health check failed for {url}: {e}")
+                    results.append({
+                        "url": url,
+                        "status": "unhealthy",
+                        "error": str(e),
+                    })
+        return results
+
+    def get_server_health(self) -> Dict[str, bool]:
+        """Get current health status of all servers."""
+        return self._server_health.copy()
 
 
 # Global queue manager instance

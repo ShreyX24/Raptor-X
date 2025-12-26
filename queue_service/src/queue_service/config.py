@@ -4,7 +4,22 @@ Configuration for Queue Service.
 
 import os
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List
+
+
+def _parse_omniparser_urls() -> List[str]:
+    """Parse OmniParser URLs from environment.
+
+    Supports both OMNIPARSER_URLS (comma-separated list from Service Manager)
+    and OMNIPARSER_URL (single URL) for backwards compatibility.
+    """
+    # Check plural form first (from Service Manager)
+    urls_str = os.getenv("OMNIPARSER_URLS", "")
+    if urls_str:
+        return [url.strip() for url in urls_str.split(",") if url.strip()]
+    # Fall back to singular form
+    single = os.getenv("OMNIPARSER_URL", "http://localhost:8000")
+    return [single]
 
 
 @dataclass
@@ -15,8 +30,8 @@ class QueueServiceConfig:
     host: str = "0.0.0.0"
     port: int = 9000
 
-    # OmniParser target
-    omniparser_url: str = "http://localhost:8000"
+    # OmniParser targets (supports multiple servers for load balancing)
+    omniparser_urls: List[str] = field(default_factory=lambda: ["http://localhost:8000"])
 
     # Queue settings
     request_timeout: int = 120  # Timeout for OmniParser requests in seconds
@@ -36,7 +51,7 @@ class QueueServiceConfig:
         return cls(
             host=os.getenv("QUEUE_SERVICE_HOST", "0.0.0.0"),
             port=int(os.getenv("QUEUE_SERVICE_PORT", "9000")),
-            omniparser_url=os.getenv("OMNIPARSER_URL", "http://localhost:8000"),
+            omniparser_urls=_parse_omniparser_urls(),
             request_timeout=int(os.getenv("QUEUE_REQUEST_TIMEOUT", "120")),
             max_queue_size=int(os.getenv("QUEUE_MAX_SIZE", "100")),
             stats_history_size=int(os.getenv("QUEUE_STATS_HISTORY", "100")),

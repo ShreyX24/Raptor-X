@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QColor, QBrush, QIcon, QPixmap, QPainter, QFont
 
-from ..config import SERVICES
+from ..config import SERVICES, ServiceConfig
 
 
 class ServiceItemDelegate(QStyledItemDelegate):
@@ -39,6 +39,7 @@ class ServiceSidebar(QWidget):
         self.service_items = {}
         self.service_statuses = {}
         self.service_host_ports = {}
+        self._dynamic_configs = {}  # Store configs for dynamically added services
 
         self._setup_ui()
         self._populate_list()
@@ -130,9 +131,18 @@ class ServiceSidebar(QWidget):
         self.list_widget.addItem(item)
         self.service_items[config.name] = item
 
+    def _get_config(self, service_name: str) -> ServiceConfig:
+        """Get config for a service (static or dynamic)"""
+        # First check static SERVICES
+        config = next((c for c in SERVICES if c.name == service_name), None)
+        if config:
+            return config
+        # Then check dynamic configs
+        return self._dynamic_configs.get(service_name)
+
     def _update_item_text(self, item: QListWidgetItem, service_name: str):
         """Update item text with status dot and host:port"""
-        config = next((c for c in SERVICES if c.name == service_name), None)
+        config = self._get_config(service_name)
         if not config:
             return
 
@@ -206,7 +216,7 @@ class ServiceSidebar(QWidget):
             return
 
         # Check if service is remote
-        config = next((c for c in SERVICES if c.name == service_name), None)
+        config = self._get_config(service_name)
         is_remote = config.remote if config else False
 
         menu = QMenu(self)
@@ -240,3 +250,27 @@ class ServiceSidebar(QWidget):
         """Refresh all items"""
         for name, item in self.service_items.items():
             self._update_item_text(item, name)
+
+    def add_dynamic_service(self, config: ServiceConfig):
+        """Add a dynamically created service to the sidebar"""
+        if config.name in self.service_items:
+            return  # Already exists
+
+        self._dynamic_configs[config.name] = config
+        self._add_service_item(config)
+
+    def remove_dynamic_service(self, service_name: str):
+        """Remove a dynamically created service from the sidebar"""
+        if service_name not in self.service_items:
+            return
+
+        # Remove from list widget
+        item = self.service_items.pop(service_name)
+        row = self.list_widget.row(item)
+        if row >= 0:
+            self.list_widget.takeItem(row)
+
+        # Clean up data
+        self._dynamic_configs.pop(service_name, None)
+        self.service_statuses.pop(service_name, None)
+        self.service_host_ports.pop(service_name, None)

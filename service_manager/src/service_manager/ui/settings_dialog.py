@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QWidget, QTableWidget, QTableWidgetItem, QHeaderView,
     QLabel, QLineEdit, QCheckBox, QPushButton, QComboBox,
     QGroupBox, QFormLayout, QListWidget, QListWidgetItem,
-    QMessageBox, QInputDialog, QTextEdit
+    QMessageBox, QInputDialog, QTextEdit, QSpinBox, QFrame
 )
 from PySide6.QtGui import QColor
 from PySide6.QtCore import Qt, Signal
@@ -389,27 +389,67 @@ class OmniParserServersTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._servers = []
+        self._instance_count = 0
         self._setup_ui()
-        self._load_servers()
+        self._load_settings()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
 
+        # Local instances section
+        local_group = QGroupBox("Local OmniParser Instances")
+        local_layout = QVBoxLayout(local_group)
+
+        local_desc = QLabel(
+            "Start and manage local OmniParser instances on ports 8000-8004.\n"
+            "Set to 0 to disable local management and use remote servers instead."
+        )
+        local_desc.setWordWrap(True)
+        local_desc.setStyleSheet("color: #888;")
+        local_layout.addWidget(local_desc)
+
+        instance_layout = QHBoxLayout()
+        instance_layout.addWidget(QLabel("Number of instances:"))
+        self.instance_spin = QSpinBox()
+        self.instance_spin.setRange(0, 5)
+        self.instance_spin.setValue(0)
+        self.instance_spin.setToolTip("0 = disabled, 1-5 = start that many local OmniParser servers")
+        self.instance_spin.valueChanged.connect(self._on_instance_count_changed)
+        instance_layout.addWidget(self.instance_spin)
+        instance_layout.addStretch()
+        local_layout.addLayout(instance_layout)
+
+        self.instance_info = QLabel("")
+        self.instance_info.setStyleSheet("color: #4ec9b0;")
+        local_layout.addWidget(self.instance_info)
+
+        layout.addWidget(local_group)
+
+        # Separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(separator)
+
+        # Remote servers section
+        remote_group = QGroupBox("Remote OmniParser Servers")
+        remote_layout = QVBoxLayout(remote_group)
+
         # Description
         desc = QLabel(
-            "Configure OmniParser servers for the Queue Service.\n"
+            "Configure remote OmniParser servers (used when local instances = 0).\n"
             "Enabled servers are passed via OMNIPARSER_URLS environment variable."
         )
         desc.setWordWrap(True)
-        desc.setStyleSheet("color: #888; margin-bottom: 10px;")
-        layout.addWidget(desc)
+        desc.setStyleSheet("color: #888;")
+        remote_layout.addWidget(desc)
 
         # Server list
         self.server_list = QListWidget()
         self.server_list.setSelectionMode(QListWidget.SingleSelection)
         self.server_list.itemSelectionChanged.connect(self._on_selection_changed)
         self.server_list.itemDoubleClicked.connect(self._edit_server)
-        layout.addWidget(self.server_list)
+        remote_layout.addWidget(self.server_list)
 
         # Buttons
         btn_layout = QHBoxLayout()
@@ -429,7 +469,45 @@ class OmniParserServersTab(QWidget):
         btn_layout.addWidget(self.remove_btn)
 
         btn_layout.addStretch()
-        layout.addLayout(btn_layout)
+        remote_layout.addLayout(btn_layout)
+
+        layout.addWidget(remote_group)
+
+    def _load_settings(self):
+        """Load settings from settings manager"""
+        settings = get_settings_manager()
+        self._servers = settings.get_omniparser_servers()
+        self._instance_count = settings.get_omniparser_instance_count()
+        self.instance_spin.setValue(self._instance_count)
+        self._update_instance_info()
+        self._refresh_list()
+        self._update_remote_enabled()
+
+    def _on_instance_count_changed(self, value: int):
+        """Handle instance count spinbox change"""
+        self._instance_count = value
+        self._update_instance_info()
+        self._update_remote_enabled()
+
+    def _update_instance_info(self):
+        """Update the instance info label"""
+        if self._instance_count == 0:
+            self.instance_info.setText("Local management disabled - using remote servers")
+            self.instance_info.setStyleSheet("color: #888;")
+        else:
+            ports = ", ".join(str(8000 + i) for i in range(self._instance_count))
+            self.instance_info.setText(f"Will start {self._instance_count} instance(s) on port(s): {ports}")
+            self.instance_info.setStyleSheet("color: #4ec9b0;")
+
+    def _update_remote_enabled(self):
+        """Enable/disable remote server controls based on instance count"""
+        remote_enabled = self._instance_count == 0
+        self.server_list.setEnabled(remote_enabled)
+        self.add_btn.setEnabled(remote_enabled)
+        # edit and remove depend on selection too
+        if not remote_enabled:
+            self.edit_btn.setEnabled(False)
+            self.remove_btn.setEnabled(False)
 
     def _load_servers(self):
         """Load servers from settings"""
@@ -492,6 +570,10 @@ class OmniParserServersTab(QWidget):
     def get_servers(self):
         """Get current server list"""
         return self._servers.copy()
+
+    def get_instance_count(self) -> int:
+        """Get current instance count setting"""
+        return self._instance_count
 
 
 class SettingsDialog(QDialog):
@@ -563,7 +645,8 @@ class SettingsDialog(QDialog):
         # Save active profile
         settings.active_profile = self.profiles_tab.get_active_profile()
 
-        # Save OmniParser servers
+        # Save OmniParser servers and instance count
         settings.set_omniparser_servers(self.omniparser_tab.get_servers())
+        settings.set_omniparser_instance_count(self.omniparser_tab.get_instance_count())
 
         settings.save()

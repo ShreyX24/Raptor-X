@@ -43,7 +43,8 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     logger.info("Queue Service v1.0.0 - OmniParser Request Queue")
     logger.info("=" * 60)
-    logger.info(f"Target OmniParser server: {config.omniparser_url}")
+    logger.info(f"OmniParser servers ({len(config.omniparser_urls)}): {config.omniparser_urls}")
+    logger.info(f"Load balancing: round-robin")
     logger.info(f"Request timeout: {config.request_timeout}s")
     logger.info(f"Max queue size: {config.max_queue_size}")
     logger.info("=" * 60)
@@ -96,10 +97,10 @@ def main():
         help="Host to bind to (default: 0.0.0.0)"
     )
     parser.add_argument(
-        "--omniparser-url",
+        "--omniparser-urls",
         type=str,
-        default="http://localhost:8000",
-        help="OmniParser server URL (default: http://localhost:8000)"
+        default=None,
+        help="Comma-separated OmniParser server URLs (overrides OMNIPARSER_URLS env var)"
     )
     parser.add_argument(
         "--timeout",
@@ -117,11 +118,17 @@ def main():
 
     args = parser.parse_args()
 
-    # Update configuration
+    # Parse OmniParser URLs from CLI argument if provided
+    omniparser_urls = None
+    if args.omniparser_urls:
+        omniparser_urls = [url.strip() for url in args.omniparser_urls.split(",") if url.strip()]
+
+    # Update configuration (uses env vars if CLI args not provided)
+    base_config = QueueServiceConfig.from_env()
     config = QueueServiceConfig(
         host=args.host,
         port=args.port,
-        omniparser_url=args.omniparser_url,
+        omniparser_urls=omniparser_urls or base_config.omniparser_urls,
         request_timeout=args.timeout,
         log_level=args.log_level,
     )
@@ -131,7 +138,7 @@ def main():
     logging.getLogger().setLevel(getattr(logging, args.log_level))
 
     logger.info(f"Starting Queue Service on {args.host}:{args.port}")
-    logger.info(f"Forwarding to OmniParser at {args.omniparser_url}")
+    logger.info(f"OmniParser servers: {config.omniparser_urls}")
 
     uvicorn.run(
         app,
