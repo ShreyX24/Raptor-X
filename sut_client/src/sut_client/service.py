@@ -270,7 +270,8 @@ def create_app() -> Flask:
             "exe_path": "C:/path/to/game.exe",  # Optional: Direct exe path
             "path": "C:/path/to/game.exe",  # Optional: Legacy Gemma NetworkManager format
             "process_name": "game.exe",  # Optional: Process to detect
-            "force_relaunch": false  # Optional: Kill existing and relaunch
+            "force_relaunch": false,  # Optional: Kill existing and relaunch
+            "launch_args": "-benchmark test.xml"  # Optional: Command-line args for game
         }
         """
         try:
@@ -284,6 +285,7 @@ def create_app() -> Flask:
             process_name = data.get('process_name') or data.get('process_id')
             force_relaunch = data.get('force_relaunch', False)
             startup_wait = data.get('startup_wait', 30)  # Default 30 seconds
+            launch_args = data.get('launch_args')  # Command-line arguments for game
 
             # Handle legacy 'path' parameter - could be exe path or Steam App ID
             if not steam_app_id and not exe_path and legacy_path:
@@ -301,6 +303,9 @@ def create_app() -> Flask:
                     "message": "Either steam_app_id, exe_path, or path is required"
                 }), 400
 
+            if launch_args:
+                logger.info(f"Launch args provided: {launch_args}")
+
             # Map startup_wait to retry behavior
             # startup_wait / retry_interval = retry_count
             retry_interval = 10
@@ -312,6 +317,7 @@ def create_app() -> Flask:
                 process_name=process_name,
                 force_relaunch=force_relaunch,
                 settings=settings,
+                launch_args=launch_args,
                 retry_count=retry_count,
                 retry_interval=retry_interval
             )

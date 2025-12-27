@@ -23,7 +23,7 @@ class GameLauncher:
         self.network_manager = network_manager
         logger.info("GameLauncher initialized")
     
-    def launch(self, game_path: str, process_id: str = '', startup_wait: int = 15) -> bool:
+    def launch(self, game_path: str, process_id: str = '', startup_wait: int = 15, launch_args: str = None) -> bool:
         """
         Launch a game on the SUT.
 
@@ -31,6 +31,7 @@ class GameLauncher:
             game_path: Path to the game executable or Steam app ID on the SUT
             process_id: Optional process name to wait for after launch (e.g., 'Launcher', 'Game')
             startup_wait: Maximum seconds to wait for process to appear (default: 15)
+            launch_args: Optional command-line arguments for the game (e.g., "-benchmark test.xml")
 
         Returns:
             True if the game was successfully launched
@@ -40,10 +41,10 @@ class GameLauncher:
         """
         try:
             # Log launch parameters at debug level
-            logger.debug(f"Launch request - path: {game_path}, process_id: {process_id}, startup_wait: {startup_wait}")
-            
+            logger.debug(f"Launch request - path: {game_path}, process_id: {process_id}, startup_wait: {startup_wait}, args: {launch_args}")
+
             # Send launch command to SUT with process tracking metadata
-            response = self.network_manager.launch_game(game_path, process_id, startup_wait)
+            response = self.network_manager.launch_game(game_path, process_id, startup_wait, launch_args)
             
             # Log full response at debug level
             logger.debug(f"SUT launch response: {response}")

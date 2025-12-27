@@ -16,6 +16,7 @@ This folder contains implementation plans for major features and integrations.
 | [service-manager-dashboard-omniparser.md](./service-manager-dashboard-omniparser.md) | Done | PySide6 dashboard with flow diagram |
 | [service-manager-gui-initial.md](./service-manager-gui-initial.md) | Done | Initial Service Manager design |
 | [gemma-preset-manager-integration.md](./gemma-preset-manager-integration.md) | Done | SUT Discovery Service as gateway |
+| [performance-extraction-intel-tracing.md](./performance-extraction-intel-tracing.md) | Pending | Benchmark results + Intel PTAT/SocWatch tracing |
 
 ## Status Legend
 

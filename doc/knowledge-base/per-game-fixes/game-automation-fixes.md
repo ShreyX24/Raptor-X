@@ -15,6 +15,7 @@
   - [Horizon Zero Dawn Remastered](#5-horizon-zero-dawn-remastered)
   - [Civilization VI](#6-civilization-vi)
   - [Far Cry 6](#7-far-cry-6)
+  - [F1 24](#8-f1-24)
 - [Common Patterns & Lessons](#common-patterns--lessons)
 
 ---
@@ -50,6 +51,15 @@ These changes apply across all games and improve overall reliability.
 | Scroll Action Support | `type: scroll` with `direction` and `clicks` count | `815f7b0` |
 | Conditional Wait | Wait for element with `condition: element_appears` | Session fix |
 | Optional Steps | `optional: true` for steps that may not always appear | `11f4387` |
+| Launch Args Support | `metadata.launch_args` for command-line game arguments | Session fix |
+
+### Game Launch Improvements
+
+| Change | Description | Commit |
+|--------|-------------|--------|
+| Launch Args in YAML | `launch_args: "-benchmark test.xml"` passes CLI args to game | Session fix |
+| Steam CLI Launch | When `launch_args` provided with Steam app, uses `steam.exe -applaunch <appid> <args>` | Session fix |
+| DRM-Safe Launch | Steam CLI method properly handles DRM (direct exe launch fails for DRM games) | Session fix |
 
 ---
 
@@ -298,6 +308,80 @@ fallbacks:
 
 ---
 
+### 8. F1 24
+
+**Config File:** `f1-24.yaml`
+**Status:** Working
+**Fixed:** 2025-12-27
+
+#### Overview
+F1 24 uses a **command-line benchmark mode** instead of in-game UI navigation. The game accepts `-benchmark <config.xml>` argument to run automated benchmarks.
+
+#### Issues & Fixes
+
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| Need CLI benchmark mode | No in-game benchmark button - command-line only | Added `launch_args: "-benchmark example_benchmark.xml"` |
+| Direct exe launch fails | EA DRM requires Steam context | Use `steam.exe -applaunch` instead of direct exe |
+| Steam dialog appears | Custom launch args trigger confirmation | Added optional step to click "Continue" |
+| Process name detection | Need exact match | Set `process_id: "F1_24"` |
+
+#### Key Config Settings
+```yaml
+metadata:
+  game_name: "F1 24"
+  steam_app_id: '2488620'
+  path: "2488620"  # Steam App ID
+  process_id: "F1_24"
+  launch_args: "-benchmark example_benchmark.xml"  # CLI benchmark mode
+  startup_wait: 5  # Short - Steam dialog appears quickly
+  benchmark_duration: 400  # Benchmark takes ~350s
+
+steps:
+  1:
+    description: "Click Continue on Steam launch args dialog (optional)"
+    find:
+      type: "any"
+      text: "Continue"
+    action:
+      type: "click"
+    optional: true  # Dialog may not appear if Steam remembers choice
+
+  2:
+    description: "Wait for benchmark to complete (~350s + buffer)"
+    action:
+      type: "wait"
+      duration: 400
+```
+
+#### Benchmark XML Configuration
+The benchmark config is placed at: `<F1 24 install>/benchmark/example_benchmark.xml`
+
+```xml
+<config infinite_loop="false" hardware_settings="hardware_settings_config.xml" show_fps="false">
+  <track name="silverstone" laps="3" weather="wet" num_cars="20"
+         camera_mode="cycle" driver="max_verstappen" grid_pos="3" />
+</config>
+```
+
+#### Launch Flow
+1. Preset sync copies `example_benchmark.xml` to game's benchmark folder
+2. Game launches via: `steam.exe -applaunch 2488620 -benchmark example_benchmark.xml`
+3. Steam may show "Launch with custom arguments" dialog → click Continue (optional)
+4. Benchmark auto-starts (Silverstone wet, 3 laps)
+5. After ~350s, benchmark completes and game exits
+
+#### Technical Implementation
+Files modified for `launch_args` support:
+- `sut_client/src/sut_client/launcher.py` - Steam CLI launch with args
+- `sut_client/src/sut_client/service.py` - Accept `launch_args` in `/launch` endpoint
+- `Gemma/modules/network.py` - Pass `launch_args` to SUT
+- `Gemma/modules/game_launcher.py` - Accept `launch_args` parameter
+- `Gemma/backend/core/game_manager.py` - Load `launch_args` from YAML
+- `Gemma/backend/core/automation_orchestrator.py` - Pass `launch_args` to launcher
+
+---
+
 ## Common Patterns & Lessons
 
 ### 1. Startup Wait Times
@@ -310,6 +394,7 @@ Games have wildly different startup times. Document per-game:
 | HZD Remastered | 90s + conditional | Launcher + shaders |
 | BMW | 50s | Reasonable |
 | SOTR | 15s | Fast |
+| F1 24 | 5s | CLI benchmark mode, Steam dialog appears quickly |
 
 ### 2. Process Detection
 Use substring matching for safety:
@@ -385,3 +470,4 @@ steps:
 | Date | Changes |
 |------|---------|
 | 2025-12-27 | Initial document with 7 game fixes |
+| 2025-12-27 | Added F1 24 CLI benchmark mode, `launch_args` framework support |

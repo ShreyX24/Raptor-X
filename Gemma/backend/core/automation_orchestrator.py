@@ -212,11 +212,12 @@ class AutomationOrchestrator:
                 logger.info(f"Launching game: {game_path}")
 
                 try:
-                    # Pass process_id and startup_wait from game config
+                    # Pass process_id, startup_wait, and launch_args from game config
                     process_id = game_config.process_id or ''
                     startup_wait = game_config.startup_wait
-                    logger.info(f"Launch params - process_id: {process_id}, startup_wait: {startup_wait}s")
-                    game_launcher.launch(game_path, process_id=process_id, startup_wait=startup_wait)
+                    launch_args = game_config.launch_args
+                    logger.info(f"Launch params - process_id: {process_id}, startup_wait: {startup_wait}s, args: {launch_args}")
+                    game_launcher.launch(game_path, process_id=process_id, startup_wait=startup_wait, launch_args=launch_args)
                     logger.info(f"Game launched successfully: {game_path}")
                 except Exception as e:
                     error_msg = f"Failed to launch game '{game_config.name}': {str(e)}"

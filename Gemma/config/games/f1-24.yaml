@@ -1,0 +1,47 @@
+# F1 24 Benchmark Configuration
+# Command-line driven benchmark - launched with -benchmark argument
+# Requires clicking "Continue" on Steam's launch argument confirmation dialog
+
+metadata:
+  game_name: "F1 24"
+  preset_id: f1-24
+  steam_app_id: '2488620'
+  path: "2488620"
+  process_id: "F1_24"
+  launch_args: "-benchmark example_benchmark.xml"  # Command-line benchmark mode
+  version: "1.0"
+  benchmark_duration: 400  # Benchmark takes ~350s
+  startup_wait: 5  # Short wait - Steam dialog appears quickly
+  resolution: "1920x1080"
+  preset: "High"
+
+  # Benchmark results location
+  # Results are saved to: %USERPROFILE%\Documents\My Games\F1 24\benchmark\Benchmark_*.xml
+  # or OneDrive: %USERPROFILE%\OneDrive\Documents\My Games\F1 24\benchmark\Benchmark_*.xml
+  results_folder: "My Games\\F1 24\\benchmark"
+  results_pattern: "Benchmark_*.xml"
+
+steps:
+  1:
+    description: "Click Continue on Steam launch args dialog (optional)"
+    find:
+      type: "any"
+      text: "Continue"
+    action:
+      type: "click"
+    optional: true  # Dialog may not appear if Steam remembers choice
+    expected_delay: 5
+    timeout: 10
+
+  2:
+    description: "Wait for benchmark to complete (~350s + buffer)"
+    action:
+      type: "wait"
+      duration: 400
+    expected_delay: 0
+    timeout: 450
+
+fallbacks:
+  general:
+    action: "none"
+    max_retries: 0

@@ -30,6 +30,16 @@ from .steam import get_steam_install_path
 
 logger = logging.getLogger(__name__)
 
+
+def get_steam_executable_path() -> Optional[str]:
+    """Get the path to steam.exe"""
+    steam_path = get_steam_install_path()
+    if steam_path:
+        steam_exe = os.path.join(steam_path, "steam.exe")
+        if os.path.exists(steam_exe):
+            return steam_exe
+    return None
+
 # =============================================================================
 # Global State
 # =============================================================================
@@ -253,6 +263,7 @@ def launch_game(
     process_name: Optional[str] = None,
     force_relaunch: bool = False,
     settings: Optional[Any] = None,
+    launch_args: Optional[str] = None,  # Command-line arguments for the game
     # Legacy parameters for backwards compatibility
     game_path: Optional[str] = None,
     process_id: str = '',
@@ -272,6 +283,7 @@ def launch_game(
         process_name: Expected process name (optional)
         force_relaunch: Kill existing game before launch
         settings: SUTSettings instance for timeouts
+        launch_args: Command-line arguments to pass to the game (e.g., "-benchmark test.xml")
         game_path: Legacy param - Path to executable or Steam App ID
         process_id: Legacy param - Expected process name
         visible_timeout: Timeout for window visibility detection
@@ -372,21 +384,59 @@ def launch_game(
 
         # Launch game
         subprocess_status = "steam_protocol"
-        if steam_app_id:
-            # Launch via Steam protocol
+        if steam_app_id and not launch_args:
+            # Launch via Steam protocol (no args)
             steam_url = f"steam://rungameid/{steam_app_id}"
             logger.info(f"Launching game via Steam protocol: {steam_url}")
             os.startfile(steam_url)
             game_process = None
+        elif steam_app_id and launch_args:
+            # Launch via Steam CLI with arguments (handles DRM properly)
+            # steam.exe -applaunch <appid> <args>
+            import shlex
+            steam_exe = get_steam_executable_path()
+            if not steam_exe:
+                steam_exe = "steam.exe"  # Fallback, hope it's in PATH
+
+            # Parse launch_args if it's a string
+            if isinstance(launch_args, str):
+                args_list = shlex.split(launch_args)
+            else:
+                args_list = list(launch_args)
+
+            cmd = [steam_exe, "-applaunch", steam_app_id] + args_list
+            logger.info(f"Launching via Steam CLI with args: {cmd}")
+            game_process = subprocess.Popen(cmd)
+            subprocess_status = "steam_cli"
         else:
-            # Direct exe launch
+            # Direct exe launch (no Steam app ID, with optional args)
             logger.info(f"Launching game directly: {game_path}")
+            if launch_args:
+                logger.info(f"With launch arguments: {launch_args}")
+
             game_dir = os.path.dirname(game_path)
             try:
-                game_process = subprocess.Popen(game_path, cwd=game_dir)
+                if launch_args:
+                    # Build command with arguments
+                    import shlex
+                    # Handle both string and list args
+                    if isinstance(launch_args, str):
+                        cmd = [game_path] + shlex.split(launch_args)
+                    else:
+                        cmd = [game_path] + list(launch_args)
+                    logger.info(f"Launch command: {cmd}")
+                    game_process = subprocess.Popen(cmd, cwd=game_dir)
+                else:
+                    game_process = subprocess.Popen(game_path, cwd=game_dir)
+                subprocess_status = "direct_exe"
             except Exception as e:
                 logger.warning(f"Failed to launch with cwd, trying direct: {e}")
-                game_process = subprocess.Popen(game_path)
+                if launch_args:
+                    import shlex
+                    cmd = [game_path] + shlex.split(launch_args) if isinstance(launch_args, str) else [game_path] + list(launch_args)
+                    game_process = subprocess.Popen(cmd)
+                else:
+                    game_process = subprocess.Popen(game_path)
 
         # Log launch status
         if game_process:
