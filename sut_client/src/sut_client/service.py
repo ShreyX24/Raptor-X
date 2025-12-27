@@ -19,6 +19,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 from flask import Flask, request, jsonify, send_file
+from waitress import serve as waitress_serve
 from PIL import ImageGrab
 
 from .config import get_settings
@@ -635,6 +636,51 @@ def _parse_master_address(master_str: str) -> tuple:
         return master_str, 5000
 
 
+def _ensure_firewall_rule(port: int, rule_name: str = "SUT Client") -> bool:
+    """
+    Ensure Windows Firewall rule exists for the SUT client port.
+    Creates the rule if it doesn't exist (requires admin privileges).
+
+    Returns True if rule exists or was created, False otherwise.
+    """
+    import subprocess
+    import sys
+
+    # Check if rule already exists
+    check_cmd = f'netsh advfirewall firewall show rule name="{rule_name}" >nul 2>&1'
+    result = subprocess.run(check_cmd, shell=True, capture_output=True)
+
+    if result.returncode == 0:
+        logger.info(f"Firewall rule '{rule_name}' already exists")
+        return True
+
+    # Try to create the rule (requires admin)
+    logger.info(f"Creating firewall rule '{rule_name}' for port {port}...")
+
+    # Get the Python executable path for the rule
+    python_exe = sys.executable
+
+    # Create inbound rule for the port
+    create_cmd = (
+        f'netsh advfirewall firewall add rule name="{rule_name}" '
+        f'dir=in action=allow protocol=tcp localport={port} '
+        f'enable=yes profile=any'
+    )
+
+    result = subprocess.run(create_cmd, shell=True, capture_output=True, text=True)
+
+    if result.returncode == 0:
+        logger.info(f"Firewall rule created successfully for port {port}")
+        return True
+    else:
+        logger.warning(
+            f"Could not create firewall rule (needs admin). "
+            f"Run once as Administrator or manually add rule:\n"
+            f"  {create_cmd}"
+        )
+        return False
+
+
 def start_service(master_override: Optional[str] = None):
     """Start the SUT client service
 
@@ -654,6 +700,9 @@ def start_service(master_override: Optional[str] = None):
     if master_override:
         logger.info(f"Master Override: {master_override}")
     logger.info("=" * 60)
+
+    # Ensure firewall rule exists (avoids UAC prompt on subsequent runs)
+    _ensure_firewall_rule(settings.port, rule_name="SUT Client")
 
     # Create Flask app
     app = create_app()
@@ -742,13 +791,17 @@ def start_service(master_override: Optional[str] = None):
         discovery_thread.start()
         logger.info("UDP Discovery started - listening for Master broadcast")
 
-    # Run Flask app (blocking)
+    # Run Flask app with Waitress (production WSGI server)
+    # Waitress handles concurrent requests properly on Windows
     try:
-        app.run(
+        logger.info(f"Starting Waitress server on {settings.host}:{settings.port}")
+        waitress_serve(
+            app,
             host=settings.host,
             port=settings.port,
-            debug=False,
-            threaded=True
+            threads=8,  # Handle 8 concurrent requests
+            channel_timeout=120,  # 2 minute timeout for long-running requests
+            connection_limit=100,
         )
     finally:
         # Cleanup on shutdown

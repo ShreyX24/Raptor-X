@@ -1,5 +1,7 @@
 metadata:
   game_name: Cyberpunk2077
+  preset_id: cyberpunk-2077  # Maps to preset-manager folder name
+  steam_app_id: '1091500'
   version: '1.0'
   created_with: Katana Workflow Builder
   created_date: '2025-12-09 02:53:56'
@@ -18,7 +20,7 @@ steps:
     description: PRESS SPACE TO CONTINUE
     find:
       type: any
-      text: SPACE
+      text: CONTINUE
       text_match: contains
     action:
       type: key

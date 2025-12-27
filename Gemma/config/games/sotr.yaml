@@ -1,5 +1,6 @@
 metadata:
   game_name: Shadow of the Tomb Raider
+  preset_id: shadow-of-tomb-raider  # Maps to preset-manager folder name
   steam_app_id: '750920'
   version: '1.0'
   created_with: Katana Workflow Builder
@@ -9,26 +10,40 @@ metadata:
   process_name: sottr.exe
   benchmark_name: Built-in Benchmark
   benchmark_duration: 120
-  startup_wait: 30
+  startup_wait: 15
   resolution: 1920x1080
   preset: High
   graphics_api: DirectX 11
 steps:
   1:
-    description: click play
+    description: click Play button in launcher popup
     find:
-      type: any
+      type: text
       text: Play
-      text_match: contains
+      text_match: exact
     action:
       type: click
       button: left
       move_duration: 0.3
-      click_delay: 0.2
-    expected_delay: 19
-    timeout: 20
+      click_delay: 0.3
+    expected_delay: 25
+    timeout: 30
   2:
-    description: click options
+    description: click continue to enter game (optional)
+    find:
+      type: any
+      text: CONTINUE
+      text_match: contains
+    action:
+      type: click
+      button: left
+      move_duration: 0.5
+      click_delay: 0.5
+    optional: true
+    expected_delay: 5
+    timeout: 30
+  3:
+    description: click options in game menu
     find:
       type: any
       text: OPTIONS
@@ -36,67 +51,54 @@ steps:
     action:
       type: click
       button: left
-      move_duration: 0.3
-      click_delay: 0.2
-    expected_delay: 4
-    timeout: 20
-  3:
+      move_duration: 0.5
+      click_delay: 0.5
+    expected_delay: 5
+    timeout: 30
+  4:
     description: click on display and graphics
     find:
       type: any
-      text: GRAPHICS
+      text: DISPLAY
       text_match: contains
     action:
       type: click
       button: left
-      move_duration: 0.3
-      click_delay: 0.2
-    expected_delay: 4
-    timeout: 20
-  4:
+      move_duration: 0.5
+      click_delay: 0.5
+    expected_delay: 5
+    timeout: 30
+  5:
     description: click on Run Benchmark to start the benchmark
     find:
       type: any
-      text: '[R] RUN BENCHMARK'
+      text: RUN BENCHMARK
       text_match: contains
     action:
       type: click
       button: left
       move_duration: 0.3
-      click_delay: 0.2
+      click_delay: 0.3
     expected_delay: 4
     timeout: 20
-  5:
+  6:
     description: wait post benchmark - 210 seconds
     action:
       type: wait
       duration: 210
     expected_delay: 4
     timeout: 20
-  6:
-    description: 'Click on [Esc] Close to go back '
-    find:
-      type: any
-      text: '[Esc]CLOSE'
-      text_match: contains
-    action:
-      type: click
-      button: left
-      move_duration: 0.3
-      click_delay: 0.2
-    expected_delay: 4
-    timeout: 20
   7:
-    description: Click on Esc Close to go back
+    description: 'Click on Close to go back'
     find:
       type: any
-      text: '[ESC] CLOSE'
+      text: CLOSE
       text_match: contains
     action:
       type: click
       button: left
       move_duration: 0.3
-      click_delay: 0.2
+      click_delay: 0.3
     expected_delay: 4
     timeout: 20
   8:
@@ -109,14 +111,14 @@ steps:
       type: click
       button: left
       move_duration: 0.3
-      click_delay: 0.2
+      click_delay: 0.3
     expected_delay: 6
     timeout: 20
   9:
-    description: for hit yes at the quit game confirmation
+    description: confirm quit game
     find:
       type: any
-      text: Quit game?
+      text: Quit game
       text_match: contains
     action:
       type: key

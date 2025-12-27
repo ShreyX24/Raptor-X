@@ -1,5 +1,7 @@
 metadata:
   game_name: Red Dead Redemption 2
+  preset_id: red-dead-redemption-2  # Maps to preset-manager folder name
+  steam_app_id: '1174180'
   version: '1.0'
   created_with: Katana Workflow Builder
   created_date: '2025-12-14 14:31:48'

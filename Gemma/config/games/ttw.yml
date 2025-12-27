@@ -1,6 +1,8 @@
 # Tiny Tina's Wonderlands Benchmark Configuration
 metadata:
   game_name: "Tiny Tina's Wonderlands"
+  preset_id: tiny-tina-wonderlands  # Maps to preset-manager folder name
+  steam_app_id: '1286680'
   # ORIGINAL: path: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Tiny Tina's Wonderlands\\OakGame\\Binaries\\Win64\\Wonderlands.exe"
   path: "D:\\SteamLibrary\\steamapps\\common\\Tiny Tina's Wonderlands\\OakGame\\Binaries\\Win64\\Wonderlands.exe"  # TEMP: Updated to D: drive
   process_id: "Wonderlands"  # Actual process name in Task Manager click -> #pynput

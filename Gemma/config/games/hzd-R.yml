@@ -1,6 +1,8 @@
 # HorizonZeroDawnRemastered Benchmark Configuration
 metadata:
   game_name: "Horizon ZeroDawn Remastered"
+  preset_id: horizon-zero-dawn-remastered  # Maps to preset-manager folder name
+  steam_app_id: '2561580'
   # ORIGINAL: path: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Horizon Zero Dawn Remastered\\HorizonZeroDawnRemastered.exe"
   path: "D:\\SteamLibrary\\steamapps\\common\\Horizon Zero Dawn Remastered\\HorizonZeroDawnRemastered.exe"  # TEMP: Updated to D: drive
   process_id: "HorizonZeroDawnRemastered"  # Actual process name in Task Manager click -> #ctypes keys -> pydirectinput

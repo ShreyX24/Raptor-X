@@ -1,6 +1,8 @@
 # HITMAN 3 Benchmark Configuration
 metadata:
   game_name: "HITMAN 3"
+  preset_id: hitman-3-dubai  # Maps to preset-manager folder name
+  steam_app_id: '1659040'
   # ORIGINAL: path: "C:\\Program Files\\Epic Games\\HITMAN3\\Retail\\HITMAN3.exe"
   path: "D:\\Games\\steamapps\\common\\HITMAN 3\\Launcher.exe"  # TEMP: Updated to D: drive (assuming moved to Steam)
   process_id: "HITMAN 3"  # Please avoid using PaddleOCR for HITMAN 3

@@ -1,6 +1,8 @@
 # Far Cry 6 Benchmark Configuration
 metadata:
   game_name: "Far Cry 6"
+  preset_id: far-cry-6  # Maps to preset-manager folder name
+  steam_app_id: '2369390'
   # ORIGINAL: path: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Far Cry 6\\bin\\FarCry6.exe"
   path: "D:\\Games\\steamapps\\common\\Far Cry 6\\bin\\FarCry6.exe"  # TEMP: Updated to D: drive
   process_id: "FarCry® 6"  # Actual process name in Task Manager #click -> ctypes

@@ -1,5 +1,7 @@
 metadata:
   game_name: Tiny Tina Wonderlands
+  preset_id: tiny-tina-wonderlands  # Maps to preset-manager folder name
+  steam_app_id: '1286680'
   version: '1.0'
   created_with: Katana Workflow Builder
   created_date: '2025-11-02 01:34:47'

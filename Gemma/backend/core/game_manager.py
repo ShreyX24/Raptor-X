@@ -27,6 +27,8 @@ class GameConfig:
     yaml_path: str
     startup_wait: int = 30  # Startup wait time in seconds
     steam_app_id: Optional[str] = None  # Steam App ID for launching via Steam
+    process_id: Optional[str] = None  # Process name to wait for after launch
+    preset_id: Optional[str] = None  # Preset-manager game folder name (e.g., "cyberpunk-2077")
     last_modified: Optional[datetime] = None
 
 
@@ -130,6 +132,8 @@ class GameConfigManager:
                 yaml_path=yaml_file,
                 startup_wait=metadata.get('startup_wait', 30),
                 steam_app_id=metadata.get('steam_app_id'),  # Steam App ID for launching
+                process_id=metadata.get('process_id'),  # Process name to wait for after launch
+                preset_id=metadata.get('preset_id'),  # Preset-manager game folder name
                 last_modified=last_modified
             )
             

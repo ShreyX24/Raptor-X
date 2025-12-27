@@ -1,6 +1,8 @@
 # Sid Meier's Civilization VI Benchmark Configuration
 metadata:
   game_name: "Sid Meiers Civilization VI"
+  preset_id: sid-meier-civ-6  # Maps to preset-manager folder name
+  steam_app_id: '289070'
   # ORIGINAL: path: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Sid Meier's Civilization VI\\Base\\Binaries\\Win64Steam\\CivilizationVI_DX12.exe"
   path: "D:\\SteamLibrary\\steamapps\\common\\Sid Meier's Civilization VI\\Base\\Binaries\\Win64Steam\\CivilizationVI_DX12.exe"  # TEMP: Updated to D: drive
   process_id: "Sid Meier's Civilization VI (DX12)"

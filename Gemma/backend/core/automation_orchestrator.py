@@ -228,9 +228,9 @@ class AutomationOrchestrator:
                     raise RuntimeError(error_msg)
 
                 # Wait for game to fully initialize
-                # SUT returns after process detection, game needs a bit more time to load UI
-                # Keep this short - automation steps have their own timeouts
-                init_wait = 15  # Fixed 15s post-detection wait
+                # SUT returns after process detection, game needs more time to load UI
+                # Use the startup_wait from game config (e.g., 80s for Cyberpunk, 50s for Wukong)
+                init_wait = startup_wait if startup_wait else 30  # Use config value or default 30s
                 logger.info(f"Game process detected, waiting {init_wait}s for full game initialization...")
                 time.sleep(init_wait)
             
@@ -450,17 +450,31 @@ class AutomationOrchestrator:
         """
         import requests
 
-        # Get game short name from game_config name
-        # Convention: "Black Myth Wukong" -> "black-myth-wukong"
-        game_short_name = game_config.name.lower().replace(" ", "-").replace(":", "").replace("'", "")
+        # Use preset_id from YAML if available (preferred, explicit mapping)
+        if game_config.preset_id:
+            game_short_name = game_config.preset_id
+            logger.debug(f"Using preset_id from config: {game_short_name}")
+        else:
+            # Fallback: derive from game name
+            # Convention: "Black Myth Wukong" -> "black-myth-wukong"
+            game_short_name = game_config.name.lower().replace(" ", "-").replace(":", "").replace("'", "")
 
-        # Handle special cases for game name mapping
-        name_mappings = {
-            "black-myth-wukong": "black-myth-wukong",
-            "shadow-of-the-tomb-raider": "shadow-of-tomb-raider",
-            "red-dead-redemption-2": "red-dead-redemption-2",
-        }
-        game_short_name = name_mappings.get(game_short_name, game_short_name)
+            # Legacy name mappings for games without preset_id in YAML
+            name_mappings = {
+                "black-myth-wukong": "black-myth-wukong",
+                "shadow-of-the-tomb-raider": "shadow-of-tomb-raider",
+                "red-dead-redemption-2": "red-dead-redemption-2",
+                "cyberpunk2077": "cyberpunk-2077",
+                "mirage": "ac-mirage",
+                "hitman-3": "hitman-3-dubai",
+                "horizon-zerodawn-remastered": "horizon-zero-dawn-remastered",
+                "sid-meiers-civilization-vi": "sid-meier-civ-6",
+                "ffxiv-dawntrail": "final-fantasy-xiv-dawntrail",
+                "tiny-tinas-wonderlands": "tiny-tina-wonderlands",
+                "far-cry-6": "far-cry-6",
+            }
+            game_short_name = name_mappings.get(game_short_name, game_short_name)
+            logger.debug(f"Derived preset folder from name: {game_short_name}")
 
         # Default preset level (could be made configurable per game)
         preset_level = "ppg-high-1080p"
