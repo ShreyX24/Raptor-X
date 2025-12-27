@@ -391,13 +391,13 @@ Files modified for `launch_args` support:
 **Fixed:** 2025-12-28
 
 #### Overview
-RDR2 uses a unique **Rockstar Games menu system** with keyboard shortcuts (Z for Settings) and hold-key interactions (hold X to activate options). Screenshots require windowed mode due to exclusive fullscreen blocking capture.
+RDR2 uses a unique **Rockstar Games menu system** with keyboard shortcuts (Z for Settings) and hold-key interactions (hold X to activate options). Screenshots require borderless fullscreen (not exclusive fullscreen) to allow capture.
 
 #### Issues & Fixes
 
 | Issue | Root Cause | Fix |
 |-------|-----------|-----|
-| Black screenshots | Exclusive fullscreen blocks capture | Set `windowed value="1"` in preset XML |
+| Black screenshots | Exclusive fullscreen blocks capture | Set borderless fullscreen in preset XML |
 | Settings not opening | Main menu uses Z key, not click | Changed to `type: key` with `key: z` |
 | GRAPHICS submenu not entering | Clicking tile only highlights it | Added step to press Enter after clicking tile |
 | Benchmark not starting | Used mouse hold_click | Changed to `type: hold_key` with `key: x` for 2s |
@@ -466,17 +466,17 @@ steps:
       key: enter  # Enter confirms YES option
 ```
 
-#### Preset Fix (Windowed Mode)
+#### Preset Fix (Borderless Fullscreen)
 File: `preset-manager/configs/presets/red-dead-redemption-2/ppg-high-1080p/system.xml`
 ```xml
-<!-- Changed from 0 (exclusive fullscreen) to 1 (windowed) -->
-<windowed value="1" />
+<!-- Use borderless fullscreen for screenshot capture -->
+<windowed value="2" />  <!-- 0=exclusive fullscreen, 1=windowed, 2=borderless -->
 ```
 
 #### Technical Notes
 - **Menu navigation**: Z opens Settings, Enter enters submenus, X (hold) activates options
 - **Confirmation dialogs**: Both benchmark start and quit use ALERT dialog with Enter to confirm
-- **Screenshot capture**: Exclusive fullscreen (`windowed value="0"`) blocks Windows screenshot APIs - must use windowed mode
+- **Screenshot capture**: Exclusive fullscreen (`windowed value="0"`) blocks Windows screenshot APIs - use borderless (`value="2"`)
 - **Benchmark duration**: ~320 seconds (5.3 minutes)
 
 ---
