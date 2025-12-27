@@ -23,11 +23,15 @@ logger = logging.getLogger(__name__)
 
 
 class ParseRequest(BaseModel):
-    """OmniParser parse request model."""
+    """OmniParser parse request model with all OCR configuration options."""
     base64_image: str
-    box_threshold: float = 0.05
-    iou_threshold: float = 0.1
-    use_paddleocr: bool = True
+    box_threshold: float = 0.05      # YOLO detection confidence threshold
+    iou_threshold: float = 0.1       # IOU threshold for overlap removal
+    use_paddleocr: bool = True       # True = PaddleOCR, False = EasyOCR
+    text_threshold: float = 0.8      # OCR confidence threshold for text detection
+    use_local_semantics: bool = True # Use caption model for icon labeling
+    scale_img: bool = False          # Scale image before processing
+    imgsz: Optional[int] = None      # Image size for YOLO model (None = use original)
 
 
 @dataclass

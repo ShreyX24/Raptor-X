@@ -127,10 +127,12 @@ class NetworkManager:
             RequestException: If the request fails
         """
         try:
+            # Scroll actions with multiple clicks can take longer
+            timeout = 30 if action.get("type") == "scroll" else 10
             response = self.session.post(
                 f"{self.base_url}/action",
                 json=action,
-                timeout=10
+                timeout=timeout
             )
             response.raise_for_status()
             result = response.json()

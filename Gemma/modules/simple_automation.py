@@ -60,6 +60,17 @@ class SimpleAutomation:
 
         # Retry configuration
         self.retry_delay = self.config.get("metadata", {}).get("retry_delay", 2.0)
+
+        # OCR configuration (game-level defaults)
+        self.ocr_config = self.config.get("metadata", {}).get("ocr_config", {})
+        if self.ocr_config:
+            logger.info(f"Game-level OCR config: {self.ocr_config}")
+
+        # Track successful OCR configs per step for learning
+        self.successful_ocr_configs = {}
+
+        # Enable fallback OCR attempts
+        self.use_ocr_fallback = self.config.get("metadata", {}).get("use_ocr_fallback", True)
         
         # Optional step handlers
         self.optional_steps = self.config.get("optional_steps", {})
@@ -68,12 +79,26 @@ class SimpleAutomation:
         if self.process_id:
             logger.info(f"Process ID tracking enabled: {self.process_id}")
 
+        # Path to save successful OCR configs
+        self.ocr_config_cache_path = os.path.join(self.run_dir, "successful_ocr_configs.yaml")
+
         # Log SUT resolution for debugging
         try:
             resolution = self.network.get_resolution()
             logger.info(f"Detected SUT Resolution: {resolution['width']}x{resolution['height']}")
         except Exception as e:
             logger.warning(f"Could not determine SUT resolution: {e}")
+
+    def _save_successful_ocr_configs(self):
+        """Save successful OCR configs to file for future reference."""
+        if self.successful_ocr_configs:
+            try:
+                os.makedirs(os.path.dirname(self.ocr_config_cache_path), exist_ok=True)
+                with open(self.ocr_config_cache_path, 'w') as f:
+                    yaml.dump(self.successful_ocr_configs, f, default_flow_style=False)
+                logger.info(f"Saved successful OCR configs to {self.ocr_config_cache_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save OCR configs: {e}")
 
     def _execute_fallback(self):
         """Execute fallback action when step fails."""
@@ -169,9 +194,41 @@ class SimpleAutomation:
                     time.sleep(self.retry_delay)
                     continue
 
-                # Detect UI elements
+                # Detect UI elements with OCR config
                 try:
-                    bounding_boxes = self.vision_model.detect_ui_elements(screenshot_path)
+                    # Get step-level OCR config (overrides game-level)
+                    step_ocr_config = step.get("ocr_config", {})
+                    effective_ocr_config = {**self.ocr_config, **step_ocr_config}
+
+                    # Check if we have a cached successful config for this step
+                    step_key_for_cache = f"{self.game_name}_step_{current_step}"
+                    if step_key_for_cache in self.successful_ocr_configs:
+                        cached_config = self.successful_ocr_configs[step_key_for_cache]
+                        logger.info(f"Using cached OCR config for step {current_step}: {cached_config}")
+                        effective_ocr_config.update(cached_config)
+
+                    # Get target text for fallback matching
+                    target_text = step.get("find", {}).get("text", "")
+                    if isinstance(target_text, list):
+                        target_text = target_text[0] if target_text else ""
+
+                    # Try with fallback if enabled and we have a target
+                    if self.use_ocr_fallback and target_text and hasattr(self.vision_model, 'detect_ui_elements_with_fallback'):
+                        bounding_boxes, successful_config = self.vision_model.detect_ui_elements_with_fallback(
+                            screenshot_path,
+                            target_text,
+                            ocr_config=effective_ocr_config if effective_ocr_config else None
+                        )
+                        # Cache successful config for future runs
+                        if successful_config:
+                            self.successful_ocr_configs[step_key_for_cache] = successful_config
+                            logger.info(f"Cached successful OCR config for step {current_step}: {successful_config}")
+                    else:
+                        # Standard detection without fallback
+                        bounding_boxes = self.vision_model.detect_ui_elements(
+                            screenshot_path,
+                            ocr_config=effective_ocr_config if effective_ocr_config else None
+                        )
                 except Exception as e:
                     logger.error(f"Failed to detect UI elements: {str(e)}")
                     # Handle optional step failure - skip instead of failing automation
@@ -184,7 +241,7 @@ class SimpleAutomation:
                     retries += 1
                     if retries >= max_retries:
                         return False
-                    
+
                     logger.info(f"UI element detection failed, waiting {self.retry_delay}s before retry...")
                     time.sleep(self.retry_delay)
                     continue
@@ -230,9 +287,12 @@ class SimpleAutomation:
                     if not is_optional_step:
                          logger.info(f"Waiting {self.retry_delay}s before retry...")
                          time.sleep(self.retry_delay)
-                    
+
                     self._execute_fallback()
-                
+
+        # Save successful OCR configs for future reference
+        self._save_successful_ocr_configs()
+
         return current_step > len(steps)
     
     def _process_step_modular(self, step: Dict[str, Any], bounding_boxes: List[BoundingBox], step_num: int) -> bool:

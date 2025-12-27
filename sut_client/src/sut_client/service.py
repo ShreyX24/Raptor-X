@@ -420,12 +420,14 @@ def create_app() -> Flask:
                 result["message"] = f"Dragged from ({x}, {y}) to ({end_x}, {end_y})"
 
             elif action_type == 'scroll':
-                delta = data.get('delta', 3)
                 x = data.get('x')
                 y = data.get('y')
-                input_controller.scroll(delta, x, y)
-                direction = "up" if delta > 0 else "down"
-                result["message"] = f"Scrolled {direction} by {abs(delta)}"
+                direction = data.get('direction', 'down')
+                clicks = data.get('clicks', data.get('delta', 3))  # Support both clicks and delta
+                if x is None or y is None:
+                    return jsonify({"status": "error", "message": "scroll requires x and y coordinates"}), 400
+                input_controller.scroll(x, y, clicks, direction)
+                result["message"] = f"Scrolled {direction} {clicks} times at ({x}, {y})"
 
             elif action_type == 'key':
                 key = data.get('key')

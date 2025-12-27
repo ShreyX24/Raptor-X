@@ -24,7 +24,8 @@ async def parse_image(request: ParseRequest):
         OmniParser response with parsed_content_list and som_image_base64
     """
     try:
-        payload = request.model_dump()
+        # Exclude None values to avoid sending null to OmniParser for optional fields like imgsz
+        payload = request.model_dump(exclude_none=True)
         logger.info(f"Received parse request (image size: {len(payload['base64_image'])} bytes)")
 
         manager = get_queue_manager()

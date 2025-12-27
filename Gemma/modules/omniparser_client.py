@@ -10,7 +10,7 @@ import logging
 import requests
 import json
 import re
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass
 from io import BytesIO
 from PIL import Image
@@ -18,6 +18,29 @@ from PIL import Image
 from modules.gemma_client import BoundingBox  # Reuse the BoundingBox class
 
 logger = logging.getLogger(__name__)
+
+# Default OCR configuration
+DEFAULT_OCR_CONFIG = {
+    "box_threshold": 0.05,
+    "iou_threshold": 0.1,
+    "use_paddleocr": True,
+    "text_threshold": 0.8,
+    "use_local_semantics": True,
+    "scale_img": False,
+    "imgsz": None
+}
+
+# Alternative OCR configurations to try on failure
+FALLBACK_OCR_CONFIGS = [
+    # Try 1: Lower text threshold (more lenient OCR)
+    {"text_threshold": 0.5, "use_paddleocr": True},
+    # Try 2: EasyOCR instead of PaddleOCR
+    {"use_paddleocr": False, "text_threshold": 0.7},
+    # Try 3: Lower box threshold (detect more UI elements)
+    {"box_threshold": 0.03, "text_threshold": 0.6},
+    # Try 4: EasyOCR with very lenient threshold
+    {"use_paddleocr": False, "text_threshold": 0.5},
+]
 
 class OmniparserClient:
     """Client for the Omniparser API server with streamlined annotation handling."""
@@ -211,13 +234,21 @@ class OmniparserClient:
         
         return "\n".join(formatted)
     
-    def detect_ui_elements(self, image_path: str, annotation_path: str = None) -> List[BoundingBox]:
+    def detect_ui_elements(self, image_path: str, annotation_path: str = None, ocr_config: Dict[str, Any] = None) -> List[BoundingBox]:
         """
         Send an image to Omniparser and get UI element detections with streamlined annotation handling.
 
         Args:
             image_path: Path to the screenshot image
             annotation_path: Optional path to save server annotation (NEW STREAMLINED APPROACH)
+            ocr_config: Optional OCR configuration overrides. Supported keys:
+                - box_threshold: YOLO detection confidence (default: 0.05)
+                - iou_threshold: IOU threshold for overlap removal (default: 0.1)
+                - use_paddleocr: Use PaddleOCR vs EasyOCR (default: True)
+                - text_threshold: OCR confidence threshold (default: 0.8)
+                - use_local_semantics: Use caption model for icons (default: True)
+                - scale_img: Scale image before processing (default: False)
+                - imgsz: Image size for YOLO (default: None = use original)
 
         Returns:
             List of detected UI elements with bounding boxes
@@ -238,17 +269,29 @@ class OmniparserClient:
 
             # Encode the image
             base64_image = self._encode_image(image_path)
-            
-            # Prepare the payload for Omniparser with optimal thresholds
+
+            # Merge default config with provided overrides
+            effective_config = DEFAULT_OCR_CONFIG.copy()
+            if ocr_config:
+                effective_config.update(ocr_config)
+
+            # Prepare the payload for Omniparser
             payload = {
                 "base64_image": base64_image,
-                "box_threshold": 0.05,
-                "iou_threshold": 0.1,
-                "use_paddleocr": True
+                "box_threshold": effective_config.get("box_threshold", 0.05),
+                "iou_threshold": effective_config.get("iou_threshold", 0.1),
+                "use_paddleocr": effective_config.get("use_paddleocr", True),
+                "text_threshold": effective_config.get("text_threshold", 0.8),
+                "use_local_semantics": effective_config.get("use_local_semantics", True),
+                "scale_img": effective_config.get("scale_img", False),
             }
+            # Only include imgsz if explicitly set
+            if effective_config.get("imgsz") is not None:
+                payload["imgsz"] = effective_config["imgsz"]
 
             # Send the request to Omniparser API
-            logger.info(f"Sending request to {self.api_url}/parse/ with box_threshold=0.05, iou_threshold=0.1, use_paddleocr=True")
+            config_str = ", ".join(f"{k}={v}" for k, v in effective_config.items() if k != "imgsz" or v is not None)
+            logger.info(f"Sending request to {self.api_url}/parse/ with {config_str}")
             response = self.session.post(
                 f"{self.api_url}/parse/",
                 json=payload,
@@ -330,6 +373,55 @@ class OmniparserClient:
         else:
             logger.info("  No UI elements detected")
     
+    def detect_ui_elements_with_fallback(
+        self,
+        image_path: str,
+        target_text: str,
+        annotation_path: str = None,
+        ocr_config: Dict[str, Any] = None
+    ) -> Tuple[List[BoundingBox], Dict[str, Any]]:
+        """
+        Detect UI elements with automatic fallback to alternative OCR configs if target not found.
+
+        Args:
+            image_path: Path to the screenshot image
+            target_text: Text to search for in detected elements
+            annotation_path: Optional path to save server annotation
+            ocr_config: Initial OCR configuration (optional)
+
+        Returns:
+            Tuple of (bounding_boxes, successful_config)
+            If target found, returns the config that worked.
+            If not found after all attempts, returns last result with None config.
+        """
+        # Try with initial config (or defaults)
+        configs_to_try = [ocr_config or {}] + FALLBACK_OCR_CONFIGS
+        target_text_lower = target_text.lower() if target_text else ""
+
+        for i, config in enumerate(configs_to_try):
+            config_name = "default" if i == 0 else f"fallback_{i}"
+            try:
+                bounding_boxes = self.detect_ui_elements(image_path, annotation_path, config if config else None)
+
+                # Check if target text is found in any element
+                if target_text_lower:
+                    for bbox in bounding_boxes:
+                        if bbox.element_text and target_text_lower in bbox.element_text.lower():
+                            logger.info(f"Target '{target_text}' found with config: {config_name} -> {config}")
+                            return bounding_boxes, config
+                    logger.warning(f"Target '{target_text}' not found with {config_name} config, trying next...")
+                else:
+                    # No target specified, return first successful detection
+                    return bounding_boxes, config
+
+            except Exception as e:
+                logger.warning(f"Detection failed with {config_name} config: {e}")
+                continue
+
+        # All configs tried, return last result
+        logger.error(f"Target '{target_text}' not found after trying all OCR configs")
+        return bounding_boxes if 'bounding_boxes' in dir() else [], None
+
     def close(self):
         """Close the session."""
         self.session.close()
