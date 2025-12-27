@@ -1,32 +1,32 @@
 metadata:
   game_name: Red Dead Redemption 2
-  preset_id: red-dead-redemption-2  # Maps to preset-manager folder name
+  preset_id: red-dead-redemption-2
   steam_app_id: '1174180'
-  version: '1.0'
+  version: '1.3'
   created_with: Katana Workflow Builder
   created_date: '2025-12-14 14:31:48'
   path: C:\Program Files (x86)\Steam\steamapps\common\Red Dead Redemption 2\PlayRDR2.exe
   process_id: RDR2.exe
   process_name: RDR2.exe
-  benchmark_duration: 120
-  startup_wait: 100
+  benchmark_duration: 320
+  startup_wait: 90
   resolution: 1920x1080
   preset: High
-  graphics_api: DirectX 11
+  graphics_api: Vulkan
 steps:
   1:
-    description: NAVIGATE TO SETTINGS
+    description: Press Z to open Settings from main menu
     find:
-      type: icon
-      text: ''
+      type: any
+      text: Settings
       text_match: contains
     action:
       type: key
       key: z
-    expected_delay: 5
-    timeout: 20
+    expected_delay: 3
+    timeout: 30
   2:
-    description: NAVIGATE TO GRAPHICS SETTINGS
+    description: Click GRAPHICS tile in settings menu
     find:
       type: any
       text: GRAPHICS
@@ -34,24 +34,35 @@ steps:
     action:
       type: click
       button: left
-      move_duration: 0.2
+      move_duration: 0.5
       click_delay: 0.3
-    expected_delay: 10
+    expected_delay: 2
     timeout: 20
   3:
-    description: X LONG PRESS TO START BENCHMARK
+    description: Press Enter to enter GRAPHICS settings
     find:
       type: any
-      text: BENCHMARK
+      text: GRAPHICS
       text_match: contains
     action:
-      type: hold_click
-      button: left
-      duration: 5.0
-    expected_delay: 4
+      type: key
+      key: enter
+    expected_delay: 3
     timeout: 20
   4:
-    description: OK TO CONFIRM
+    description: Hold X to start Benchmark
+    find:
+      type: any
+      text: ["Run Benchmark", "BENCHMARK", "Benchmark"]
+      text_match: contains
+    action:
+      type: hold_key
+      key: x
+      duration: 2.0
+    expected_delay: 4
+    timeout: 30
+  5:
+    description: Confirm benchmark start
     find:
       type: any
       text: ALERT
@@ -61,40 +72,53 @@ steps:
       key: enter
     expected_delay: 4
     timeout: 20
-  5:
-    description: WAIT FOR BENCHMARK TO COMPLETE
+  6:
+    description: Wait for benchmark to complete
     action:
       type: wait
       duration: 320
     expected_delay: 4
-    timeout: 20
-  6:
-    description: EXIT BENCHMARK
+    timeout: 30
+  7:
+    description: Exit benchmark results
     find:
       type: any
-      text: BENCHMARKING
+      text: ["BENCHMARKING", "Benchmark", "Results"]
       text_match: contains
     action:
       type: key
       key: escape
     expected_delay: 4
-    timeout: 20
-  7:
-    description: QUIT GAME
+    timeout: 30
+  8:
+    description: Navigate to quit option
     find:
       type: any
-      text: QUIT
+      text: Settings
       text_match: contains
     action:
       type: key
       key: escape
-    expected_delay: 7
+    expected_delay: 3
     timeout: 20
-  8:
-    description: CONFIRM EXIT GAME
+  9:
+    description: Click Quit Game
     find:
       type: any
-      text: ALERT
+      text: ["Quit Game", "QUIT", "Quit"]
+      text_match: contains
+    action:
+      type: click
+      button: left
+      move_duration: 0.5
+      click_delay: 0.3
+    expected_delay: 3
+    timeout: 20
+  10:
+    description: Confirm exit
+    find:
+      type: any
+      text: ["YES", "Yes", "ALERT"]
       text_match: contains
     action:
       type: key
@@ -103,6 +127,7 @@ steps:
     timeout: 20
 fallbacks:
   general:
-    action: key
-    key: escape
-    expected_delay: 4
+    action: click
+    find:
+      text: BACK
+    expected_delay: 3

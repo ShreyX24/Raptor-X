@@ -1,6 +1,6 @@
 # Game Automation Fixes - Knowledge Base
 
-> **Last Updated:** 2025-12-27
+> **Last Updated:** 2025-12-28
 > **Purpose:** Document fixes applied to each game for E2E automation. Use this as reference for Workflow Builder and future game configs.
 
 ---
@@ -16,6 +16,7 @@
   - [Civilization VI](#6-civilization-vi)
   - [Far Cry 6](#7-far-cry-6)
   - [F1 24](#8-f1-24)
+  - [Red Dead Redemption 2](#9-red-dead-redemption-2)
 - [Common Patterns & Lessons](#common-patterns--lessons)
 
 ---
@@ -41,6 +42,7 @@ These changes apply across all games and improve overall reliability.
 | OCR Fallback System | Automatically tries 4 fallback configs when target text not found | `815f7b0` |
 | Multi-Text Matching | OR logic for text variations: `["Wukong", "WUKONG", "WUKONO"]` | `875b07e` |
 | Multi-Server Support | Round-robin load balancing across multiple OmniParser instances | `c95aa04` |
+| Empty Detection Handler | Returns empty results gracefully when no UI elements detected (fixes black screenshot crash) | Session fix |
 
 ### Automation Framework
 
@@ -382,6 +384,103 @@ Files modified for `launch_args` support:
 
 ---
 
+### 9. Red Dead Redemption 2
+
+**Config File:** `red-dead-redemption-2.yaml`
+**Status:** Working
+**Fixed:** 2025-12-28
+
+#### Overview
+RDR2 uses a unique **Rockstar Games menu system** with keyboard shortcuts (Z for Settings) and hold-key interactions (hold X to activate options). Screenshots require windowed mode due to exclusive fullscreen blocking capture.
+
+#### Issues & Fixes
+
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| Black screenshots | Exclusive fullscreen blocks capture | Set `windowed value="1"` in preset XML |
+| Settings not opening | Main menu uses Z key, not click | Changed to `type: key` with `key: z` |
+| GRAPHICS submenu not entering | Clicking tile only highlights it | Added step to press Enter after clicking tile |
+| Benchmark not starting | Used mouse hold_click | Changed to `type: hold_key` with `key: x` for 2s |
+| Exit confirmation failed | Tried clicking YES | Changed to `type: key` with `key: enter` |
+| Very long startup | RDR2 shader compilation | Set `startup_wait: 90s` |
+
+#### Key Config Settings
+```yaml
+metadata:
+  game_name: Red Dead Redemption 2
+  steam_app_id: '1174180'
+  process_id: RDR2.exe
+  startup_wait: 90  # Slow shader compilation
+  benchmark_duration: 320
+
+steps:
+  1:
+    description: Press Z to open Settings from main menu
+    find:
+      text: Settings
+    action:
+      type: key
+      key: z  # RDR2 uses keyboard shortcuts
+
+  2:
+    description: Click GRAPHICS tile in settings menu
+    find:
+      text: GRAPHICS
+    action:
+      type: click
+      button: left
+      move_duration: 0.5
+      click_delay: 0.3
+
+  3:
+    description: Press Enter to enter GRAPHICS settings
+    find:
+      text: GRAPHICS
+    action:
+      type: key
+      key: enter  # Clicking just highlights, Enter enters
+
+  4:
+    description: Hold X to start Benchmark
+    find:
+      text: ["Run Benchmark", "BENCHMARK", "Benchmark"]
+    action:
+      type: hold_key
+      key: x
+      duration: 2.0  # RDR2 requires hold interaction
+
+  5:
+    description: Confirm benchmark start
+    find:
+      text: ALERT
+    action:
+      type: key
+      key: enter
+
+  10:
+    description: Confirm exit
+    find:
+      text: ["YES", "Yes", "ALERT"]
+    action:
+      type: key
+      key: enter  # Enter confirms YES option
+```
+
+#### Preset Fix (Windowed Mode)
+File: `preset-manager/configs/presets/red-dead-redemption-2/ppg-high-1080p/system.xml`
+```xml
+<!-- Changed from 0 (exclusive fullscreen) to 1 (windowed) -->
+<windowed value="1" />
+```
+
+#### Technical Notes
+- **Menu navigation**: Z opens Settings, Enter enters submenus, X (hold) activates options
+- **Confirmation dialogs**: Both benchmark start and quit use ALERT dialog with Enter to confirm
+- **Screenshot capture**: Exclusive fullscreen (`windowed value="0"`) blocks Windows screenshot APIs - must use windowed mode
+- **Benchmark duration**: ~320 seconds (5.3 minutes)
+
+---
+
 ## Common Patterns & Lessons
 
 ### 1. Startup Wait Times
@@ -392,6 +491,7 @@ Games have wildly different startup times. Document per-game:
 | Far Cry 6 | 180s | Unskippable intro credits |
 | Tiny Tina | 100s | UE4 shader compilation |
 | HZD Remastered | 90s + conditional | Launcher + shaders |
+| RDR2 | 90s | Rockstar launcher + shader compilation |
 | BMW | 50s | Reasonable |
 | SOTR | 15s | Fast |
 | F1 24 | 5s | CLI benchmark mode, Steam dialog appears quickly |
@@ -471,3 +571,4 @@ steps:
 |------|---------|
 | 2025-12-27 | Initial document with 7 game fixes |
 | 2025-12-27 | Added F1 24 CLI benchmark mode, `launch_args` framework support |
+| 2025-12-28 | Added RDR2 with hold_key support, windowed mode fix, OmniParser empty detection handler |
