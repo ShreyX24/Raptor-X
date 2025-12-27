@@ -1,0 +1,387 @@
+# Game Automation Fixes - Knowledge Base
+
+> **Last Updated:** 2025-12-27
+> **Purpose:** Document fixes applied to each game for E2E automation. Use this as reference for Workflow Builder and future game configs.
+
+---
+
+## Table of Contents
+- [Framework-Level Changes](#framework-level-changes)
+- [Per-Game Fixes](#per-game-fixes)
+  - [Black Myth: Wukong](#1-black-myth-wukong-bmw)
+  - [Shadow of the Tomb Raider](#2-shadow-of-the-tomb-raider-sotr)
+  - [HITMAN 3](#3-hitman-3)
+  - [Tiny Tina Wonderlands](#4-tiny-tina-wonderlands)
+  - [Horizon Zero Dawn Remastered](#5-horizon-zero-dawn-remastered)
+  - [Civilization VI](#6-civilization-vi)
+  - [Far Cry 6](#7-far-cry-6)
+- [Common Patterns & Lessons](#common-patterns--lessons)
+
+---
+
+## Framework-Level Changes
+
+These changes apply across all games and improve overall reliability.
+
+### SUT Client Improvements
+
+| Change | Description | Commit |
+|--------|-------------|--------|
+| Waitress WSGI Server | Replaced Flask dev server with 8-thread Waitress for concurrent screenshot + control requests | `11f4387` |
+| Repeat Key Support | Added `count` + `interval` parameters for multiple key presses with delay | Session fix |
+| Key Press Duration | Increased from 50ms to 100ms for better game compatibility | Session fix |
+| Auto Firewall Rules | Creates Windows firewall rule on startup for remote access | `11f4387` |
+
+### OmniParser & OCR Improvements
+
+| Change | Description | Commit |
+|--------|-------------|--------|
+| Per-Request OCR Config | Each request can specify: `box_threshold`, `use_paddleocr`, `text_threshold`, etc. | `815f7b0` |
+| OCR Fallback System | Automatically tries 4 fallback configs when target text not found | `815f7b0` |
+| Multi-Text Matching | OR logic for text variations: `["Wukong", "WUKONG", "WUKONO"]` | `875b07e` |
+| Multi-Server Support | Round-robin load balancing across multiple OmniParser instances | `c95aa04` |
+
+### Automation Framework
+
+| Change | Description | Commit |
+|--------|-------------|--------|
+| Per-Game OCR Config | `metadata.ocr_config` for game-level OCR defaults | `815f7b0` |
+| Per-Step OCR Config | Override OCR settings at individual step level | `815f7b0` |
+| Scroll Action Support | `type: scroll` with `direction` and `clicks` count | `815f7b0` |
+| Conditional Wait | Wait for element with `condition: element_appears` | Session fix |
+| Optional Steps | `optional: true` for steps that may not always appear | `11f4387` |
+
+---
+
+## Per-Game Fixes
+
+### 1. Black Myth: Wukong (BMW)
+
+**Config File:** `black-myth-wukong.yaml`
+**Status:** Working
+**Commit:** `875b07e`
+
+#### Issues & Fixes
+
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| "Wukong" text not detected | OCR returns variations like "WUKONO" | Multi-text array: `["Wukong", "WUKONG", "WUKONO", "BLACK"]` |
+| Slow startup detection | Initial wait too long | Reduced `startup_wait` from 80s → 50s |
+| Step 9 quit confirmation fails | Text mismatch between "quit to desktop" variations | Multi-text: `["quit to desktop", "quit to the desktop"]` |
+| Verification failures | Type "icon" too restrictive | Changed verify type from `"icon"` → `"any"` |
+| Process not found | Full exe name not matching | Substring match: `b1` finds `b1-Win64-Shipping.exe` |
+
+#### Key Config Settings
+```yaml
+metadata:
+  startup_wait: 50
+  process_id: "b1"  # Substring match
+
+steps:
+  6:
+    verify_success:
+      - type: "any"
+        text: ["Wukong", "WUKONG", "WUKONO", "BLACK"]
+        text_match: "contains"
+  9:
+    find:
+      text: ["quit to desktop", "quit to the desktop"]
+```
+
+---
+
+### 2. Shadow of the Tomb Raider (SOTR)
+
+**Config File:** `shadow-of-the-tomb-raider.yaml`
+**Status:** Working
+**Commit:** `11f4387`
+
+#### Issues & Fixes
+
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| CONTINUE button sometimes appears | Save game state varies | Added `optional: true` step for CONTINUE |
+| Wrong menu flow | Original config skipped steps | Updated: Play → CONTINUE → OPTIONS → DISPLAY → RUN BENCHMARK |
+| Process detection fails | Full name not found | Changed to substring: `sottr` |
+| Benchmark not completing | Wait too short | Set duration to 210s |
+
+#### Key Config Settings
+```yaml
+metadata:
+  startup_wait: 15
+  process_id: sottr  # Substring match
+
+steps:
+  2:
+    description: "click continue to enter game (optional)"
+    find:
+      text: CONTINUE
+    optional: true  # Key: doesn't fail if not found
+```
+
+---
+
+### 3. HITMAN 3
+
+**Config File:** `hitman-3.yaml`
+**Status:** Working
+**Commit:** `815f7b0`
+
+#### Issues & Fixes
+
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| Stylized fonts not recognized | PaddleOCR can't read artistic fonts | Switched to EasyOCR: `use_paddleocr: false` |
+| Low text confidence | Threshold too high for stylized text | Lowered `text_threshold: 0.6` |
+| Inconsistent OCR results | No retry mechanism | Enabled `use_ocr_fallback: true` |
+| Benchmark option below viewport | Need to scroll to see it | Added scroll action: `direction: down, clicks: 5` |
+
+#### Key Config Settings
+```yaml
+metadata:
+  use_ocr_fallback: true
+  ocr_config:
+    use_paddleocr: false  # EasyOCR for stylized fonts
+    text_threshold: 0.6
+
+steps:
+  2:
+    description: "Scroll down to benchmark option"
+    find:
+      text: "Ray Tracing"  # Scroll anchor
+    action:
+      type: scroll
+      direction: down
+      clicks: 5
+    verify_success:
+      - text: "Start Benchmark"
+```
+
+---
+
+### 4. Tiny Tina Wonderlands
+
+**Config File:** `tiny-tina-wonderlands.yaml`
+**Status:** Working
+
+#### Issues & Fixes
+
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| Very slow game load | UE4 shader compilation | Set `startup_wait: 100s` |
+| Benchmark menu hard to find | Icon-based menu | Find by "Tent" icon text |
+| Post-benchmark stuck | Need to re-navigate | Re-enter OPTIONS → Tent → ESC → EXIT GAME |
+| Process detection | Need exact match | Set to `Wonderlands.exe` |
+
+#### Key Config Settings
+```yaml
+metadata:
+  startup_wait: 100
+  process_id: Wonderlands.exe
+
+steps:
+  2:
+    find:
+      text: Tent  # Benchmark menu icon
+  7:
+    action:
+      type: key
+      key: escape  # Return to main menu
+```
+
+---
+
+### 5. Horizon Zero Dawn Remastered
+
+**Config File:** `horizon-zero-dawn-remastered.yaml`
+**Status:** Working
+
+#### Issues & Fixes
+
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| Keys not registering | Game ignores ctypes SendInput | Use `methodType: "pydirectinput"` |
+| Very long initial load | Shader compilation + launcher | `startup_wait: 90s` + conditional wait up to 180s |
+| Launcher blocks direct exe | Steam DRM | Launch via Steam App ID: `"2561580"` |
+| Many confirmation dialogs | Complex exit flow | Back → Yes → Back → QUIT → Yes (5 steps) |
+
+#### Key Config Settings
+```yaml
+metadata:
+  startup_wait: 90
+  path: "2561580"  # Steam App ID, not exe path
+  process_id: "HorizonZeroDawnRemastered.exe"
+
+steps:
+  1:
+    action:
+      type: "key"
+      key: "enter"
+      methodType: "pydirectinput"  # Key: use DirectInput
+    expected_delay: 90  # Long wait after launcher
+```
+
+---
+
+### 6. Civilization VI
+
+**Config File:** `sid-meier-civ-6.yaml`
+**Status:** Working
+
+#### Issues & Fixes
+
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| Variable startup time | Different PC specs | Conditional wait for "CIVILIZATION" text (up to 180s) |
+| Click not registering | Need explicit input method | Set `clickType: "ctypes"` |
+| Multi-level menu | Benchmark inside submenu | Click Benchmark → CIVILIZATION → Gathering Storm AI |
+| Very long benchmark | AI benchmark is slow | Set wait to 300s (5 minutes) |
+
+#### Key Config Settings
+```yaml
+steps:
+  1:
+    description: "Conditional wait for element to appear"
+    action:
+      type: "wait"
+      condition: "element_appears"
+      max_wait: 180
+      check_interval: 5
+    verify_success:
+      - text: "CIVILIZATION"
+
+  2:
+    action:
+      type: "click"
+      clickType: "ctypes"  # Explicit input method
+```
+
+---
+
+### 7. Far Cry 6
+
+**Config File:** `far-cry-6.yaml`
+**Status:** Working
+**Fixed:** 2025-12-27
+
+#### Issues & Fixes
+
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| Automation starts during credits | Unskippable intro sequence | Increased `startup_wait: 180s` |
+| Process not detected | Window title has ® symbol | Use exe name `FarCry6.exe` not window title |
+| ESC key unreliable | Game input handling | Replaced ALL key presses with clicks |
+| Verification during loading | Loading screen has minimal UI | Increased `expected_delay: 5s` after Exit Benchmark |
+| Wrong screen after transition | Verified element exists on both screens | Verify for "OPTIONS" (unique to options menu) |
+| Fallback triggers loop | ESC behavior unpredictable | Fallback: click "BACK" instead of ESC key |
+
+#### Key Config Settings
+```yaml
+metadata:
+  startup_wait: 180  # Long unskippable credits
+  process_id: "FarCry6.exe"  # Not window title
+
+steps:
+  4:
+    find:
+      text: "Exit Benchmark"
+    verify_success:
+      - text: "OPTIONS"  # Unique to options menu
+    expected_delay: 5  # Wait for loading transition
+
+fallbacks:
+  general:
+    action: "click"  # Click, not key press
+    find:
+      text: "BACK"
+```
+
+---
+
+## Common Patterns & Lessons
+
+### 1. Startup Wait Times
+Games have wildly different startup times. Document per-game:
+
+| Game | startup_wait | Reason |
+|------|-------------|--------|
+| Far Cry 6 | 180s | Unskippable intro credits |
+| Tiny Tina | 100s | UE4 shader compilation |
+| HZD Remastered | 90s + conditional | Launcher + shaders |
+| BMW | 50s | Reasonable |
+| SOTR | 15s | Fast |
+
+### 2. Process Detection
+Use substring matching for safety:
+```yaml
+process_id: "b1"  # Finds b1-Win64-Shipping.exe
+process_id: "sottr"  # Finds sottr.exe
+```
+
+Avoid window titles with special characters (®, ™).
+
+### 3. OCR Configuration
+For stylized/artistic fonts, use EasyOCR:
+```yaml
+metadata:
+  use_ocr_fallback: true
+  ocr_config:
+    use_paddleocr: false
+    text_threshold: 0.6
+```
+
+### 4. Multi-Text Matching
+When OCR is inconsistent, provide alternatives:
+```yaml
+find:
+  text: ["Wukong", "WUKONG", "WUKONO", "BLACK"]
+```
+
+### 5. Click vs Key Press
+**Prefer clicks over key presses** - they're more reliable:
+- Far Cry 6: All clicks, no ESC
+- Most games: Click for navigation, key only when required
+
+### 6. Verification Strategy
+Verify for **unique elements** on the target screen:
+- Don't verify "BENCHMARK" if it exists on multiple screens
+- Verify "OPTIONS" which only exists on the options menu
+
+### 7. Loading Transitions
+After actions that trigger loading:
+```yaml
+expected_delay: 5  # Wait for loading to complete
+verify_success:
+  - text: "UNIQUE_TO_NEXT_SCREEN"
+```
+
+### 8. Optional Steps
+For elements that may or may not appear:
+```yaml
+steps:
+  2:
+    find:
+      text: "CONTINUE"
+    optional: true  # Won't fail if not found
+```
+
+---
+
+## Adding New Games Checklist
+
+1. **Identify process name** - Check Task Manager, use substring if needed
+2. **Measure startup time** - Time from launch to main menu
+3. **Map the UI flow** - Document each screen and required actions
+4. **Test OCR detection** - Use OmniParser to verify text is detected
+5. **Handle variations** - Add multi-text arrays for OCR inconsistencies
+6. **Add verifications** - Each step should verify it reached the right screen
+7. **Test fallbacks** - Ensure ESC or BACK recovers from errors
+8. **Run full automation** - Test complete flow 3+ times
+
+---
+
+## Revision History
+
+| Date | Changes |
+|------|---------|
+| 2025-12-27 | Initial document with 7 game fixes |

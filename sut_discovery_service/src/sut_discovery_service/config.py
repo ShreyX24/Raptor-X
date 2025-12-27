@@ -22,6 +22,7 @@ class DiscoveryServiceConfig:
 
     # Device settings
     offline_timeout: int = 30  # Seconds before device is marked offline
+    stale_device_timeout: int = 300  # Seconds before unpaired offline devices are removed (default 5 min)
     paired_devices_file: str = "paired_devices.json"
 
     # Network settings
@@ -41,6 +42,7 @@ class DiscoveryServiceConfig:
             udp_broadcast_interval=float(os.getenv("DISCOVERY_UDP_INTERVAL", "1.0")),
             sut_port=int(os.getenv("SUT_PORT", "8080")),
             offline_timeout=int(os.getenv("DISCOVERY_OFFLINE_TIMEOUT", "30")),
+            stale_device_timeout=int(os.getenv("DISCOVERY_STALE_TIMEOUT", "300")),
             paired_devices_file=os.getenv("PAIRED_DEVICES_FILE", "paired_devices.json"),
             log_level=os.getenv("DISCOVERY_LOG_LEVEL", "INFO"),
             log_file=os.getenv("DISCOVERY_LOG_FILE", "sut_discovery.log"),

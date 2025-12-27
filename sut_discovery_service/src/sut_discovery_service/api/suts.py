@@ -315,3 +315,106 @@ async def websocket_sut_endpoint(websocket: WebSocket, sut_id: str):
     finally:
         await ws_manager.disconnect(sut_id)
         registry.mark_device_offline(sut_id)
+
+
+# ==================== STALE DEVICE CLEANUP ENDPOINTS ====================
+
+class StaleSettingsRequest(BaseModel):
+    """Request to update stale device timeout"""
+    timeout_seconds: int
+
+
+class CleanupRequest(BaseModel):
+    """Request to cleanup stale devices with optional timeout override"""
+    timeout_seconds: Optional[int] = None
+
+
+@router.get("/suts/settings/stale-timeout")
+async def get_stale_timeout():
+    """Get the current stale device timeout setting."""
+    registry = get_device_registry()
+    return {
+        "stale_timeout_seconds": registry.get_stale_timeout(),
+        "stale_timeout_minutes": registry.get_stale_timeout() / 60
+    }
+
+
+@router.put("/suts/settings/stale-timeout")
+async def set_stale_timeout(request: StaleSettingsRequest):
+    """
+    Set the stale device timeout.
+
+    Unpaired offline devices will be removed after this timeout.
+    Set to 0 to disable automatic cleanup.
+    """
+    if request.timeout_seconds < 0:
+        raise HTTPException(status_code=400, detail="Timeout must be >= 0")
+
+    registry = get_device_registry()
+    old_timeout = registry.get_stale_timeout()
+    registry.set_stale_timeout(request.timeout_seconds)
+
+    return {
+        "success": True,
+        "old_timeout_seconds": old_timeout,
+        "new_timeout_seconds": request.timeout_seconds,
+        "message": f"Stale timeout updated from {old_timeout}s to {request.timeout_seconds}s"
+    }
+
+
+@router.post("/suts/cleanup")
+async def cleanup_stale_devices(request: Optional[CleanupRequest] = None):
+    """
+    Remove stale (unpaired + offline) devices.
+
+    Optionally provide a timeout_seconds to override the current setting.
+    Only removes unpaired devices that have been offline longer than the timeout.
+    """
+    registry = get_device_registry()
+    timeout = request.timeout_seconds if request and request.timeout_seconds else None
+
+    result = registry.remove_stale_devices(timeout)
+
+    return {
+        "success": True,
+        "removed_count": result["removed_count"],
+        "removed_devices": result["removed_devices"],
+        "timeout_used_seconds": result["timeout_used"]
+    }
+
+
+@router.delete("/suts/{unique_id}")
+async def delete_sut(unique_id: str, force: bool = Query(False, description="Force delete even if paired")):
+    """
+    Delete a specific SUT from the registry.
+
+    By default, paired devices cannot be deleted. Use force=true to override.
+    """
+    registry = get_device_registry()
+    device = registry.get_device_by_id(unique_id)
+
+    if not device:
+        raise HTTPException(status_code=404, detail=f"SUT {unique_id} not found")
+
+    if device.is_paired and not force:
+        raise HTTPException(
+            status_code=400,
+            detail=f"SUT {unique_id} is paired. Use force=true to delete paired devices."
+        )
+
+    # Remove from registry
+    if device.ip in registry.ip_to_id_mapping:
+        del registry.ip_to_id_mapping[device.ip]
+    del registry.devices[unique_id]
+
+    # If it was paired, save the updated list
+    if device.is_paired:
+        registry.save_paired_devices()
+
+    logger.info(f"Deleted SUT {unique_id} (force={force})")
+
+    return {
+        "success": True,
+        "message": f"SUT {unique_id} deleted successfully",
+        "was_paired": device.is_paired
+    }

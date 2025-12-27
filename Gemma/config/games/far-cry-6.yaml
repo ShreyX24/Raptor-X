@@ -1,33 +1,19 @@
-# Far Cry 6 Benchmark Configuration
+# Far Cry 6 Benchmark Configuration (Optimized)
 metadata:
   game_name: "Far Cry 6"
-  preset_id: far-cry-6  # Maps to preset-manager folder name
+  preset_id: far-cry-6
   steam_app_id: '2369390'
-  # ORIGINAL: path: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Far Cry 6\\bin\\FarCry6.exe"
-  path: "D:\\Games\\steamapps\\common\\Far Cry 6\\bin\\FarCry6.exe"  # TEMP: Updated to D: drive
-  process_id: "FarCry® 6"  # Actual process name in Task Manager #click -> ctypes
-  version: "1.0"
-  benchmark_duration: 280
-  startup_wait: 20
+  path: "D:\\Games\\steamapps\\common\\Far Cry 6\\bin\\FarCry6.exe"
+  process_id: "FarCry6.exe"
+  version: "2.0"
+  benchmark_duration: 70
+  startup_wait: 180
   resolution: "1920x1080"
   preset: "High"
 
-# Simple step-by-step workflow
 steps:
   1:
-    description: "Conditional wait for element to appear"
-    action:
-      type: "wait"
-      condition: "element_appears"
-      max_wait: 70
-      check_interval: 5
-    verify_success:
-      - type: "any"
-        text: "OPTIONS"
-    expected_delay: 20
-
-  2:
-    description: "Click the Benchmark button once the game has loaded"
+    description: "Click OPTIONS to access benchmark"
     find:
       type: "any"
       text: "OPTIONS"
@@ -35,18 +21,17 @@ steps:
     action:
       type: "click"
       button: "left"
-      clickType: "ctypes"
-      move_duration: 0.5
-      click_delay: 0.5
+      move_duration: 0.3
+      click_delay: 0.2
     verify_success:
       - type: "any"
         text: "BENCHMARK"
         text_match: "contains"
-    expected_delay: 10
+    expected_delay: 3
     timeout: 10
 
-  3:
-    description: "Click Civilization Game Name"
+  2:
+    description: "Click BENCHMARK to start benchmark"
     find:
       type: "any"
       text: "BENCHMARK"
@@ -54,43 +39,43 @@ steps:
     action:
       type: "click"
       button: "left"
-      clickType: "ctypes"
-      move_duration: 0.5
-      click_delay: 0.5
-    verify_success:
-      - type: "any"
-        text: "AVG"
-        text_match: "contains"
-    expected_delay: 10
+      move_duration: 0.3
+      click_delay: 0.2
+    expected_delay: 5
     timeout: 10
 
-  4:
+  3:
     description: "Wait for benchmark to complete"
     action:
       type: "wait"
       duration: 70
+    verify_success:
+      - type: "any"
+        text: "Average FPS"
+        text_match: "contains"
     expected_delay: 0
-    timeout: 140
+    timeout: 90
 
-  5:
-    description: "Handle benchmark results"
+  4:
+    description: "Click Exit Benchmark button"
     find:
       type: "any"
-      text: "Exit"
+      text: "Exit Benchmark"
       text_match: "contains"
     action:
       type: "click"
       button: "left"
-      clickType: "ctypes"
+      move_duration: 0.3
+      click_delay: 0.2
     verify_success:
       - type: "any"
-        text: "Back"
+        text: "OPTIONS"
         text_match: "contains"
-    expected_delay: 10
-    timeout: 10
+    expected_delay: 5
+    timeout: 15
 
-  6:
-    description: "Click on Exit to desktop"
+  5:
+    description: "Click Back to return to main menu"
     find:
       type: "any"
       text: "Back"
@@ -98,16 +83,17 @@ steps:
     action:
       type: "click"
       button: "left"
-      clickType: "ctypes"
+      move_duration: 0.3
+      click_delay: 0.2
     verify_success:
       - type: "any"
         text: "QUIT TO DESKTOP"
         text_match: "contains"
-    expected_delay: 10
+    expected_delay: 3
     timeout: 10
 
-  7:
-    description: "Click on ok button to quit the game"
+  6:
+    description: "Click QUIT TO DESKTOP"
     find:
       type: "any"
       text: "QUIT TO DESKTOP"
@@ -115,38 +101,35 @@ steps:
     action:
       type: "click"
       button: "left"
-      clickType: "ctypes"
+      move_duration: 0.3
+      click_delay: 0.2
     verify_success:
       - type: "any"
         text: "OK"
         text_match: "contains"
-    expected_delay: 10
+    expected_delay: 2
     timeout: 10
 
-  8:
-    description: "Click on ok button to quit the game"
+  7:
+    description: "Click OK to confirm quit"
     find:
       type: "any"
       text: "OK"
-      text_match: "contains"
+      text_match: "exact"
     action:
       type: "click"
       button: "left"
-      clickType: "ctypes"
-    expected_delay: 10
+      move_duration: 0.3
+      click_delay: 0.2
+    expected_delay: 0
     timeout: 10
 
-# Enhanced fallback actions
 fallbacks:
   general:
-    action: "key"
-    key: "Escape"
-    expected_delay: 2
+    action: "click"
+    find:
+      type: "any"
+      text: "BACK"
+      text_match: "contains"
+    expected_delay: 1
     max_retries: 3
-
-  # Specific fallback for stuck benchmark
-  benchmark_stuck:
-    action: "key"
-    key: "Alt+F4"  # Force close if needed
-    expected_delay: 3
-    max_retries: 2

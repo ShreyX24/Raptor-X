@@ -218,10 +218,11 @@ class DevicePersistence:
 class DeviceRegistry:
     """Registry for managing SUT devices."""
 
-    def __init__(self, offline_timeout: int = 30, persistence_file: str = "paired_devices.json"):
+    def __init__(self, offline_timeout: int = 30, stale_device_timeout: int = 300, persistence_file: str = "paired_devices.json"):
         self.devices: Dict[str, SUTDevice] = {}
         self.ip_to_id_mapping: Dict[str, str] = {}
         self.offline_timeout = offline_timeout
+        self.stale_device_timeout = stale_device_timeout  # Default 5 minutes
         self.persistence = DevicePersistence(persistence_file)
         self.load_paired_devices_on_startup()
 
@@ -390,6 +391,60 @@ class DeviceRegistry:
             "paired_devices": paired_count,
         }
 
+    def remove_stale_devices(self, timeout_seconds: int = None) -> Dict[str, any]:
+        """
+        Remove unpaired offline devices that haven't been seen for longer than timeout.
+
+        Args:
+            timeout_seconds: Override timeout in seconds (uses self.stale_device_timeout if None)
+
+        Returns:
+            Dict with removed device info and count
+        """
+        timeout = timeout_seconds if timeout_seconds is not None else self.stale_device_timeout
+        now = datetime.now()
+        removed_devices = []
+
+        # Find stale devices (unpaired + offline + last_seen > timeout)
+        devices_to_remove = []
+        for device_id, device in self.devices.items():
+            if not device.is_paired and device.status == SUTStatus.OFFLINE:
+                seconds_since_seen = (now - device.last_seen).total_seconds()
+                if seconds_since_seen > timeout:
+                    devices_to_remove.append(device_id)
+                    removed_devices.append({
+                        "unique_id": device_id,
+                        "ip": device.ip,
+                        "hostname": device.hostname,
+                        "last_seen": device.last_seen.isoformat(),
+                        "seconds_since_seen": int(seconds_since_seen)
+                    })
+
+        # Remove stale devices
+        for device_id in devices_to_remove:
+            device = self.devices[device_id]
+            # Remove from IP mapping
+            if device.ip in self.ip_to_id_mapping:
+                del self.ip_to_id_mapping[device.ip]
+            # Remove device
+            del self.devices[device_id]
+            logger.info(f"Removed stale device: {device_id} (last seen {int((now - device.last_seen).total_seconds())}s ago)")
+
+        return {
+            "removed_count": len(removed_devices),
+            "removed_devices": removed_devices,
+            "timeout_used": timeout
+        }
+
+    def set_stale_timeout(self, timeout_seconds: int) -> None:
+        """Set the stale device timeout."""
+        self.stale_device_timeout = timeout_seconds
+        logger.info(f"Stale device timeout set to {timeout_seconds} seconds")
+
+    def get_stale_timeout(self) -> int:
+        """Get the current stale device timeout."""
+        return self.stale_device_timeout
+
     def load_paired_devices_on_startup(self) -> None:
         """Load paired devices from persistence file on startup."""
         logger.info("Loading paired devices from persistence...")
@@ -420,6 +475,7 @@ def get_device_registry() -> DeviceRegistry:
         config = get_config()
         _device_registry = DeviceRegistry(
             offline_timeout=config.offline_timeout,
+            stale_device_timeout=config.stale_device_timeout,
             persistence_file=config.paired_devices_file
         )
     return _device_registry

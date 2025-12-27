@@ -23,7 +23,8 @@ from .window import (
     wait_for_window_ready_pywinauto,
     ensure_window_foreground_v2,
     ensure_window_foreground,
-    is_pywinauto_available
+    is_pywinauto_available,
+    minimize_other_windows
 )
 from .steam import get_steam_install_path
 
@@ -483,19 +484,23 @@ def launch_game(
 
             if foreground_confirmed:
                 logger.info(f"[OK] Launch Complete: {actual_process.name()} is running and in foreground.")
+                # Minimize other windows (Steam, etc.) to ensure clean screenshots
+                minimized = minimize_other_windows(actual_process.pid)
+                response_data["windows_minimized"] = minimized
             else:
                 logger.warning(f"[WARN] Launch Warning: Process {actual_process.pid} exists but could not confirm foreground status.")
                 response_data["warning"] = "Process launched but window not in foreground (timeout)"
 
         else:
-            logger.warning(f"Game process '{current_game_process_name}' not found within {max_wait_time} seconds")
+            logger.error(f"LAUNCH FAILED: Game process '{current_game_process_name}' not found within {max_wait_time} seconds")
             response_data = {
-                "status": "warning",
-                "warning": f"Game process '{current_game_process_name}' not detected, but launch command executed",
+                "status": "error",
+                "error": f"Game process '{current_game_process_name}' not detected after {max_wait_time}s. Game may not be installed or process name is incorrect.",
                 "subprocess_pid": game_process.pid if game_process else None,
                 "subprocess_status": subprocess_status,
                 "resolved_path": game_path if is_steam_id else None,
-                "launch_method": "steam" if is_steam_id else "direct_exe"
+                "launch_method": "steam" if is_steam_id else "direct_exe",
+                "expected_process": current_game_process_name
             }
 
     return response_data

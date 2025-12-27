@@ -498,10 +498,21 @@ class SimpleAutomation:
             }
             
             mapped_key = key_mapping.get(key.lower(), key)
-            
+
+            # Support repeat key presses with count and interval
+            count = action_config.get("count", 1)
+            interval = action_config.get("interval", 1.0)
+
             try:
-                response = self.network.send_action({"type": "key", "key": mapped_key})
-                logger.info(f"Pressed key: {mapped_key}")
+                action = {"type": "key", "key": mapped_key}
+                if count > 1:
+                    action["count"] = count
+                    action["interval"] = interval
+                response = self.network.send_action(action)
+                if count > 1:
+                    logger.info(f"Pressed key: {mapped_key} x{count} (interval: {interval}s)")
+                else:
+                    logger.info(f"Pressed key: {mapped_key}")
                 return True
             except Exception as e:
                 logger.error(f"Failed to send key action: {str(e)}")

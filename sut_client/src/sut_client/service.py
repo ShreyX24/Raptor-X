@@ -433,8 +433,17 @@ def create_app() -> Flask:
                 key = data.get('key')
                 if not key:
                     return jsonify({"status": "error", "message": "key action requires 'key' field"}), 400
-                input_controller.press_key(key)
-                result["message"] = f"Pressed key: {key}"
+                # Support repeat: count + interval for multiple press-release cycles
+                count = data.get('count', 1)
+                interval = data.get('interval', 1.0)  # Delay between presses in seconds
+                for i in range(count):
+                    input_controller.press_key(key)
+                    if i < count - 1:  # Don't delay after the last press
+                        time.sleep(interval)
+                if count > 1:
+                    result["message"] = f"Pressed key: {key} x{count} (interval: {interval}s)"
+                else:
+                    result["message"] = f"Pressed key: {key}"
 
             elif action_type == 'hold_key':
                 key = data.get('key')

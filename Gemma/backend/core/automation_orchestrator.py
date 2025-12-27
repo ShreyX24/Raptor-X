@@ -42,8 +42,11 @@ class AutomationOrchestrator:
             (success, results, error_message)
         """
         logger.info(f"Starting execution of {run.game_name} on SUT {run.sut_ip}")
-        
+
         try:
+            # Reload game configs from disk to pick up any YAML changes
+            self.game_manager.reload_configurations()
+
             # Get game configuration
             game_config = self.game_manager.get_game(run.game_name)
             if not game_config:

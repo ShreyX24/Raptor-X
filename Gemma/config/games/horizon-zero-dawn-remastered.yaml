@@ -3,12 +3,11 @@ metadata:
   game_name: "Horizon Zero Dawn Remastered"
   preset_id: horizon-zero-dawn-remastered  # Maps to preset-manager folder name
   steam_app_id: '2561580'
-  # ORIGINAL: path: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Horizon Zero Dawn Remastered\\HorizonZeroDawnRemastered.exe"
-  path: "D:\\SteamLibrary\\steamapps\\common\\Horizon Zero Dawn Remastered\\HorizonZeroDawnRemastered.exe"  # TEMP: Updated to D: drive
-  process_id: "HorizonZeroDawnRemastered"  # Actual process name in Task Manager click -> #ctypes keys -> pydirectinput
+  path: "2561580"  # Launch via Steam App ID
+  process_id: "HorizonZeroDawnRemastered.exe"  # Actual process name in Task Manager
   version: "1.0"
   benchmark_duration: 160
-  startup_wait: 40
+  startup_wait: 90  # HZD has long initial load with launcher
   resolution: "1920x1080"
   preset: "High"
 
@@ -16,21 +15,21 @@ metadata:
 steps:
 
   1:
-    description: "Press Enter key to play"
+    description: "Press Enter key to start game"
     find:
       type: "any"
-      text: "PLAY SETTINGS"
+      text: "PLAY"
       text_match: "contains"
     action:
       type: "key"
       key: "enter"
       methodType: "pydirectinput"
-    # verify_success:
-    #   - type: "any"
-    #     text: "SETTINGS"
-    #     text_match: "contains"
-    expected_delay: 130
-    timeout: 20
+    verify_success:
+      - type: "any"
+        text: "CONTINUE"
+        text_match: "contains"
+    expected_delay: 90
+    timeout: 120
 
   2:
     description: "Click SETTINGS button"
@@ -203,50 +202,3 @@ fallbacks:
     key: "Escape"
     expected_delay: 1
     max_retries: 3
-
-Click: 2
-Key: Escape, Enter
-
-1:
-  description: "Click Exit "
-  find:
-    type: "icon"
-    text: "Exit"
-    text_match: "contains"
-  action:
-    type: "click"
-    button: "Right"
-  verify_success:
-    - type: "icon"
-      text: "Confirm"
-  expected_delay: 5
-  timeout: 20
-
-2:
-  description: "Click Play "
-  find:
-    type: "icon"
-    text: "Play"
-    text_match: "contains"
-  action:
-    type: "key"
-    button: "enter"
-  verify_success:
-    - type: "icon"
-      text: "Settings"
-  expected_delay: 5
-  timeout: 20
-3:
-  description: "Click Settings "
-  find:
-    type: "icon"
-    text: "Settings"
-    text_match: "contains"
-  action:
-    type: "key"
-    button: "m"
-  verify_success:
-    - type: "icon"
-      text: "Video"
-  expected_delay: 5
-  timeout: 20

@@ -374,3 +374,85 @@ def ensure_window_foreground(pid: int, timeout: int = 5) -> bool:
 def is_pywinauto_available() -> bool:
     """Check if pywinauto is available."""
     return PYWINAUTO_AVAILABLE
+
+
+def minimize_other_windows(target_pid: int, exclude_titles: list = None) -> int:
+    """
+    Minimize all visible windows except the target process and system windows.
+
+    This ensures the game window is the only visible application, preventing
+    Steam or other windows from appearing in screenshots.
+
+    Args:
+        target_pid: Process ID of the game to keep visible
+        exclude_titles: Additional window titles to exclude from minimizing
+
+    Returns:
+        int: Number of windows minimized
+    """
+    if exclude_titles is None:
+        exclude_titles = []
+
+    # System windows and processes to never minimize
+    system_titles = [
+        "Program Manager",  # Desktop
+        "Microsoft Text Input Application",
+        "NVIDIA GeForce Overlay",
+        "Windows Input Experience",
+        "",  # No title
+    ]
+    exclude_titles.extend(system_titles)
+
+    minimized_count = 0
+
+    def callback(hwnd, _):
+        nonlocal minimized_count
+        try:
+            # Skip invisible windows
+            if not win32gui.IsWindowVisible(hwnd):
+                return True
+
+            # Skip already minimized windows
+            if win32gui.IsIconic(hwnd):
+                return True
+
+            # Get window info
+            _, window_pid = win32process.GetWindowThreadProcessId(hwnd)
+            title = win32gui.GetWindowText(hwnd)
+
+            # Skip target process
+            if window_pid == target_pid:
+                logger.debug(f"Keeping target window: '{title}' (PID {window_pid})")
+                return True
+
+            # Skip excluded titles
+            if title in exclude_titles or not title.strip():
+                return True
+
+            # Skip windows with no title or very small windows (likely system)
+            rect = win32gui.GetWindowRect(hwnd)
+            width = rect[2] - rect[0]
+            height = rect[3] - rect[1]
+            if width < 50 or height < 50:
+                return True
+
+            # Minimize this window
+            try:
+                logger.info(f"Minimizing: '{title}' (PID {window_pid})")
+                win32gui.ShowWindow(hwnd, win32con.SW_MINIMIZE)
+                minimized_count += 1
+            except Exception as e:
+                logger.debug(f"Failed to minimize '{title}': {e}")
+
+        except Exception as e:
+            logger.debug(f"Error processing window: {e}")
+
+        return True
+
+    try:
+        win32gui.EnumWindows(callback, None)
+        logger.info(f"Minimized {minimized_count} other window(s)")
+    except Exception as e:
+        logger.error(f"minimize_other_windows failed: {e}")
+
+    return minimized_count

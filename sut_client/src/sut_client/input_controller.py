@@ -473,7 +473,7 @@ class InputController:
 
             # Key down
             result1 = self._send_key_event(vk_code, False)
-            time.sleep(0.05)
+            time.sleep(0.1)  # Longer press duration (100ms) for better game compatibility
 
             # Key up
             result2 = self._send_key_event(vk_code, True)
