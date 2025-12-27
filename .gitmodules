@@ -1,0 +1,3 @@
+[submodule "Omniparser server"]
+	path = Omniparser server
+	url = https://github.com/YpS-YpS/OmniLocal.git
