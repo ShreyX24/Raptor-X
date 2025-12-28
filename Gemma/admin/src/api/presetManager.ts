@@ -259,4 +259,65 @@ export async function isPresetManagerAvailable(): Promise<boolean> {
   }
 }
 
+// ============================================
+// Preset Matrix API (Phase 1 - Quality × Resolution)
+// ============================================
+
+export interface PresetConstants {
+  quality_levels: string[];
+  resolutions: Record<string, { width: number; height: number; name: string }>;
+  standard_levels: string[];
+}
+
+export interface PresetMatrixResponse {
+  game_slug: string;
+  game_name: string;
+  default_quality: string;
+  default_resolution: string;
+  available_presets: Record<string, string[]>;  // quality -> resolutions[]
+  total_available: number;
+  total_placeholders: number;
+}
+
+export interface PresetMetadataResponse {
+  quality: string;
+  resolution: string;
+  resolution_width: number;
+  resolution_height: number;
+  description?: string;
+  target_gpu?: string;
+  target_fps?: string;
+  settings_summary?: Record<string, string>;
+  files: string[];
+  status: 'available' | 'placeholder';
+  last_updated?: string;
+}
+
+/**
+ * Get preset constants (quality levels, resolutions)
+ */
+export async function getPresetConstants(): Promise<PresetConstants> {
+  return fetchPresetJson<PresetConstants>('/api/presets/constants');
+}
+
+/**
+ * Get preset matrix for a game (available quality × resolution combinations)
+ */
+export async function getPresetMatrix(gameSlug: string): Promise<PresetMatrixResponse> {
+  return fetchPresetJson<PresetMatrixResponse>(`/api/presets/${encodeURIComponent(gameSlug)}/matrix`);
+}
+
+/**
+ * Get metadata for a specific quality/resolution preset
+ */
+export async function getPresetMetadata(
+  gameSlug: string,
+  quality: string,
+  resolution: string
+): Promise<PresetMetadataResponse> {
+  return fetchPresetJson<PresetMetadataResponse>(
+    `/api/presets/${encodeURIComponent(gameSlug)}/${encodeURIComponent(quality)}/${encodeURIComponent(resolution)}/metadata`
+  );
+}
+
 export { PresetManagerError };
