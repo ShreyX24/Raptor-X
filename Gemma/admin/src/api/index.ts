@@ -7,6 +7,7 @@ import type {
   SUT,
   AutomationRun,
 } from '../types';
+import { TIMEOUTS } from '../config';
 
 const API_BASE = '/api';
 
@@ -17,8 +18,41 @@ class ApiError extends Error {
   }
 }
 
-async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
+class TimeoutError extends Error {
+  constructor(url: string, timeout: number) {
+    super(`Request to ${url} timed out after ${timeout}ms`);
+    this.name = 'TimeoutError';
+  }
+}
+
+interface FetchOptions extends RequestInit {
+  timeout?: number;
+}
+
+async function fetchWithTimeout(url: string, options: FetchOptions = {}): Promise<Response> {
+  const { timeout = TIMEOUTS.default, ...fetchOptions } = options;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(url, {
+      ...fetchOptions,
+      signal: controller.signal,
+    });
+    return response;
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new TimeoutError(url, timeout);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function fetchJson<T>(url: string, options?: FetchOptions): Promise<T> {
+  const response = await fetchWithTimeout(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -150,8 +184,60 @@ export async function getSutStatus(deviceId: string): Promise<unknown> {
   return fetchJson<unknown>(`${API_BASE}/sut/${deviceId}/status`);
 }
 
+export interface SUTSystemInfoResponse {
+  system_info: {
+    cpu: { brand_string: string };
+    gpu: { name: string };
+    ram: { total_gb: number };
+    os: { name: string; version: string; release: string; build: string };
+    bios: { name: string; version: string };
+    screen: { width: number; height: number };
+    hostname: string;
+    device_id: string;
+  };
+  sut_ip: string;
+  timestamp: string;
+}
+
+export async function getSutSystemInfo(deviceId: string): Promise<SUTSystemInfoResponse> {
+  return fetchJson<SUTSystemInfoResponse>(`${API_BASE}/sut/${deviceId}/system_info`, {
+    timeout: TIMEOUTS.default,
+  });
+}
+
+export async function getSutSystemInfoByIp(ip: string): Promise<SUTSystemInfoResponse> {
+  return fetchJson<SUTSystemInfoResponse>(`${API_BASE}/sut/by-ip/${ip}/system_info`, {
+    timeout: TIMEOUTS.default,
+  });
+}
+
+export interface InstalledGame {
+  name: string;
+  steam_app_id?: string | number;
+  install_path?: string;
+  exists?: boolean;
+}
+
+export interface InstalledGamesResponse {
+  games: InstalledGame[];
+  count: number;
+}
+
+export async function getSutInstalledGames(sutIp: string): Promise<InstalledGamesResponse> {
+  // Direct call to SUT client
+  const response = await fetchWithTimeout(`http://${sutIp}:8080/installed_games`, {
+    timeout: TIMEOUTS.default,
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, 'Failed to get installed games');
+  }
+  return response.json();
+}
+
 export async function takeSutScreenshot(deviceId: string): Promise<Blob> {
-  const response = await fetch(`${API_BASE}/sut/${deviceId}/screenshot`);
+  const response = await fetchWithTimeout(`${API_BASE}/sut/${deviceId}/screenshot`, {
+    timeout: TIMEOUTS.screenshot,
+  });
   if (!response.ok) {
     throw new ApiError(response.status, 'Failed to take screenshot');
   }
@@ -194,7 +280,7 @@ export function createWebSocketConnection(
   return ws;
 }
 
-export { ApiError };
+export { ApiError, TimeoutError };
 
 // Re-export service-specific APIs
 export * from './queueService';

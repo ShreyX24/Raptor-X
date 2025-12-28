@@ -18,3 +18,4 @@ export { PresetMatrix, PresetSelector, QUALITY_LEVELS, RESOLUTIONS } from './Pre
 export type { QualityLevel, Resolution, PresetAvailability } from './PresetMatrix';
 export { PreflightChecks, CheckIndicator } from './PreflightChecks';
 export type { PreflightCheck, CheckStatus } from './PreflightChecks';
+export { SUTDetailPanel } from './SUTDetailPanel';
