@@ -21,7 +21,7 @@ export function SparklineChart({
   data,
   width = 100,
   height = 30,
-  color = '#22d3ee', // cyan-400
+  color = '#00C7FD', // brand-cyan
   fillColor,
   strokeWidth = 1.5,
   showDots = false,
@@ -76,7 +76,7 @@ export function SparklineChart({
           y={height / 2}
           textAnchor="middle"
           dominantBaseline="middle"
-          fill="#6b7280"
+          fill="rgba(255,255,255,0.5)"
           fontSize="8"
         >
           No data
@@ -149,22 +149,22 @@ export function QueueDepthChart({
 
   // Color based on depth (green -> yellow -> red)
   const color = currentDepth < 5
-    ? '#22c55e' // green
+    ? '#10b981' // success
     : currentDepth < 15
-      ? '#eab308' // yellow
-      : '#ef4444'; // red
+      ? '#f59e0b' // warning
+      : '#ef4444'; // danger
 
   return (
-    <div className={`bg-gray-800/50 rounded-lg p-3 ${className}`}>
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs text-gray-400 uppercase tracking-wide">
+    <div className={`card p-4 ${className}`}>
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-xs text-text-muted font-semibold uppercase tracking-wide">
           Queue Depth
         </span>
         <div className="flex items-baseline gap-2">
-          <span className="text-lg font-bold" style={{ color }}>
+          <span className="text-lg font-bold font-numbers" style={{ color }}>
             {currentDepth}
           </span>
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-text-muted font-numbers">
             max: {maxDepth}
           </span>
         </div>
@@ -182,8 +182,8 @@ export function QueueDepthChart({
       </div>
 
       {/* X-axis labels */}
-      <div className="flex justify-between text-xs text-gray-500 mt-1">
-        <span>
+      <div className="flex justify-between text-xs text-text-muted mt-2">
+        <span className="font-numbers">
           {data[0]?.timestamp
             ? new Date(data[0].timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             : ''

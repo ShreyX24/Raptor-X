@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useRuns } from '../hooks';
-import { RunCard, LogViewer } from '../components';
+import { RunCard, LogViewer, RunTimeline } from '../components';
 import type { AutomationRun, LogEntry } from '../types';
 
 export function Runs() {
@@ -9,6 +9,7 @@ export function Runs() {
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<'timeline' | 'logs'>('timeline');
 
   const fetchLogs = useCallback(async (runId: string) => {
     setLogsLoading(true);
@@ -82,7 +83,7 @@ export function Runs() {
               <RunCard
                 key={run.run_id}
                 run={run}
-                onStop={(id) => stop(id).catch(console.error)}
+                onStop={(id, killGame) => stop(id, killGame).catch(console.error)}
                 onViewLogs={handleViewLogs}
               />
             ))}
@@ -175,17 +176,26 @@ export function Runs() {
         )}
       </div>
 
-      {/* Log Modal - Full screen on mobile, large on desktop */}
+      {/* Run Detail Modal - Full screen on mobile, large on desktop */}
       {showLogs && selectedRun && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-2 sm:p-4">
           <div className="bg-surface rounded-xl p-4 sm:p-6 w-full max-w-7xl max-h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col border border-border shadow-2xl">
+            {/* Header */}
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2 className="text-lg sm:text-xl font-bold text-text-primary">
-                  Run Logs
+                  Run Details
                 </h2>
                 <p className="text-sm text-text-muted">
                   {selectedRun.game_name} on {selectedRun.sut_ip}
+                  <span className={`ml-2 inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${
+                    selectedRun.status === 'completed' ? 'bg-success/20 text-success' :
+                    selectedRun.status === 'failed' ? 'bg-danger/20 text-danger' :
+                    selectedRun.status === 'running' ? 'bg-primary/20 text-primary' :
+                    'bg-surface-elevated text-text-muted'
+                  }`}>
+                    {selectedRun.status}
+                  </span>
                 </p>
               </div>
               <button
@@ -193,6 +203,7 @@ export function Runs() {
                   setShowLogs(false);
                   setSelectedRun(null);
                   setLogs([]);
+                  setActiveTab('timeline');
                 }}
                 className="p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
               >
@@ -201,13 +212,45 @@ export function Runs() {
                 </svg>
               </button>
             </div>
+
+            {/* Tabs */}
+            <div className="flex gap-1 mb-4 border-b border-border">
+              <button
+                onClick={() => setActiveTab('timeline')}
+                className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                  activeTab === 'timeline'
+                    ? 'text-primary border-primary'
+                    : 'text-text-muted border-transparent hover:text-text-secondary'
+                }`}
+              >
+                Timeline
+              </button>
+              <button
+                onClick={() => setActiveTab('logs')}
+                className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                  activeTab === 'logs'
+                    ? 'text-primary border-primary'
+                    : 'text-text-muted border-transparent hover:text-text-secondary'
+                }`}
+              >
+                Logs
+              </button>
+            </div>
+
+            {/* Tab Content */}
             <div className="flex-1 overflow-hidden min-h-0">
-              {logsLoading ? (
-                <div className="rounded-lg bg-background p-4 font-mono text-sm text-text-muted flex items-center justify-center h-full">
-                  <span className="animate-pulse">Loading logs...</span>
+              {activeTab === 'timeline' ? (
+                <div className="h-full overflow-auto rounded-lg bg-surface-elevated border border-border p-4">
+                  <RunTimeline runId={selectedRun.run_id} pollInterval={selectedRun.status === 'running' ? 2000 : 0} />
                 </div>
               ) : (
-                <LogViewer logs={logs} maxHeight="calc(90vh - 120px)" />
+                logsLoading ? (
+                  <div className="rounded-lg bg-background p-4 font-mono text-sm text-text-muted flex items-center justify-center h-full">
+                    <span className="animate-pulse">Loading logs...</span>
+                  </div>
+                ) : (
+                  <LogViewer logs={logs} maxHeight="calc(90vh - 200px)" />
+                )
               )}
             </div>
           </div>

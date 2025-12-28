@@ -304,7 +304,7 @@ class SUTClient:
                 f"http://{ip}:{port}/health",
                 timeout=self.timeout
             )
-            
+
             if response.status_code == 200:
                 data = response.json()
                 return ActionResult(
@@ -317,7 +317,34 @@ class SUTClient:
                     success=False,
                     error=f"HTTP {response.status_code}: {response.text}"
                 )
-                
+
+        except requests.RequestException as e:
+            return ActionResult(
+                success=False,
+                error=str(e)
+            )
+
+    def get_system_info(self, ip: str, port: int = 8080) -> ActionResult:
+        """Get detailed system information from SUT device"""
+        try:
+            response = self.session.get(
+                f"http://{ip}:{port}/system_info",
+                timeout=self.timeout
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                return ActionResult(
+                    success=True,
+                    data=data,
+                    response_time=response.elapsed.total_seconds()
+                )
+            else:
+                return ActionResult(
+                    success=False,
+                    error=f"HTTP {response.status_code}: {response.text}"
+                )
+
         except requests.RequestException as e:
             return ActionResult(
                 success=False,

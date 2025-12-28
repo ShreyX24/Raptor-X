@@ -6,8 +6,13 @@ import { Runs } from './pages/Runs';
 import { Queue } from './pages/Queue';
 import { WorkflowBuilder } from './pages/WorkflowBuilder';
 import { Settings } from './pages/Settings';
+import { ServiceHealthBar } from './components';
+import { useServiceHealth } from './hooks';
 
 function App() {
+  // Service health for footer status bar
+  const { services } = useServiceHealth();
+
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
     `px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
       isActive
@@ -16,7 +21,7 @@ function App() {
     }`;
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background flex flex-col">
       {/* Header - Single unified navbar */}
       <header className="bg-surface border-b border-border sticky top-0 z-50">
         <div className="px-4 lg:px-6">
@@ -84,8 +89,8 @@ function App() {
         </div>
       </header>
 
-      {/* Main Content */}
-      <main>
+      {/* Main Content - flex-1 to push footer to bottom */}
+      <main className="flex-1">
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/devices" element={<Devices />} />
@@ -96,6 +101,39 @@ function App() {
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
+
+      {/* Footer - Service Status + Quick Actions */}
+      <footer className="bg-surface border-t border-border sticky bottom-0 z-40 px-4 py-2">
+        <div className="flex items-center justify-between">
+          <ServiceHealthBar services={services} />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => fetch('/api/discovery/scan', { method: 'POST' })}
+              className="px-2 py-1 text-xs bg-surface-elevated hover:bg-surface-hover text-text-secondary border border-border rounded-lg transition-colors"
+            >
+              Scan SUTs
+            </button>
+            <button
+              onClick={() => fetch('/api/games/reload', { method: 'POST' })}
+              className="px-2 py-1 text-xs bg-surface-elevated hover:bg-surface-hover text-text-secondary border border-border rounded-lg transition-colors"
+            >
+              Reload Games
+            </button>
+            <Link
+              to="/queue"
+              className="px-2 py-1 text-xs bg-surface-elevated hover:bg-surface-hover text-text-secondary border border-border rounded-lg transition-colors"
+            >
+              Queue
+            </Link>
+            <Link
+              to="/runs"
+              className="px-2 py-1 text-xs bg-surface-elevated hover:bg-surface-hover text-text-secondary border border-border rounded-lg transition-colors"
+            >
+              History
+            </Link>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

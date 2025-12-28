@@ -37,9 +37,9 @@ export function useRuns(pollInterval: number = 2000) {
     }
   }, [fetchRuns]);
 
-  const stop = useCallback(async (runId: string) => {
+  const stop = useCallback(async (runId: string, killGame: boolean = false) => {
     try {
-      await stopRun(runId);
+      await stopRun(runId, killGame);
       await fetchRuns();
     } catch (err) {
       throw err;

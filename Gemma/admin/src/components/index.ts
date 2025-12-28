@@ -19,3 +19,8 @@ export type { QualityLevel, Resolution, PresetAvailability } from './PresetMatri
 export { PreflightChecks, CheckIndicator } from './PreflightChecks';
 export type { PreflightCheck, CheckStatus } from './PreflightChecks';
 export { SUTDetailPanel } from './SUTDetailPanel';
+
+// Automation timeline components (Phase 2)
+export { AutomationTimeline, StepIndicator, StepDetailPopover, TimelineStep } from './AutomationTimeline';
+export { RunTimeline, TimelineNode, EventDetailPanel, EventIcon } from './RunTimeline';
+export type { TimelineEvent } from './RunTimeline';

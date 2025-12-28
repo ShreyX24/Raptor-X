@@ -187,7 +187,7 @@ class OmniparserClient:
 
                         # Log important elements
                         if inclusion_reason == "performance_data":
-                            logger.info(f"🎯 PERFORMANCE DATA: '{element_content[:50]}...'")
+                            logger.info(f"PERFORMANCE DATA: '{element_content[:50]}...'")
                         else:
                             logger.debug(f"Added element ({inclusion_reason}): type='{element_type}', content='{element_content[:30]}...'")
                     else:

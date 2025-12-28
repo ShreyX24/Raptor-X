@@ -1,31 +1,310 @@
 @import "tailwindcss";
 
+/* Tenorite Font - Text */
+@font-face {
+  font-family: "Tenorite";
+  src: url("/fonts/tenorite/26512206606.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Tenorite";
+  src: url("/fonts/tenorite/26622973498.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Tenorite";
+  src: url("/fonts/tenorite/27733932592.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Tenorite";
+  src: url("/fonts/tenorite/29595851800.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+}
+
+/* Intel One Display Bold - Numbers & Logo */
+@font-face {
+  font-family: "IntelOne Display Bold";
+  src: url("https://db.onlinewebfonts.com/t/f41c652afbe4e65a3ab9b69ca48b1fee.eot");
+  src: url("https://db.onlinewebfonts.com/t/f41c652afbe4e65a3ab9b69ca48b1fee.eot?#iefix") format("embedded-opentype"),
+       url("https://db.onlinewebfonts.com/t/f41c652afbe4e65a3ab9b69ca48b1fee.woff2") format("woff2"),
+       url("https://db.onlinewebfonts.com/t/f41c652afbe4e65a3ab9b69ca48b1fee.woff") format("woff"),
+       url("https://db.onlinewebfonts.com/t/f41c652afbe4e65a3ab9b69ca48b1fee.ttf") format("truetype"),
+       url("https://db.onlinewebfonts.com/t/f41c652afbe4e65a3ab9b69ca48b1fee.svg#IntelOne Display Bold") format("svg");
+}
+
 @theme {
-  --font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  /* Color Palette - matching gaming-dashboard */
+  --color-background: #0f0a1e;
+  --color-surface: #140f2d;
+  --color-surface-elevated: #1e143c;
+  --color-surface-hover: #251a4a;
+  --color-primary: #a855f7;
+  --color-primary-dark: #7c3aed;
+  --color-secondary: #06b6d4;
+  --color-accent: #8b5cf6;
+  --color-brand-cyan: #00C7FD;
+  --color-brand-pink: #d946ef;
+  --color-brand-rose: #f43f5e;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+
+  /* Text colors */
+  --color-text-primary: rgba(255, 255, 255, 0.95);
+  --color-text-secondary: rgba(255, 255, 255, 0.7);
+  --color-text-muted: rgba(255, 255, 255, 0.5);
+
+  /* Border colors */
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-border-hover: rgba(255, 255, 255, 0.2);
+
+  /* Font families */
+  --font-sans: "Tenorite", system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-numbers: "IntelOne Display Bold", "Tenorite", system-ui, sans-serif;
 }
 
 body {
+  @apply bg-background text-white antialiased;
   font-family: var(--font-sans);
-  background-color: #f9fafb;
+  font-size: 16px;
+  line-height: 1.5;
+  color-scheme: dark;
 }
 
-/* Custom scrollbar */
+/* Base text size adjustments */
+.text-xs {
+  font-size: 0.8125rem; /* 13px */
+}
+
+.text-sm {
+  font-size: 0.9375rem; /* 15px */
+}
+
+/* Number styling utility - for durations, IPs, metrics */
+.font-numbers {
+  font-family: var(--font-numbers);
+  letter-spacing: 0.02em;
+}
+
+/* Custom scrollbar - purple themed */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: var(--color-surface);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
+  background: var(--color-primary);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a1a1a1;
+  background: var(--color-accent);
+}
+
+/* Glow effects */
+.glow {
+  box-shadow: 0 0 20px rgba(168, 85, 247, 0.3);
+}
+
+.glow-success {
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.3);
+}
+
+.glow-danger {
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.3);
+}
+
+.glow-cyan {
+  box-shadow: 0 0 20px rgba(0, 199, 253, 0.3);
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, #a855f7 0%, #8b5cf6 50%, #06b6d4 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Gradient backgrounds */
+.gradient-bg {
+  background: linear-gradient(135deg, #a855f7 0%, #8b5cf6 50%, #7c3aed 100%);
+}
+
+.gradient-bg-subtle {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.1) 0%, rgba(139, 92, 246, 0.05) 100%);
+}
+
+/* Card styles */
+.card {
+  @apply bg-surface rounded-xl border border-border;
+}
+
+.card-elevated {
+  @apply bg-surface-elevated rounded-xl border border-border;
+}
+
+.card-hover {
+  transition: all 0.3s ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  border-color: var(--color-border-hover);
+}
+
+/* Status badges */
+.badge {
+  @apply inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium;
+}
+
+.badge-success {
+  @apply bg-success/20 text-success;
+}
+
+.badge-danger {
+  @apply bg-danger/20 text-danger;
+}
+
+.badge-warning {
+  @apply bg-warning/20 text-warning;
+}
+
+.badge-primary {
+  @apply bg-primary/20 text-primary;
+}
+
+.badge-secondary {
+  @apply bg-secondary/20 text-secondary;
+}
+
+/* Button styles */
+.btn {
+  @apply px-4 py-2 rounded-lg font-medium transition-all duration-200;
+}
+
+.btn-primary {
+  @apply bg-primary text-white hover:bg-primary-dark;
+}
+
+.btn-secondary {
+  @apply bg-surface-elevated text-text-secondary border border-border hover:bg-surface-hover hover:text-text-primary;
+}
+
+.btn-ghost {
+  @apply bg-transparent text-text-secondary hover:bg-surface hover:text-text-primary;
+}
+
+/* Input styles */
+.input {
+  @apply bg-surface border border-border rounded-lg px-3 py-2 text-text-primary placeholder-text-muted focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50;
+}
+
+/* Select dropdown fix for dark theme */
+select {
+  color: var(--color-text-primary) !important;
+  background-color: var(--color-surface) !important;
+}
+
+select option {
+  color: var(--color-text-primary) !important;
+  background-color: var(--color-surface) !important;
+}
+
+/* Fix white backgrounds in modals for dark theme */
+.bg-white {
+  background-color: var(--color-surface-elevated) !important;
+}
+
+.bg-gray-50 {
+  background-color: var(--color-surface) !important;
+}
+
+.bg-gray-100 {
+  background-color: var(--color-surface) !important;
+}
+
+.text-gray-900 {
+  color: var(--color-text-primary) !important;
+}
+
+.text-gray-700 {
+  color: var(--color-text-secondary) !important;
+}
+
+.text-gray-500 {
+  color: var(--color-text-muted) !important;
+}
+
+.text-gray-400 {
+  color: var(--color-text-muted) !important;
+}
+
+.border-gray-200, .border-gray-300 {
+  border-color: var(--color-border) !important;
+}
+
+.divide-gray-100 > * + * {
+  border-color: var(--color-border) !important;
+}
+
+/* Pulse animation */
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(168, 85, 247, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 40px rgba(168, 85, 247, 0.6);
+  }
+}
+
+.pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Fade in animation */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.4s ease-out forwards;
+}
+
+/* Slide in animation */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in {
+  animation: slideIn 0.3s ease-out forwards;
 }

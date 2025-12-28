@@ -97,15 +97,15 @@ class NetworkManager:
             user_id = result.get('user_id', '')
             
             if status == 'success':
-                logger.info(f"[Steam] ✓ Login successful: {message}")
+                logger.info(f"[Steam] Login successful: {message}")
                 if user_id:
                     logger.info(f"[Steam] User ID: {user_id}")
                 return True
             elif status == 'warning':
-                logger.warning(f"[Steam] ⚠ {message}")
+                logger.warning(f"[Steam] Warning: {message}")
                 return True  # Proceed with caution
             else:
-                logger.error(f"[Steam] ✗ Login failed: {message or result.get('error', 'Unknown error')}")
+                logger.error(f"[Steam] Login failed: {message or result.get('error', 'Unknown error')}")
                 return False
                 
         except Exception as e:
@@ -145,10 +145,10 @@ class NetworkManager:
     def get_screenshot(self) -> bytes:
         """
         Request a screenshot from the SUT.
-        
+
         Returns:
             Raw screenshot data as bytes
-        
+
         Raises:
             RequestException: If the request fails
         """
@@ -163,7 +163,40 @@ class NetworkManager:
         except requests.RequestException as e:
             logger.error(f"Failed to get screenshot: {str(e)}")
             raise
-    
+
+    def focus_game(self, minimize_others: bool = False) -> bool:
+        """
+        Focus the game window on the SUT to ensure it's in foreground.
+        Should be called before each automation step to prevent focus loss.
+
+        Args:
+            minimize_others: If True, also minimize other windows on SUT
+
+        Returns:
+            True if focus was successful, False otherwise
+        """
+        try:
+            response = self.session.post(
+                f"{self.base_url}/focus",
+                json={"minimize_others": minimize_others},
+                timeout=5
+            )
+            result = response.json()
+            status = result.get("status", "error")
+
+            if status == "success":
+                logger.debug(f"Game window focused: {result.get('message')}")
+                return True
+            elif status == "warning":
+                logger.warning(f"Focus warning: {result.get('message')}")
+                return True  # Proceed anyway
+            else:
+                logger.warning(f"Could not focus game: {result.get('message')}")
+                return False
+        except requests.RequestException as e:
+            logger.warning(f"Focus request failed (game may not be running): {e}")
+            return False
+
     def launch_game(self, game_path: str, process_id: str = '', startup_wait: int = 15, launch_args: str = None) -> Dict[str, Any]:
         """
         Request the SUT to launch a game.
@@ -185,12 +218,15 @@ class NetworkManager:
             is_steam_app_id = game_path.isdigit()
 
             # Prepare request payload with game metadata
+            # Always use force_relaunch to ensure any existing game is killed first
             if is_steam_app_id:
                 # Use steam_app_id field for Steam launches
                 payload = {
                     "steam_app_id": game_path,
                     "process_id": process_id,
-                    "startup_wait": startup_wait
+                    "process_name": process_id,  # For force_relaunch to know what to kill
+                    "startup_wait": startup_wait,
+                    "force_relaunch": True  # Kill existing game before launching
                 }
                 logger.info(f"Launching via Steam App ID: {game_path}")
             else:
@@ -198,7 +234,9 @@ class NetworkManager:
                 payload = {
                     "path": game_path,
                     "process_id": process_id,
-                    "startup_wait": startup_wait
+                    "process_name": process_id,  # For force_relaunch to know what to kill
+                    "startup_wait": startup_wait,
+                    "force_relaunch": True  # Kill existing game before launching
                 }
                 logger.info(f"Launching via executable path: {game_path}")
 

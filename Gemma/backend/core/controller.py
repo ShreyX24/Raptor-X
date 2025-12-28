@@ -76,8 +76,9 @@ class BackendController:
             # Use queue client for omniparser (compatibility layer)
             self.omniparser_client = self.queue_client
 
-            # SUT client not needed - all calls go through Discovery Service
-            self.sut_client = None
+            # SUT client still needed for direct SUT communication (system_info, screenshots)
+            # Note: Frontend never talks to SUTs directly, but backend can
+            self.sut_client = SUTClient(timeout=config.discovery_timeout)
 
             self.websocket_handler = WebSocketHandler(self.socketio, self.device_registry, self.game_manager)
 
@@ -113,14 +114,23 @@ class BackendController:
         )
         self.run_manager = RunManager(
             max_concurrent_runs=5,
-            orchestrator=self.automation_orchestrator
+            orchestrator=self.automation_orchestrator,
+            sut_client=self.sut_client
         )
+
+        # Connect storage manager from RunManager to Orchestrator
+        # This allows orchestrator to save screenshots and logs to persistent storage
+        self.automation_orchestrator.set_storage(self.run_manager.storage)
 
         # Set up run manager callbacks for WebSocket events
         self.run_manager.on_run_started = self._on_run_started
         self.run_manager.on_run_progress = self._on_run_progress
         self.run_manager.on_run_completed = self._on_run_completed
         self.run_manager.on_run_failed = self._on_run_failed
+        # Step-level callbacks for automation timeline
+        self.run_manager.on_step_started = self._on_step_started
+        self.run_manager.on_step_completed = self._on_step_completed
+        self.run_manager.on_step_failed = self._on_step_failed
 
         # Initialize API routes
         self.api_routes = APIRoutes(
@@ -352,7 +362,31 @@ class BackendController:
         # Emit updated runs data
         runs_data = self.run_manager.get_all_runs()
         self.websocket_handler.broadcast_message('runs_update', runs_data)
-        
+
+    def _on_step_started(self, run_id: str, step_data: Dict[str, Any]):
+        """Callback when an automation step starts"""
+        logger.debug(f"Step started: {run_id} - step {step_data.get('step_number')}")
+        self.websocket_handler.broadcast_message('step_started', {
+            'run_id': run_id,
+            'step': step_data
+        })
+
+    def _on_step_completed(self, run_id: str, step_data: Dict[str, Any]):
+        """Callback when an automation step completes"""
+        logger.debug(f"Step completed: {run_id} - step {step_data.get('step_number')}")
+        self.websocket_handler.broadcast_message('step_completed', {
+            'run_id': run_id,
+            'step': step_data
+        })
+
+    def _on_step_failed(self, run_id: str, step_data: Dict[str, Any]):
+        """Callback when an automation step fails"""
+        logger.debug(f"Step failed: {run_id} - step {step_data.get('step_number')}")
+        self.websocket_handler.broadcast_message('step_failed', {
+            'run_id': run_id,
+            'step': step_data
+        })
+
     def run_server(self, host: str = None, port: int = None, debug: bool = None):
         """Run the Flask-SocketIO server"""
         host = host or self.config.host

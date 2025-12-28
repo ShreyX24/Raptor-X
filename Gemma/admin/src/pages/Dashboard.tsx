@@ -5,9 +5,8 @@
 
 import { useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { useSystemStatus, useDevices, useGames, useRuns, useQueueStats, useServiceHealth } from '../hooks';
+import { useSystemStatus, useDevices, useGames, useRuns, useQueueStats } from '../hooks';
 import {
-  ServiceHealthPanel,
   MetricCard,
   MetricGrid,
   QueueDepthChart,
@@ -105,7 +104,6 @@ export function Dashboard() {
 
   // New hooks for enhanced dashboard
   const { stats: queueStats, depthHistory, isAvailable: queueAvailable } = useQueueStats();
-  const { services } = useServiceHealth();
 
   // UI state
   const [selectedSut, setSelectedSut] = useState<SUT | null>(null);
@@ -173,12 +171,7 @@ export function Dashboard() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-56px)] p-4 bg-background text-text-primary overflow-hidden">
-      {/* Service Health Bar */}
-      <div className="flex-shrink-0 mb-4">
-        <ServiceHealthPanel services={services} />
-      </div>
-
+    <div className="flex flex-col h-[calc(100vh-96px)] p-4 bg-background text-text-primary overflow-hidden">
       {/* Error Banner */}
       {error && (
         <div className="flex items-center justify-between bg-danger/20 border border-danger/50 rounded-lg px-4 py-2 mb-4 flex-shrink-0">
@@ -387,24 +380,26 @@ export function Dashboard() {
             </div>
           </div>
 
-          {/* Recent Runs - Moved to left panel, fills remaining space */}
-          <div className="card p-4 flex-1 min-h-0 flex flex-col">
-            <div className="flex items-center justify-between mb-3 flex-shrink-0">
-              <h3 className="text-sm font-semibold text-text-secondary">Recent Runs</h3>
-              <Link to="/runs" className="text-xs text-primary hover:text-primary-dark transition-colors">
-                View All
-              </Link>
+          {/* Recent Runs - Only show in left panel when active runs exist */}
+          {activeRunsList.length > 0 && (
+            <div className="card p-4 flex-1 min-h-0 flex flex-col">
+              <div className="flex items-center justify-between mb-3 flex-shrink-0">
+                <h3 className="text-sm font-semibold text-text-secondary">Recent Runs</h3>
+                <Link to="/runs" className="text-xs text-primary hover:text-primary-dark transition-colors">
+                  View All
+                </Link>
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <RecentRunsTable
+                  runs={history}
+                  maxRows={6}
+                  onRerun={(sutIp, gameName, iterations) => {
+                    start(sutIp, gameName, iterations).catch(console.error);
+                  }}
+                />
+              </div>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto">
-              <RecentRunsTable
-                runs={history}
-                maxRows={6}
-                onRerun={(sutIp, gameName, iterations) => {
-                  start(sutIp, gameName, iterations).catch(console.error);
-                }}
-              />
-            </div>
-          </div>
+          )}
         </div>
 
         {/* Right Panel (7 cols) - Queue Depth + Active Runs + Actions */}
@@ -417,8 +412,8 @@ export function Dashboard() {
             />
           </div>
 
-          {/* Active Runs - Fills remaining space */}
-          <div className="card p-4 flex-1 min-h-0 flex flex-col">
+          {/* Active Runs - Collapses when empty, expands when has runs */}
+          <div className={`card p-4 flex flex-col ${activeRunsList.length > 0 ? 'flex-1 min-h-0' : 'flex-shrink-0'}`}>
             <div className="flex items-center justify-between mb-3 flex-shrink-0">
               <h3 className="text-sm font-semibold text-text-secondary">
                 Active Runs <span className="font-numbers text-primary">({activeRunsList.length})</span>
@@ -432,53 +427,46 @@ export function Dashboard() {
               )}
             </div>
 
-            <div className="flex-1 min-h-0 overflow-y-auto">
-              {activeRunsList.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-text-muted text-sm">
-                  No active runs
-                </div>
-              ) : (
+            {activeRunsList.length === 0 ? (
+              <div className="text-center py-2 text-text-muted text-sm border border-dashed border-border rounded-lg">
+                No active runs - start automation above
+              </div>
+            ) : (
+              <div className="flex-1 min-h-0 overflow-y-auto">
                 <div className="space-y-2">
                   {activeRunsList.map((run) => (
                     <RunCard
                       key={run.run_id}
                       run={run}
-                      onStop={(id) => stop(id).catch(console.error)}
+                      onStop={(id, killGame) => stop(id, killGame).catch(console.error)}
                     />
                   ))}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
 
-          {/* Quick Actions Bar */}
-          <div className="flex items-center gap-3 p-4 card flex-shrink-0">
-            <span className="text-xs text-text-muted mr-2">Actions:</span>
-            <ActionButton
-              label="Scan SUTs"
-              onClick={() => {
-                fetch('/api/discovery/scan', { method: 'POST' });
-              }}
-            />
-            <ActionButton
-              label="Reload Games"
-              onClick={() => {
-                fetch('/api/games/reload', { method: 'POST' });
-              }}
-            />
-            <Link
-              to="/queue"
-              className="btn btn-secondary text-sm"
-            >
-              Queue Dashboard
-            </Link>
-            <Link
-              to="/runs"
-              className="btn btn-secondary text-sm"
-            >
-              Run History
-            </Link>
-          </div>
+          {/* Recent Runs Table - Expands when no active runs */}
+          {activeRunsList.length === 0 && (
+            <div className="card p-4 flex-1 min-h-0 flex flex-col">
+              <div className="flex items-center justify-between mb-3 flex-shrink-0">
+                <h3 className="text-sm font-semibold text-text-secondary">Recent Runs</h3>
+                <Link to="/runs" className="text-xs text-primary hover:text-primary-dark transition-colors">
+                  View All
+                </Link>
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <RecentRunsTable
+                  runs={history}
+                  maxRows={10}
+                  onRerun={(sutIp, gameName, iterations) => {
+                    start(sutIp, gameName, iterations).catch(console.error);
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
         </div>
       </div>
     </div>

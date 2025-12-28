@@ -51,7 +51,10 @@ export function Games() {
     const fetchInstalledGames = async () => {
       setLoadingInstalled(true);
       try {
-        const result = await getSutInstalledGames(selectedSutIp);
+        // Get the device's actual port from onlineDevices
+        const device = onlineDevices.find(d => d.ip === selectedSutIp);
+        const port = device?.port || 8080;  // Default to 8080 (SUT client port)
+        const result = await getSutInstalledGames(selectedSutIp, port);
         setInstalledGames(result);
       } catch (error) {
         console.error('Failed to fetch installed games:', error);
@@ -62,7 +65,7 @@ export function Games() {
     };
 
     fetchInstalledGames();
-  }, [selectedSutIp]);
+  }, [selectedSutIp, onlineDevices]);
 
   return (
     <div className="space-y-6">
@@ -396,48 +399,31 @@ function RunGameModal({ game, devices, preSelectedSut, onClose }: RunGameModalPr
       setCheckingAvailability(true);
       setError(null);
       try {
-        const result = await getSutInstalledGames(selectedDevice);
+        // Get the device's actual port
+        const device = devices.find(d => d.ip === selectedDevice);
+        const port = device?.port || 8080;  // Default to 8080 (SUT client port)
+
+        const result = await getSutInstalledGames(selectedDevice, port);
         if (!result.online) {
           setError('SUT is offline');
           setInstalledInfo(null);
           return;
         }
 
-        // Find the game in installed games list with improved matching
-        const normalizeForMatch = (str: string) =>
-          str.toLowerCase()
-            .replace(/['']/g, '')  // Remove apostrophes
-            .replace(/[^a-z0-9]/g, ' ')  // Replace special chars with spaces
-            .replace(/\s+/g, ' ')  // Normalize spaces
-            .trim();
-
-        const gameNameNorm = normalizeForMatch(game.name);
-        const gameDisplayNorm = normalizeForMatch(game.display_name || game.name);
+        // Preset-manager already enriches games with has_presets and preset_short_name
+        // Find game by matching preset_short_name to our game config name
+        const gameNameSlug = game.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
 
         const found = result.games.find(g => {
-          const installedNameNorm = normalizeForMatch(g.name);
-          const presetSlug = g.preset_short_name?.replace(/-/g, ' ') || '';
-
-          // Match by: name contains, preset slug matches, or display name
-          return (
-            installedNameNorm.includes(gameNameNorm) ||
-            gameNameNorm.includes(installedNameNorm) ||
-            installedNameNorm.includes(gameDisplayNorm) ||
-            gameDisplayNorm.includes(installedNameNorm) ||
-            (g.preset_short_name && (
-              presetSlug.includes(gameNameNorm) ||
-              gameNameNorm.includes(presetSlug)
-            ))
-          );
+          if (!g.has_presets || !g.preset_short_name) return false;
+          // Match if preset_short_name matches the game name slug
+          return g.preset_short_name === gameNameSlug;
         });
 
         if (found) {
           setInstalledInfo(found);
-          if (!found.has_presets) {
-            setError('Game is installed but no presets available');
-          }
         } else {
-          setError('Game not installed on this SUT');
+          setError('Game not installed on selected SUT');
           setInstalledInfo(null);
         }
       } catch (err) {
@@ -449,7 +435,7 @@ function RunGameModal({ game, devices, preSelectedSut, onClose }: RunGameModalPr
     };
 
     checkAvailability();
-  }, [selectedDevice, game.name]);
+  }, [selectedDevice, game.name, devices]);
 
   // Fetch preset matrix when game is found
   useEffect(() => {

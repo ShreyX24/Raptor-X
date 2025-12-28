@@ -63,10 +63,11 @@ export interface SutInstalledGamesResponse {
  */
 export async function getSutInstalledGames(sutIp: string, port: number = 8080): Promise<SutInstalledGamesResponse> {
   const params = new URLSearchParams();
-  if (port !== 8080) params.set('port', port.toString());
+  // Always pass the port to backend
+  params.set('port', port.toString());
   const queryString = params.toString();
   return fetchPresetJson<SutInstalledGamesResponse>(
-    `/api/sync/sut-games/${encodeURIComponent(sutIp)}${queryString ? `?${queryString}` : ''}`
+    `/api/sync/sut-games/${encodeURIComponent(sutIp)}?${queryString}`
   );
 }
 

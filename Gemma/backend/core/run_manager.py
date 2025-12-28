@@ -14,6 +14,8 @@ from enum import Enum
 import queue
 import copy
 
+from .run_storage import RunStorageManager, SUTInfo, RunConfig, RunManifest
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,6 +28,50 @@ class RunStatus(Enum):
     STOPPED = "stopped"
 
 
+class StepStatus(Enum):
+    """Status of an automation step"""
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+@dataclass
+class StepProgress:
+    """Progress tracking for an individual step"""
+    step_number: int
+    description: str
+    status: StepStatus = StepStatus.PENDING
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    screenshot_url: Optional[str] = None
+    error_message: Optional[str] = None
+    is_optional: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        # Handle started_at - could be datetime or string
+        started = None
+        if self.started_at:
+            started = self.started_at.isoformat() if isinstance(self.started_at, datetime) else self.started_at
+
+        # Handle completed_at - could be datetime or string
+        completed = None
+        if self.completed_at:
+            completed = self.completed_at.isoformat() if isinstance(self.completed_at, datetime) else self.completed_at
+
+        return {
+            'step_number': self.step_number,
+            'description': self.description,
+            'status': self.status.value,
+            'started_at': started,
+            'completed_at': completed,
+            'screenshot_url': self.screenshot_url,
+            'error_message': self.error_message,
+            'is_optional': self.is_optional,
+        }
+
+
 @dataclass
 class RunProgress:
     """Progress tracking for a run"""
@@ -35,6 +81,7 @@ class RunProgress:
     total_steps: int = 0
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
+    steps: List['StepProgress'] = field(default_factory=list)
 
 
 @dataclass
@@ -61,9 +108,24 @@ class AutomationRun:
     results: Optional[RunResult] = None
     error_message: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
-    
+    sut_info: Optional[Dict[str, Any]] = None  # SUT hardware metadata from manifest
+    folder_name: Optional[str] = None  # Run folder name for logs/artifacts
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
+        # Handle start_time - could be datetime or string
+        started = None
+        if self.progress.start_time:
+            started = self.progress.start_time.isoformat() if isinstance(self.progress.start_time, datetime) else self.progress.start_time
+
+        # Handle end_time - could be datetime or string
+        completed = None
+        if self.progress.end_time:
+            completed = self.progress.end_time.isoformat() if isinstance(self.progress.end_time, datetime) else self.progress.end_time
+
+        # Handle created_at - could be datetime or string
+        created = self.created_at.isoformat() if isinstance(self.created_at, datetime) else self.created_at
+
         return {
             'run_id': self.run_id,
             'game_name': self.game_name,
@@ -75,37 +137,169 @@ class AutomationRun:
                 'current_iteration': self.progress.current_iteration,
                 'total_iterations': self.progress.total_iterations,
                 'current_step': self.progress.current_step,
-                'total_steps': self.progress.total_steps
+                'total_steps': self.progress.total_steps,
+                'steps': [step.to_dict() for step in self.progress.steps],
             },
-            'start_time': self.progress.start_time.isoformat() if self.progress.start_time else None,
-            'end_time': self.progress.end_time.isoformat() if self.progress.end_time else None,
+            'started_at': started,
+            'completed_at': completed,
             'results': self.results.__dict__ if self.results else None,
             'error_message': self.error_message,
-            'created_at': self.created_at.isoformat()
+            'created_at': created,
+            'sut_info': self.sut_info,
+            'folder_name': self.folder_name,
         }
 
 
 class RunManager:
     """Manages automation runs across multiple SUTs"""
-    
-    def __init__(self, max_concurrent_runs: int = 10, orchestrator=None):
+
+    def __init__(self, max_concurrent_runs: int = 10, orchestrator=None, sut_client=None):
         self.max_concurrent_runs = max_concurrent_runs
         self.orchestrator = orchestrator
+        self.sut_client = sut_client  # For fetching SUT system_info
         self.active_runs: Dict[str, AutomationRun] = {}
         self.run_history: List[AutomationRun] = []
         self.run_queue = queue.Queue()
         self.worker_threads: List[threading.Thread] = []
         self.running = False
         self._lock = threading.Lock()
-        
-        
+
+        # Persistent storage manager
+        self.storage = RunStorageManager()
+
+        # Map run_id to storage manifest
+        self._storage_map: Dict[str, RunManifest] = {}
+
         # Event callbacks
         self.on_run_started = None
         self.on_run_progress = None
         self.on_run_completed = None
         self.on_run_failed = None
-        
-        logger.info(f"RunManager initialized with max_concurrent_runs={max_concurrent_runs} (in-memory mode)")
+        # Step-level callbacks (for real-time timeline updates)
+        self.on_step_started = None
+        self.on_step_completed = None
+        self.on_step_failed = None
+
+        # Load history from disk
+        self._load_history_from_storage()
+
+        logger.info(f"RunManager initialized with max_concurrent_runs={max_concurrent_runs} (persistent storage mode)")
+
+    def _load_history_from_storage(self):
+        """Load run history from persistent storage"""
+        try:
+            manifests = self.storage.load_run_history()
+            stale_count = 0
+            for manifest in manifests:
+                # Fix stale "running" runs - they were interrupted by Gemma restart
+                if manifest.status == 'running':
+                    stale_count += 1
+                    manifest.status = 'failed'
+                    manifest.error = 'Run interrupted - Gemma was restarted'
+                    manifest.completed_at = datetime.now().isoformat()
+                    # Update the manifest on disk
+                    try:
+                        self.storage.update_manifest(manifest)
+                        logger.info(f"Marked stale run {manifest.run_id} as failed (Gemma restart)")
+                    except Exception as update_err:
+                        logger.warning(f"Failed to update stale run manifest: {update_err}")
+
+                # Convert manifest to AutomationRun for compatibility
+                run = self._manifest_to_run(manifest)
+                if run:
+                    self.run_history.append(run)
+                    self._storage_map[run.run_id] = manifest
+
+            if stale_count > 0:
+                logger.info(f"Fixed {stale_count} stale 'running' runs from previous session")
+            logger.info(f"Loaded {len(manifests)} runs from persistent storage")
+        except Exception as e:
+            logger.error(f"Error loading run history from storage: {e}")
+
+    def _manifest_to_run(self, manifest: RunManifest) -> Optional[AutomationRun]:
+        """Convert a storage manifest to an AutomationRun"""
+        try:
+            status_map = {
+                'running': RunStatus.RUNNING,
+                'completed': RunStatus.COMPLETED,
+                'failed': RunStatus.FAILED,
+                'stopped': RunStatus.STOPPED,
+            }
+
+            # Convert SUTInfo to dict format expected by frontend
+            sut_info = None
+            if manifest.sut:
+                sut_info = {
+                    'cpu': {'brand_string': manifest.sut.cpu_brand or ''},
+                    'gpu': {'name': manifest.sut.gpu_name or ''},
+                    'ram': {'total_gb': manifest.sut.ram_gb or 0},
+                    'os': {
+                        'name': manifest.sut.os_name or '',
+                        'version': manifest.sut.os_version or '',
+                        'release': '',
+                        'build': manifest.sut.os_build or ''
+                    },
+                    'bios': {
+                        'name': manifest.sut.bios_name or '',
+                        'version': manifest.sut.bios_version or ''
+                    },
+                    'screen': {
+                        'width': manifest.sut.resolution_width or 0,
+                        'height': manifest.sut.resolution_height or 0
+                    },
+                    'hostname': manifest.sut.hostname or '',
+                    'device_id': manifest.sut.device_id or '',
+                }
+
+            # Parse created_at datetime
+            created_at_dt = datetime.now()
+            if manifest.created_at:
+                try:
+                    created_at_dt = datetime.fromisoformat(manifest.created_at) if isinstance(manifest.created_at, str) else manifest.created_at
+                except Exception:
+                    pass
+
+            run = AutomationRun(
+                run_id=manifest.run_id,
+                game_name=manifest.config.games[0] if manifest.config and manifest.config.games else "Unknown",
+                sut_ip=manifest.sut.ip if manifest.sut else "",
+                sut_device_id=manifest.sut.device_id if manifest.sut else "",
+                status=status_map.get(manifest.status, RunStatus.COMPLETED),
+                iterations=manifest.config.iterations if manifest.config else 1,
+                sut_info=sut_info,
+                folder_name=manifest.folder_name,
+                created_at=created_at_dt,
+            )
+
+            # Set progress times
+            if manifest.created_at:
+                try:
+                    run.progress.start_time = datetime.fromisoformat(manifest.created_at) if isinstance(manifest.created_at, str) else manifest.created_at
+                except Exception:
+                    pass
+            if manifest.completed_at:
+                try:
+                    run.progress.end_time = datetime.fromisoformat(manifest.completed_at) if isinstance(manifest.completed_at, str) else manifest.completed_at
+                except Exception:
+                    pass
+
+            # Set results
+            if manifest.summary:
+                run.results = RunResult(
+                    success_rate=manifest.summary.get('completed_iterations', 0) / max(manifest.summary.get('total_iterations', 1), 1),
+                    successful_runs=manifest.summary.get('completed_iterations', 0),
+                    total_iterations=manifest.summary.get('total_iterations', 0),
+                    run_directory=str(self.storage.base_dir / manifest.folder_name),
+                )
+
+            return run
+        except Exception as e:
+            logger.error(f"Error converting manifest to run: {e}")
+            return None
+
+    def set_sut_client(self, sut_client):
+        """Set the SUT client for fetching system info"""
+        self.sut_client = sut_client
     
     def set_orchestrator(self, orchestrator):
         """Set the automation orchestrator"""
@@ -218,12 +412,24 @@ class RunManager:
                     return True
         return False
     
+    def get_run(self, run_id: str) -> Optional[AutomationRun]:
+        """Get a specific run object by ID"""
+        with self._lock:
+            if run_id in self.active_runs:
+                return self.active_runs[run_id]
+
+            # Check history
+            for run in self.run_history:
+                if run.run_id == run_id:
+                    return run
+        return None
+
     def get_run_status(self, run_id: str) -> Optional[Dict[str, Any]]:
         """Get status of a specific run"""
         with self._lock:
             if run_id in self.active_runs:
                 return self.active_runs[run_id].to_dict()
-            
+
             # Check history
             for run in self.run_history:
                 if run.run_id == run_id:
@@ -249,20 +455,138 @@ class RunManager:
         with self._lock:
             if run_id not in self.active_runs:
                 return
-                
+
             run = self.active_runs[run_id]
-            
+
             if current_iteration is not None:
                 run.progress.current_iteration = current_iteration
             if current_step is not None:
                 run.progress.current_step = current_step
-            
+
             # Trigger progress callback
             if self.on_run_progress:
                 try:
                     self.on_run_progress(run_id, run.to_dict())
                 except Exception as e:
                     logger.error(f"Error in run progress callback: {e}")
+
+    def initialize_steps(self, run_id: str, steps: List[Dict[str, Any]]):
+        """Initialize step list for a run from game config"""
+        with self._lock:
+            if run_id not in self.active_runs:
+                return
+
+            run = self.active_runs[run_id]
+            run.progress.total_steps = len(steps)
+            run.progress.steps = []
+
+            for step_data in steps:
+                step = StepProgress(
+                    step_number=step_data.get('step_number', 0),
+                    description=step_data.get('description', 'Unknown step'),
+                    is_optional=step_data.get('optional', False) or '[OPTIONAL]' in step_data.get('description', '').upper(),
+                )
+                run.progress.steps.append(step)
+
+            logger.info(f"Initialized {len(steps)} steps for run {run_id}")
+
+    def start_step(self, run_id: str, step_number: int, description: str = None, screenshot_url: str = None):
+        """Mark a step as started"""
+        with self._lock:
+            if run_id not in self.active_runs:
+                return
+
+            run = self.active_runs[run_id]
+            run.progress.current_step = step_number
+
+            # Find or create the step
+            step = None
+            for s in run.progress.steps:
+                if s.step_number == step_number:
+                    step = s
+                    break
+
+            if not step:
+                # Create new step if not initialized
+                step = StepProgress(
+                    step_number=step_number,
+                    description=description or f"Step {step_number}",
+                )
+                run.progress.steps.append(step)
+
+            step.status = StepStatus.IN_PROGRESS
+            step.started_at = datetime.now()
+            if description:
+                step.description = description
+            if screenshot_url:
+                step.screenshot_url = screenshot_url
+
+            step_dict = step.to_dict()
+
+        # Trigger callback outside lock
+        if self.on_step_started:
+            try:
+                self.on_step_started(run_id, step_dict)
+            except Exception as e:
+                logger.error(f"Error in step started callback: {e}")
+
+    def complete_step(self, run_id: str, step_number: int, success: bool = True,
+                      screenshot_url: str = None, error_message: str = None):
+        """Mark a step as completed or failed"""
+        with self._lock:
+            if run_id not in self.active_runs:
+                return
+
+            run = self.active_runs[run_id]
+
+            # Find the step
+            step = None
+            for s in run.progress.steps:
+                if s.step_number == step_number:
+                    step = s
+                    break
+
+            if not step:
+                logger.warning(f"Step {step_number} not found for run {run_id}")
+                return
+
+            step.status = StepStatus.COMPLETED if success else StepStatus.FAILED
+            step.completed_at = datetime.now()
+            if screenshot_url:
+                step.screenshot_url = screenshot_url
+            if error_message:
+                step.error_message = error_message
+
+            step_dict = step.to_dict()
+
+        # Trigger callback outside lock
+        callback = self.on_step_completed if success else self.on_step_failed
+        if callback:
+            try:
+                callback(run_id, step_dict)
+            except Exception as e:
+                logger.error(f"Error in step completion callback: {e}")
+
+    def skip_step(self, run_id: str, step_number: int, reason: str = None):
+        """Mark a step as skipped (for optional steps)"""
+        with self._lock:
+            if run_id not in self.active_runs:
+                return
+
+            run = self.active_runs[run_id]
+
+            # Find the step
+            step = None
+            for s in run.progress.steps:
+                if s.step_number == step_number:
+                    step = s
+                    break
+
+            if step:
+                step.status = StepStatus.SKIPPED
+                step.completed_at = datetime.now()
+                if reason:
+                    step.error_message = reason
     
     def complete_run(self, run_id: str, success: bool, results: Optional[RunResult] = None, error_message: str = None):
         """Mark a run as completed"""
@@ -363,48 +687,128 @@ class RunManager:
     def _execute_run(self, run: AutomationRun):
         """Execute a single automation run"""
         logger.info(f"Starting execution of run {run.run_id}: {run.game_name} on {run.sut_ip}")
-        
+
         # Mark as running
         with self._lock:
             run.status = RunStatus.RUNNING
             run.progress.start_time = datetime.now()
-        
+
+        # Create persistent storage structure
+        storage_manifest = self._create_run_storage(run)
+
         # Trigger started callback
         if self.on_run_started:
             try:
                 self.on_run_started(run.run_id, run.to_dict())
             except Exception as e:
                 logger.error(f"Error in run started callback: {e}")
-        
+
         try:
             # Execute the automation using orchestrator
             logger.info(f"Starting automation execution for run {run.run_id}")
             success = self._simulate_automation_execution(run)
             logger.info(f"Automation execution completed for run {run.run_id} with success={success}")
-            
+
+            # Complete storage
+            if storage_manifest:
+                self.storage.complete_run(run.run_id, success)
+
             # Create results (results may be set by orchestrator)
+            run_directory = str(self.storage.get_run_dir(run.run_id)) if storage_manifest else f"logs/{run.game_name}/run_{run.run_id}"
+
             if not hasattr(run, '_execution_results'):
                 results = RunResult(
                     success_rate=1.0 if success else 0.0,
                     successful_runs=run.iterations if success else 0,
                     total_iterations=run.iterations,
-                    run_directory=f"logs/{run.game_name}/run_{run.run_id}",
+                    run_directory=run_directory,
                 )
             else:
                 results = run._execution_results
-            
+                results.run_directory = run_directory
+
             # Determine final error message
             error_message = None
             if not success and hasattr(run, '_execution_error'):
                 error_message = run._execution_error
-            
+
             logger.info(f"About to complete run {run.run_id} with success={success}")
             self.complete_run(run.run_id, success, results, error_message)
             logger.info(f"Completed run call finished for {run.run_id}")
-            
+
         except Exception as e:
             logger.error(f"Critical error executing run {run.run_id}: {e}", exc_info=True)
+            if storage_manifest:
+                self.storage.add_error(run.run_id, str(e))
+                self.storage.complete_run(run.run_id, False)
             self.complete_run(run.run_id, False, error_message=f"Critical error: {str(e)}")
+
+    def _create_run_storage(self, run: AutomationRun) -> Optional[RunManifest]:
+        """Create persistent storage for a run, fetching SUT info"""
+        try:
+            # Fetch SUT system info
+            sut_info = self._fetch_sut_info(run.sut_ip)
+
+            # Create run config
+            config = RunConfig(
+                run_type="single",  # TODO: Support bulk runs
+                games=[run.game_name],
+                iterations=run.iterations,
+            )
+
+            # Create storage structure
+            manifest = self.storage.create_run(
+                run_id=run.run_id,
+                sut_info=sut_info,
+                config=config,
+            )
+
+            self._storage_map[run.run_id] = manifest
+
+            # Also update the run object with sut_info for API responses
+            run.folder_name = manifest.folder_name
+            run.sut_info = {
+                'cpu': {'brand_string': sut_info.cpu_brand or ''},
+                'gpu': {'name': sut_info.gpu_name or ''},
+                'ram': {'total_gb': sut_info.ram_gb or 0},
+                'os': {
+                    'name': sut_info.os_name or '',
+                    'version': sut_info.os_version or '',
+                    'release': '',
+                    'build': sut_info.os_build or ''
+                },
+                'bios': {
+                    'name': sut_info.bios_name or '',
+                    'version': sut_info.bios_version or ''
+                },
+                'screen': {
+                    'width': sut_info.resolution_width or 0,
+                    'height': sut_info.resolution_height or 0
+                },
+                'hostname': sut_info.hostname or '',
+                'device_id': sut_info.device_id or '',
+            }
+
+            logger.info(f"Created run storage: {manifest.folder_name}")
+
+            return manifest
+
+        except Exception as e:
+            logger.error(f"Error creating run storage: {e}")
+            return None
+
+    def _fetch_sut_info(self, sut_ip: str) -> SUTInfo:
+        """Fetch SUT system information"""
+        if self.sut_client:
+            try:
+                result = self.sut_client.get_system_info(sut_ip, 8080)
+                if result.success and result.data:
+                    return SUTInfo.from_system_info(sut_ip, result.data)
+            except Exception as e:
+                logger.warning(f"Failed to fetch SUT info: {e}")
+
+        # Return basic info if fetch fails
+        return SUTInfo(ip=sut_ip)
     
     def _simulate_automation_execution(self, run: AutomationRun) -> bool:
         """Execute automation using the orchestrator or simulate if not available"""

@@ -46,6 +46,11 @@ class WebSocketHandler:
         event_bus.subscribe(EventType.AUTOMATION_STARTED, self._on_automation_started)
         event_bus.subscribe(EventType.AUTOMATION_COMPLETED, self._on_automation_completed)
         event_bus.subscribe(EventType.AUTOMATION_FAILED, self._on_automation_failed)
+        # Step-level events for automation timeline
+        event_bus.subscribe(EventType.AUTOMATION_STEP_STARTED, self._on_step_started)
+        event_bus.subscribe(EventType.AUTOMATION_STEP_COMPLETED, self._on_step_completed)
+        event_bus.subscribe(EventType.AUTOMATION_STEP_FAILED, self._on_step_failed)
+        event_bus.subscribe(EventType.AUTOMATION_PROGRESS, self._on_automation_progress)
         
     def _register_handlers(self):
         """Register WebSocket event handlers"""
@@ -302,8 +307,65 @@ class WebSocketHandler:
             'data': event.data,
             'timestamp': event.timestamp.isoformat()
         }
-        
+
         self.socketio.emit('automation_event', automation_data, room='general_updates')
+
+    def _on_step_started(self, event: Event):
+        """Handle automation step started event"""
+        step_data = {
+            'event': 'step_started',
+            'run_id': event.data.get('run_id'),
+            'step': event.data.get('step'),
+            'timestamp': event.timestamp.isoformat()
+        }
+
+        self.socketio.emit('automation_step', step_data, room='general_updates')
+        # Also emit to run-specific room if subscribed
+        run_id = event.data.get('run_id')
+        if run_id:
+            self.socketio.emit('automation_step', step_data, room=f'run_{run_id}')
+
+    def _on_step_completed(self, event: Event):
+        """Handle automation step completed event"""
+        step_data = {
+            'event': 'step_completed',
+            'run_id': event.data.get('run_id'),
+            'step': event.data.get('step'),
+            'timestamp': event.timestamp.isoformat()
+        }
+
+        self.socketio.emit('automation_step', step_data, room='general_updates')
+        run_id = event.data.get('run_id')
+        if run_id:
+            self.socketio.emit('automation_step', step_data, room=f'run_{run_id}')
+
+    def _on_step_failed(self, event: Event):
+        """Handle automation step failed event"""
+        step_data = {
+            'event': 'step_failed',
+            'run_id': event.data.get('run_id'),
+            'step': event.data.get('step'),
+            'timestamp': event.timestamp.isoformat()
+        }
+
+        self.socketio.emit('automation_step', step_data, room='general_updates')
+        run_id = event.data.get('run_id')
+        if run_id:
+            self.socketio.emit('automation_step', step_data, room=f'run_{run_id}')
+
+    def _on_automation_progress(self, event: Event):
+        """Handle automation progress update event"""
+        progress_data = {
+            'event': 'progress_update',
+            'run_id': event.data.get('run_id'),
+            'progress': event.data.get('progress'),
+            'timestamp': event.timestamp.isoformat()
+        }
+
+        self.socketio.emit('automation_progress', progress_data, room='general_updates')
+        run_id = event.data.get('run_id')
+        if run_id:
+            self.socketio.emit('automation_progress', progress_data, room=f'run_{run_id}')
 
     def _on_sut_paired(self, event: Event):
         """Handle SUT paired event"""

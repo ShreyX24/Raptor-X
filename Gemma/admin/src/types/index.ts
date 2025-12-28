@@ -45,6 +45,39 @@ export interface Preset {
 }
 
 // Automation run types
+export type StepStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped';
+
+export interface StepProgress {
+  step_number: number;
+  description: string;
+  status: StepStatus;
+  started_at: string | null;
+  completed_at: string | null;
+  screenshot_url: string | null;
+  error_message: string | null;
+  is_optional: boolean;
+}
+
+export interface RunProgress {
+  current_iteration: number;
+  current_step: number;
+  total_iterations: number;
+  total_steps: number;
+  steps?: StepProgress[];
+}
+
+// SUT hardware/system info (from manifest or live fetch)
+export interface SUTSystemInfo {
+  cpu: { brand_string: string };
+  gpu: { name: string };
+  ram: { total_gb: number };
+  os: { name: string; version: string; release: string; build: string };
+  bios: { name: string; version: string };
+  screen: { width: number; height: number };
+  hostname: string;
+  device_id: string;
+}
+
 export interface AutomationRun {
   run_id: string;
   game_name: string;
@@ -53,11 +86,13 @@ export interface AutomationRun {
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   iterations: number;
   current_iteration: number;
-  progress: number;
+  progress: number | RunProgress;  // Can be number (0-100) or detailed object
   started_at: string | null;
   completed_at: string | null;
   error_message: string | null;
   logs: LogEntry[];
+  sut_info?: SUTSystemInfo | null;  // Embedded SUT metadata from manifest
+  folder_name?: string | null;  // Run folder name for logs/artifacts
 }
 
 export interface LogEntry {
@@ -139,7 +174,24 @@ export type WebSocketEventType =
   | 'run_completed'
   | 'run_failed'
   | 'games_update'
-  | 'error_notification';
+  | 'error_notification'
+  | 'automation_step'
+  | 'automation_progress';
+
+// Automation step event types
+export interface AutomationStepEvent {
+  event: 'step_started' | 'step_completed' | 'step_failed';
+  run_id: string;
+  step: StepProgress;
+  timestamp: string;
+}
+
+export interface AutomationProgressEvent {
+  event: 'progress_update';
+  run_id: string;
+  progress: RunProgress;
+  timestamp: string;
+}
 
 export interface WebSocketMessage<T = unknown> {
   type: WebSocketEventType;

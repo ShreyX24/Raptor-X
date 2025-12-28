@@ -169,9 +169,11 @@ export async function startRun(
   });
 }
 
-export async function stopRun(runId: string): Promise<{ status: string; message: string }> {
-  return fetchJson<{ status: string; message: string }>(`${API_BASE}/runs/${runId}/stop`, {
+export async function stopRun(runId: string, killGame: boolean = false): Promise<{ status: string; message: string; game_killed?: boolean }> {
+  return fetchJson<{ status: string; message: string; game_killed?: boolean }>(`${API_BASE}/runs/${runId}/stop`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kill_game: killGame }),
   });
 }
 
