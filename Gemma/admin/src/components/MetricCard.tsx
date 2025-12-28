@@ -18,19 +18,19 @@ interface MetricCardProps {
 }
 
 const colorClasses = {
-  default: 'bg-gray-800 border-gray-700',
-  success: 'bg-emerald-900/30 border-emerald-700/50',
-  warning: 'bg-amber-900/30 border-amber-700/50',
-  error: 'bg-red-900/30 border-red-700/50',
-  info: 'bg-blue-900/30 border-blue-700/50',
+  default: 'bg-surface border-border',
+  success: 'bg-success/10 border-success/30',
+  warning: 'bg-warning/10 border-warning/30',
+  error: 'bg-danger/10 border-danger/30',
+  info: 'bg-primary/10 border-primary/30',
 };
 
 const valueColorClasses = {
-  default: 'text-white',
-  success: 'text-emerald-400',
-  warning: 'text-amber-400',
-  error: 'text-red-400',
-  info: 'text-blue-400',
+  default: 'text-text-primary',
+  success: 'text-success',
+  warning: 'text-warning',
+  error: 'text-danger',
+  info: 'text-primary',
 };
 
 const trendIcons = {
@@ -40,9 +40,9 @@ const trendIcons = {
 };
 
 const trendColors = {
-  up: 'text-emerald-400',
-  down: 'text-red-400',
-  stable: 'text-gray-400',
+  up: 'text-success',
+  down: 'text-danger',
+  stable: 'text-text-muted',
 };
 
 export function MetricCard({
@@ -73,36 +73,36 @@ export function MetricCard({
       className={`
         ${colorClasses[color]}
         ${sizeClasses[size]}
-        ${onClick ? 'cursor-pointer hover:brightness-110 transition-all' : ''}
-        rounded-lg border
+        ${onClick ? 'cursor-pointer hover:bg-surface-hover transition-all' : ''}
+        rounded-xl border
       `}
       onClick={onClick}
     >
       {/* Header row with icon and label */}
       <div className="flex items-center gap-2 mb-1">
-        {icon && <span className="text-gray-400 text-sm">{icon}</span>}
-        <span className="text-xs text-gray-400 uppercase tracking-wide font-medium">
+        {icon && <span className="text-text-muted text-sm">{icon}</span>}
+        <span className="text-xs text-text-muted uppercase tracking-wide font-medium">
           {label}
         </span>
       </div>
 
       {/* Value row */}
       <div className="flex items-baseline gap-2">
-        <span className={`${valueSizeClasses[size]} ${valueColorClasses[color]} font-bold tabular-nums`}>
+        <span className={`${valueSizeClasses[size]} ${valueColorClasses[color]} font-bold font-numbers tabular-nums`}>
           {value}
         </span>
 
         {trend && (
           <span className={`text-sm ${trendColors[trend]} flex items-center gap-0.5`}>
             <span>{trendIcons[trend]}</span>
-            {trendValue && <span>{trendValue}</span>}
+            {trendValue && <span className="font-numbers">{trendValue}</span>}
           </span>
         )}
       </div>
 
       {/* Sublabel */}
       {sublabel && (
-        <span className="text-xs text-gray-500 mt-0.5 block">
+        <span className="text-xs text-text-muted mt-0.5 block">
           {sublabel}
         </span>
       )}

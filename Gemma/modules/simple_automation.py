@@ -158,10 +158,22 @@ class SimpleAutomation:
             logger.info(f"Executing step {current_step}: {step_description}")
             logger.info("=========================================================")
 
+            # Emit step started event via callback
+            if self.progress_callback and hasattr(self.progress_callback, 'on_step_start'):
+                self.progress_callback.on_step_start(current_step, step_description)
+
             # Check for stop event
             if self.stop_event and self.stop_event.is_set():
                 logger.info("Stop event detected, ending automation")
                 break
+
+            # Focus game window before each step to prevent focus loss
+            # This is critical to prevent game from being minimized during automation
+            try:
+                self.network.focus_game()
+                time.sleep(0.2)  # Brief delay after focusing
+            except Exception as e:
+                logger.warning(f"Could not focus game window: {e}")
 
             # Handle optional steps (popups, interruptions)
             if self._handle_optional_steps():
@@ -182,14 +194,21 @@ class SimpleAutomation:
                     # Handle optional step failure - skip instead of failing automation
                     if is_optional_step:
                         logger.warning(f"Optional step {current_step} screenshot capture failed, skipping to next step")
+                        # Emit step skipped event
+                        if self.progress_callback and hasattr(self.progress_callback, 'on_step_skip'):
+                            self.progress_callback.on_step_skip(current_step, reason="Screenshot capture failed")
                         current_step += 1
                         retries = 0
                         continue
                     # Regular step - retry and fail if max retries reached
                     retries += 1
                     if retries >= max_retries:
+                        logger.error(f"Max retries reached for screenshot capture at step {current_step}")
+                        # Emit step failed event
+                        if self.progress_callback and hasattr(self.progress_callback, 'on_step_complete'):
+                            self.progress_callback.on_step_complete(current_step, success=False, error_message="Screenshot capture failed")
                         return False
-                    
+
                     logger.info(f"Screenshot capture failed, waiting {self.retry_delay}s before retry...")
                     time.sleep(self.retry_delay)
                     continue
@@ -234,12 +253,19 @@ class SimpleAutomation:
                     # Handle optional step failure - skip instead of failing automation
                     if is_optional_step:
                         logger.warning(f"Optional step {current_step} UI detection failed, skipping to next step")
+                        # Emit step skipped event
+                        if self.progress_callback and hasattr(self.progress_callback, 'on_step_skip'):
+                            self.progress_callback.on_step_skip(current_step, reason="UI detection failed")
                         current_step += 1
                         retries = 0
                         continue
                     # Regular step - retry and fail if max retries reached
                     retries += 1
                     if retries >= max_retries:
+                        logger.error(f"Max retries reached for UI detection at step {current_step}")
+                        # Emit step failed event
+                        if self.progress_callback and hasattr(self.progress_callback, 'on_step_complete'):
+                            self.progress_callback.on_step_complete(current_step, success=False, error_message="UI detection failed")
                         return False
 
                     logger.info(f"UI element detection failed, waiting {self.retry_delay}s before retry...")
@@ -263,10 +289,12 @@ class SimpleAutomation:
 
             if success:
                 logger.info(f">> Step {current_step} completed successfully")
-                
-                # Update completed steps in progress callback (for X/Y display in GUI)
+
+                # Emit step completed event via callback
                 if self.progress_callback:
                     self.progress_callback.completed_steps = current_step
+                    if hasattr(self.progress_callback, 'on_step_complete'):
+                        self.progress_callback.on_step_complete(current_step, success=True)
 
                 current_step += 1
                 retries = 0
@@ -274,6 +302,9 @@ class SimpleAutomation:
                 # Handle optional step failure - skip to next step instead of failing automation
                 if is_optional_step:
                     logger.warning(f"Optional step {current_step} failed, skipping to next step")
+                    # Emit step skipped event
+                    if self.progress_callback and hasattr(self.progress_callback, 'on_step_skip'):
+                        self.progress_callback.on_step_skip(current_step, reason="Step execution failed")
                     current_step += 1
                     retries = 0
                 else:
@@ -282,6 +313,9 @@ class SimpleAutomation:
                     logger.warning(f"Step {current_step} failed, retry {retries}/{max_retries}")
                     if retries >= max_retries:
                         logger.error(f"Max retries reached for step {current_step}")
+                        # Emit step failed event
+                        if self.progress_callback and hasattr(self.progress_callback, 'on_step_complete'):
+                            self.progress_callback.on_step_complete(current_step, success=False, error_message=f"Max retries ({max_retries}) reached")
                         return False
                     
                     if not is_optional_step:
@@ -829,7 +863,7 @@ class SimpleAutomation:
         return self._find_matching_element(trigger, bounding_boxes) is not None
     
     def _interruptible_wait(self, duration: int):
-        """Wait that can be interrupted by stop event."""
+        """Wait that can be interrupted by stop event. Periodically refocuses game."""
         for i in range(duration):
             if self.stop_event and self.stop_event.is_set():
                 logger.info("Wait interrupted by stop event")
@@ -837,6 +871,14 @@ class SimpleAutomation:
             time.sleep(1)
             if i % 10 == 0 and i > 0:
                 logger.info(f"Still waiting... {i}/{duration} seconds elapsed")
+            # Refocus game window every 30 seconds during long waits
+            # This prevents focus loss from system notifications, Steam overlays, etc.
+            if i > 0 and i % 30 == 0:
+                try:
+                    self.network.focus_game()
+                    logger.debug(f"Refocused game window during wait ({i}/{duration}s)")
+                except Exception:
+                    pass  # Silent fail during wait - not critical
     
     def _find_matching_element(self, target_def, bounding_boxes):
         """Find a UI element matching the target definition with enhanced logging."""

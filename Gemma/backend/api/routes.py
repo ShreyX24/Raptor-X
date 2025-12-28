@@ -329,6 +329,54 @@ class APIRoutes:
                 logger.error(f"Error getting SUT status for {device_id}: {e}")
                 return jsonify({"error": str(e)}), 500
                 
+        @app.route('/api/sut/<device_id>/system_info', methods=['GET'])
+        def get_sut_system_info(device_id):
+            """Get detailed system information from a specific SUT"""
+            try:
+                device = self.device_registry.get_device_by_id(device_id)
+                if not device:
+                    return jsonify({"error": f"Device {device_id} not found"}), 404
+
+                result = self.sut_client.get_system_info(device.ip, device.port)
+
+                if result.success:
+                    return jsonify({
+                        "status": "success",
+                        "data": result.data,
+                        "response_time": result.response_time
+                    })
+                else:
+                    return jsonify({
+                        "status": "error",
+                        "error": result.error
+                    }), 500
+
+            except Exception as e:
+                logger.error(f"Error getting system info for {device_id}: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/sut/by-ip/<ip>/system_info', methods=['GET'])
+        def get_sut_system_info_by_ip(ip):
+            """Get detailed system information from SUT by IP address"""
+            try:
+                result = self.sut_client.get_system_info(ip, 8080)
+
+                if result.success:
+                    return jsonify({
+                        "status": "success",
+                        "data": result.data,
+                        "response_time": result.response_time
+                    })
+                else:
+                    return jsonify({
+                        "status": "error",
+                        "error": result.error
+                    }), 500
+
+            except Exception as e:
+                logger.error(f"Error getting system info for IP {ip}: {e}")
+                return jsonify({"error": str(e)}), 500
+
         @app.route('/api/sut/<device_id>/screenshot', methods=['GET'])
         def take_sut_screenshot(device_id):
             """Take screenshot from a specific SUT"""
@@ -336,7 +384,7 @@ class APIRoutes:
                 device = self.device_registry.get_device_by_id(device_id)
                 if not device:
                     return jsonify({"error": f"Device {device_id} not found"}), 404
-                    
+
                 # Create temporary file for screenshot
                 with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
                     tmp_path = tmp_file.name
@@ -571,6 +619,8 @@ class APIRoutes:
         def check_game_availability(game_name):
             """
             Check if a game is available (installed) on a specific SUT.
+            Fast path: Direct SUT query for Steam App ID/name matching.
+            Fallback: Preset-manager for abbreviation matching (e.g., ffxiv).
 
             Query Parameters:
                 sut_ip: IP address of the SUT to check
@@ -602,11 +652,11 @@ class APIRoutes:
 
                 config_steam_app_id = getattr(game_config, 'steam_app_id', None)
 
-                # Query SUT for installed games
+                # FAST PATH: Query SUT directly for installed games
                 try:
                     response = http_requests.get(
                         f"http://{sut_ip}:8080/installed_games",
-                        timeout=10
+                        timeout=5
                     )
 
                     if response.status_code != 200:
@@ -622,7 +672,7 @@ class APIRoutes:
                     data = response.json()
                     installed_games = data.get("games", [])
 
-                    # PRIORITY 1: Match by Steam App ID
+                    # PRIORITY 1: Match by Steam App ID (fastest, most reliable)
                     if config_steam_app_id:
                         for game in installed_games:
                             sut_app_id = game.get("steam_app_id")
@@ -638,7 +688,7 @@ class APIRoutes:
                                         "match_method": "steam_app_id"
                                     })
 
-                    # PRIORITY 2: Match by game name
+                    # PRIORITY 2: Match by game name substring
                     game_name_lower = game_name.lower()
                     for game in installed_games:
                         installed_name = game.get("name", "").lower()
@@ -653,6 +703,43 @@ class APIRoutes:
                                     "sut_ip": sut_ip,
                                     "match_method": "name"
                                 })
+
+                    # PRIORITY 3: Fallback to preset-manager for abbreviation matching (e.g., ffxiv)
+                    # Only do this if we have a preset_id to match against
+                    import re
+                    preset_id = None
+                    if hasattr(game_config, 'metadata') and game_config.metadata:
+                        preset_id = game_config.metadata.get('preset_id')
+                    if not preset_id:
+                        preset_id = re.sub(r'[^a-z0-9]+', '-', game_name.lower()).strip('-')
+
+                    # Check if any installed game was matched by preset-manager
+                    for game in installed_games:
+                        installed_name = game.get("name", "").lower()
+                        # Check for abbreviation patterns (e.g., ffxiv in name)
+                        if any(abbr in installed_name for abbr in ['ffxiv', 'ff14', 'bmw', 'rdr2', 'gta5', 'sotr', 'sottr']):
+                            # This might be an abbreviation match - check via preset-manager
+                            try:
+                                pm_response = http_requests.get(
+                                    f"http://localhost:5002/api/sync/sut-games/{sut_ip}?port=8080",
+                                    timeout=10
+                                )
+                                if pm_response.status_code == 200:
+                                    pm_data = pm_response.json()
+                                    for pm_game in pm_data.get("games", []):
+                                        if pm_game.get("preset_short_name") == preset_id:
+                                            logger.info(f"Game '{game_name}' available on SUT {sut_ip} via preset abbreviation match")
+                                            return jsonify({
+                                                "available": True,
+                                                "game_name": pm_game.get("name", game_name),
+                                                "steam_app_id": pm_game.get("steam_app_id"),
+                                                "install_path": pm_game.get("install_path"),
+                                                "sut_ip": sut_ip,
+                                                "match_method": "name"
+                                            })
+                            except Exception as e:
+                                logger.warning(f"Preset-manager fallback failed: {e}")
+                            break
 
                     # Not found
                     logger.info(f"Game '{game_name}' NOT available on SUT {sut_ip}")
@@ -968,22 +1055,171 @@ class APIRoutes:
 
         @app.route('/api/runs/<run_id>/stop', methods=['POST'])
         def stop_automation_run(run_id):
-            """Stop a specific automation run"""
+            """Stop a specific automation run
+
+            Optional JSON body:
+            - kill_game: bool - If true, also kill the game on the SUT
+            """
             try:
                 if not hasattr(self, 'run_manager') or self.run_manager is None:
                     return jsonify({"error": "Run manager not available"}), 500
-                
+
+                # Check if we should kill the game
+                kill_game = False
+                data = request.get_json(silent=True) or {}
+                kill_game = data.get('kill_game', False)
+
+                # Get run info before stopping (to get SUT IP and game)
+                run = self.run_manager.get_run(run_id)
+                sut_ip = run.sut_ip if run else None
+                game_name = run.game_name if run else None
+
                 success = self.run_manager.stop_run(run_id)
                 if not success:
                     return jsonify({"error": f"Run {run_id} not found or not running"}), 404
-                
+
+                # Kill the game if requested
+                game_killed = False
+                if kill_game and sut_ip:
+                    try:
+                        # Get device from registry
+                        device = self.device_registry.get_device_by_ip(sut_ip)
+                        if device:
+                            # Send kill command to SUT
+                            result = self.sut_client.perform_action(device.ip, device.port, {
+                                "type": "close_game"
+                            })
+                            game_killed = result.success
+                            logger.info(f"Kill game result for {game_name} on {sut_ip}: {result.success}")
+                    except Exception as kill_err:
+                        logger.warning(f"Failed to kill game on {sut_ip}: {kill_err}")
+
                 return jsonify({
                     "status": "success",
-                    "message": f"Stopped run {run_id}"
+                    "message": f"Stopped run {run_id}" + (" and killed game" if game_killed else ""),
+                    "game_killed": game_killed
                 })
-                
+
             except Exception as e:
                 logger.error(f"Error stopping run {run_id}: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/runs/<run_id>/logs', methods=['GET'])
+        def get_run_logs(run_id):
+            """Get logs for a specific automation run from blackbox files"""
+            try:
+                import re
+                from pathlib import Path
+
+                if not hasattr(self, 'run_manager') or self.run_manager is None:
+                    return jsonify({"error": "Run manager not available"}), 500
+
+                # Get manifest from storage
+                manifest = self.run_manager.storage.get_manifest(run_id)
+                if not manifest:
+                    return jsonify({"error": f"Run {run_id} not found"}), 404
+
+                # Get run directory
+                run_dir = self.run_manager.storage.get_run_dir(run_id)
+                if not run_dir or not run_dir.exists():
+                    return jsonify({"logs": [], "message": "Run directory not found"})
+
+                # Parse log entries from all blackbox files
+                logs = []
+                log_pattern = re.compile(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},?\d*)\s*-\s*(\S+)\s*-\s*(\w+)\s*-\s*(.*)$')
+
+                # Find all blackbox log files
+                for log_file in sorted(run_dir.rglob('blackbox*.log')):
+                    try:
+                        with open(log_file, 'r', encoding='utf-8') as f:
+                            for line in f:
+                                line = line.strip()
+                                if not line:
+                                    continue
+
+                                match = log_pattern.match(line)
+                                if match:
+                                    timestamp_str, module, level, message = match.groups()
+                                    # Convert timestamp to ISO format
+                                    try:
+                                        # Handle both "2025-12-28 17:39:18" and "2025-12-28 17:39:18,123"
+                                        timestamp_str = timestamp_str.replace(',', '.')
+                                        logs.append({
+                                            "timestamp": timestamp_str,
+                                            "level": level.lower(),
+                                            "message": f"[{module}] {message}"
+                                        })
+                                    except:
+                                        logs.append({
+                                            "timestamp": timestamp_str,
+                                            "level": level.lower(),
+                                            "message": f"[{module}] {message}"
+                                        })
+                                else:
+                                    # Line doesn't match pattern, append as continuation
+                                    if logs:
+                                        logs[-1]["message"] += "\n" + line
+                    except Exception as e:
+                        logger.warning(f"Error reading log file {log_file}: {e}")
+
+                return jsonify({
+                    "logs": logs,
+                    "run_id": run_id,
+                    "folder_name": manifest.folder_name,
+                    "total_entries": len(logs)
+                })
+
+            except Exception as e:
+                logger.error(f"Error getting logs for run {run_id}: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/runs/<run_id>/timeline', methods=['GET'])
+        def get_run_timeline(run_id):
+            """Get timeline events for a specific automation run"""
+            try:
+                import json
+                from pathlib import Path
+
+                if not hasattr(self, 'run_manager') or self.run_manager is None:
+                    return jsonify({"error": "Run manager not available"}), 500
+
+                # First check if run is currently active (has timeline in memory)
+                active_run = self.run_manager.get_run(run_id)
+                if active_run and hasattr(active_run, 'timeline') and active_run.timeline:
+                    # Return timeline from active run
+                    return jsonify({
+                        "run_id": run_id,
+                        "events": active_run.timeline.get_events_dict(),
+                        "source": "active"
+                    })
+
+                # Fall back to timeline.json file in run directory
+                manifest = self.run_manager.storage.get_manifest(run_id)
+                if not manifest:
+                    return jsonify({"error": f"Run {run_id} not found"}), 404
+
+                run_dir = self.run_manager.storage.get_run_dir(run_id)
+                if not run_dir or not run_dir.exists():
+                    return jsonify({"events": [], "message": "Run directory not found"})
+
+                timeline_file = run_dir / 'blackbox' / 'timeline.json'
+                if not timeline_file.exists():
+                    return jsonify({"events": [], "message": "Timeline not available for this run"})
+
+                try:
+                    with open(timeline_file, 'r') as f:
+                        timeline_data = json.load(f)
+                    return jsonify({
+                        "run_id": run_id,
+                        "events": timeline_data.get('events', []),
+                        "source": "file"
+                    })
+                except Exception as e:
+                    logger.warning(f"Error reading timeline file: {e}")
+                    return jsonify({"events": [], "error": str(e)})
+
+            except Exception as e:
+                logger.error(f"Error getting timeline for run {run_id}: {e}")
                 return jsonify({"error": str(e)}), 500
 
         @app.route('/api/runs/stats', methods=['GET'])

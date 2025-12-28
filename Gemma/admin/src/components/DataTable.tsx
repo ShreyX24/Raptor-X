@@ -14,13 +14,13 @@ export function StatusDot({
   size?: 'xs' | 'sm' | 'md';
 }) {
   const colors = {
-    success: 'bg-emerald-500',
-    error: 'bg-red-500',
-    warning: 'bg-amber-500',
-    info: 'bg-blue-500',
-    pending: 'bg-gray-500',
-    online: 'bg-emerald-500',
-    offline: 'bg-gray-500',
+    success: 'bg-success',
+    error: 'bg-danger',
+    warning: 'bg-warning',
+    info: 'bg-primary',
+    pending: 'bg-text-muted',
+    online: 'bg-success',
+    offline: 'bg-text-muted',
   };
 
   const sizes = {
@@ -98,13 +98,13 @@ export function DataTable<T extends Record<string, unknown>>({
     }
   };
 
-  const paddingClass = compact ? 'px-2 py-1' : 'px-3 py-2';
+  const paddingClass = compact ? 'px-2 py-1.5' : 'px-3 py-2';
 
   if (loading) {
     return (
-      <div className="bg-gray-800/50 rounded-lg border border-gray-700">
+      <div className="card">
         <div className="flex items-center justify-center h-24">
-          <span className="text-gray-500 text-sm">Loading...</span>
+          <span className="text-text-muted text-sm animate-pulse">Loading...</span>
         </div>
       </div>
     );
@@ -112,21 +112,21 @@ export function DataTable<T extends Record<string, unknown>>({
 
   return (
     <div
-      className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden"
+      className="card overflow-hidden"
       style={{ maxHeight }}
     >
       <div className="overflow-auto" style={{ maxHeight: maxHeight ? `calc(${maxHeight} - 2px)` : undefined }}>
         <table className="w-full text-sm">
-          <thead className="bg-gray-800 sticky top-0">
+          <thead className="bg-surface-elevated sticky top-0">
             <tr>
               {columns.map((col) => (
                 <th
                   key={col.key}
                   className={`
                     ${paddingClass}
-                    text-xs font-medium text-gray-400 uppercase tracking-wide
+                    text-xs font-medium text-text-muted uppercase tracking-wide
                     text-${col.align || 'left'}
-                    ${col.sortable ? 'cursor-pointer hover:text-gray-300 select-none' : ''}
+                    ${col.sortable ? 'cursor-pointer hover:text-text-secondary select-none transition-colors' : ''}
                   `}
                   style={{ width: col.width }}
                   onClick={() => col.sortable && handleSort(col.key)}
@@ -134,7 +134,7 @@ export function DataTable<T extends Record<string, unknown>>({
                   <div className="flex items-center gap-1">
                     {col.header}
                     {col.sortable && sortKey === col.key && (
-                      <span className="text-gray-500">
+                      <span className="text-primary">
                         {sortDirection === 'asc' ? '↑' : '↓'}
                       </span>
                     )}
@@ -148,7 +148,7 @@ export function DataTable<T extends Record<string, unknown>>({
               <tr>
                 <td
                   colSpan={columns.length}
-                  className={`${paddingClass} text-center text-gray-500`}
+                  className={`${paddingClass} text-center text-text-muted`}
                 >
                   {emptyMessage}
                 </td>
@@ -158,9 +158,9 @@ export function DataTable<T extends Record<string, unknown>>({
                 <tr
                   key={String(row[keyField])}
                   className={`
-                    border-t border-gray-700/50
-                    ${striped && index % 2 === 1 ? 'bg-gray-800/30' : ''}
-                    ${hoverable ? 'hover:bg-gray-700/30' : ''}
+                    border-t border-border/50
+                    ${striped && index % 2 === 1 ? 'bg-surface-elevated/30' : ''}
+                    ${hoverable ? 'hover:bg-surface-hover/50 transition-colors' : ''}
                     ${onRowClick ? 'cursor-pointer' : ''}
                   `}
                   onClick={() => onRowClick?.(row)}
@@ -170,7 +170,7 @@ export function DataTable<T extends Record<string, unknown>>({
                       key={col.key}
                       className={`
                         ${paddingClass}
-                        text-gray-300
+                        text-text-secondary
                         text-${col.align || 'left'}
                       `}
                     >
@@ -227,7 +227,7 @@ export function JobHistoryTable({ jobs, maxRows = 10 }: JobHistoryTableProps) {
       header: 'ID',
       width: '80px',
       render: (value) => (
-        <span className="font-mono text-xs text-gray-400">
+        <span className="font-mono text-xs text-text-muted">
           #{String(value).slice(-6)}
         </span>
       ),
@@ -238,7 +238,7 @@ export function JobHistoryTable({ jobs, maxRows = 10 }: JobHistoryTableProps) {
       width: '60px',
       align: 'right',
       render: (value) => (
-        <span className="tabular-nums">
+        <span className="font-numbers tabular-nums">
           {(Number(value) / 1000).toFixed(1)}s
         </span>
       ),
@@ -251,7 +251,7 @@ export function JobHistoryTable({ jobs, maxRows = 10 }: JobHistoryTableProps) {
       render: (value) => {
         const mb = Number(value) / (1024 * 1024);
         return (
-          <span className="tabular-nums text-gray-400">
+          <span className="font-numbers tabular-nums text-text-muted">
             {mb.toFixed(1)}MB
           </span>
         );
@@ -264,7 +264,7 @@ export function JobHistoryTable({ jobs, maxRows = 10 }: JobHistoryTableProps) {
       render: (value) => {
         const date = new Date(String(value));
         return (
-          <span className="text-gray-500 text-xs">
+          <span className="text-text-muted text-xs font-numbers">
             {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </span>
         );

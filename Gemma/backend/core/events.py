@@ -25,6 +25,11 @@ class EventType(Enum):
     AUTOMATION_COMPLETED = "automation_completed"
     AUTOMATION_FAILED = "automation_failed"
     OMNIPARSER_STATUS_CHANGED = "omniparser_status_changed"
+    # Step-level events for automation timeline
+    AUTOMATION_STEP_STARTED = "automation_step_started"
+    AUTOMATION_STEP_COMPLETED = "automation_step_completed"
+    AUTOMATION_STEP_FAILED = "automation_step_failed"
+    AUTOMATION_PROGRESS = "automation_progress"
 
 
 @dataclass
