@@ -446,9 +446,13 @@ def launch_game(
 
         time.sleep(3)  # Initial wait for process spawn
 
+        # NOTE: Steam conflict detection (account in use on another computer) is now
+        # handled by the Gemma backend using OmniParser to parse screenshots after launch.
+        # This allows for reliable detection of the SDL-rendered dialog.
+
         if game_process:
             subprocess_status = "running" if game_process.poll() is None else "exited"
-            logger.info(f"Subprocess status after 3 seconds: {subprocess_status}")
+            logger.info(f"Subprocess status after checks: {subprocess_status}")
 
         # Wait for actual game process
         max_wait_time = 60

@@ -176,19 +176,25 @@ def get_steam_auto_login_user() -> Optional[str]:
         return None
 
 
-def verify_steam_login(timeout: int = 45) -> Tuple[bool, Optional[int]]:
+def verify_steam_login(timeout: int = 45) -> Tuple[bool, Optional[int], Optional[str]]:
     """
     Verify that Steam is logged in via registry check (ActiveUser != 0).
+
+    NOTE: Steam conflict detection (account in use elsewhere) is now handled
+    by the Gemma backend using OmniParser to parse screenshots after game launch.
+    This function only checks the registry for successful login.
 
     Args:
         timeout: Maximum seconds to wait for login
 
     Returns:
-        tuple: (success: bool, user_id: int or None)
+        tuple: (success: bool, user_id: int or None, error_reason: str or None)
+               error_reason can be: "timeout", None (success)
     """
     start_time = time.time()
 
     while time.time() - start_time < timeout:
+        # Check registry for successful login
         try:
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam\ActiveProcess")
             active_user, _ = winreg.QueryValueEx(key, "ActiveUser")
@@ -196,7 +202,7 @@ def verify_steam_login(timeout: int = 45) -> Tuple[bool, Optional[int]]:
 
             if active_user and active_user != 0:
                 logger.info(f"Steam login verified! ActiveUser ID: {active_user}")
-                return True, active_user
+                return True, active_user, None
             else:
                 logger.debug("Steam ActiveUser is 0, login in progress...")
 
@@ -206,7 +212,7 @@ def verify_steam_login(timeout: int = 45) -> Tuple[bool, Optional[int]]:
         time.sleep(2)
 
     logger.warning(f"Steam login verification timed out after {timeout}s")
-    return False, None
+    return False, None, "timeout"
 
 
 def is_steam_running() -> bool:
@@ -238,7 +244,7 @@ def kill_steam() -> bool:
     return killed
 
 
-def login_steam(username: str, password: str, timeout: int = 60) -> Dict[str, Any]:
+def login_steam(username: str, password: str, timeout: int = 180) -> Dict[str, Any]:
     """
     Login to Steam using steam.exe -login command.
 
@@ -249,13 +255,18 @@ def login_steam(username: str, password: str, timeout: int = 60) -> Dict[str, An
     4. Launch steam.exe with -login credentials
     5. Wait and verify login via registry
 
+    NOTE: Steam conflict detection (account in use elsewhere) is now handled
+    by the Gemma backend using OmniParser after game launch.
+
     Args:
         username: Steam username
         password: Steam password
         timeout: Max time to wait for login verification
 
     Returns:
-        dict: Result with status, message, user_id
+        dict: Result with status, message, user_id, error_reason
+              status: "success", "warning", "error"
+              error_reason: None, "timeout", "not_found"
     """
     logger.info(f"===== Steam Login Request: {username} =====")
 
@@ -265,7 +276,7 @@ def login_steam(username: str, password: str, timeout: int = 60) -> Dict[str, An
         logger.info(f"Current AutoLoginUser: {current_user}")
 
         if current_user and current_user.lower() == username.lower():
-            verified, user_id = verify_steam_login(timeout=5)
+            verified, user_id, error_reason = verify_steam_login(timeout=5)
             if verified:
                 logger.info(f"Already logged in as {username}")
                 return {
@@ -285,11 +296,11 @@ def login_steam(username: str, password: str, timeout: int = 60) -> Dict[str, An
     # 4. Get Steam path
     steam_path = get_steam_install_path()
     if not steam_path:
-        return {"status": "error", "message": "Steam not found"}
+        return {"status": "error", "message": "Steam not found", "error_reason": "not_found"}
 
     steam_exe = os.path.join(steam_path, "steam.exe")
     if not os.path.exists(steam_exe):
-        return {"status": "error", "message": f"steam.exe not found: {steam_exe}"}
+        return {"status": "error", "message": f"steam.exe not found: {steam_exe}", "error_reason": "not_found"}
 
     # 5. Launch Steam with -login credentials
     cmd = [steam_exe, "-login", username, password]
@@ -298,7 +309,7 @@ def login_steam(username: str, password: str, timeout: int = 60) -> Dict[str, An
 
     # 6. Wait for login verification
     logger.info("Waiting for Steam login...")
-    verified, user_id = verify_steam_login(timeout=timeout)
+    verified, user_id, error_reason = verify_steam_login(timeout=timeout)
 
     if verified:
         logger.info(f"===== Steam Login SUCCESS: {username} (ID: {user_id}) =====")
@@ -311,5 +322,6 @@ def login_steam(username: str, password: str, timeout: int = 60) -> Dict[str, An
         logger.warning("Steam login verification failed - check SUT")
         return {
             "status": "warning",
-            "message": "Steam launched but login unverified"
+            "message": "Steam launched but login unverified (timeout)",
+            "error_reason": error_reason or "timeout"
         }
