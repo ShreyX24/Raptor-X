@@ -38,6 +38,10 @@ class SUTSettings(BaseSettings):
 
     # Logging
     log_level: str = Field(default="INFO", description="Logging level")
+    log_file: Path = Field(
+        default_factory=lambda: Path.cwd() / "sut_client.log",
+        description="Log file path"
+    )
 
     # Timeouts
     request_timeout: int = Field(default=30, description="HTTP request timeout")

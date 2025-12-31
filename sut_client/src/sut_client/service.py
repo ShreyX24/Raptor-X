@@ -28,10 +28,12 @@ from .applier import PresetApplier
 from .discovery import DiscoveryThread
 from .ws_client import WebSocketClientThread
 from .input_controller import InputController
-from .launcher import launch_game, cancel_launch, terminate_game, get_game_status
+from .launcher import launch_game, cancel_launch, terminate_game, get_game_status, get_current_game_info
+from .window import ensure_window_foreground_v2, minimize_other_windows
 from .system import check_process, kill_process
-from .steam import login_steam, get_steam_library_folders
-from .hardware import set_dpi_awareness, get_screen_resolution
+from .steam import login_steam, get_steam_library_folders, get_steam_auto_login_user, is_steam_running, verify_steam_login
+from .hardware import set_dpi_awareness, get_screen_resolution, get_cpu_model, get_gpu_model
+from .display import get_display_manager
 
 # Setup logging
 logging.basicConfig(
@@ -84,7 +86,8 @@ def create_app() -> Flask:
                 "screenshot",
                 "steam_login",
                 "process_control",
-                "performance_monitoring"
+                "performance_monitoring",
+                "display_resolution"
             ],
             "screen": {
                 "width": screen_width,
@@ -98,6 +101,200 @@ def create_app() -> Flask:
     def health():
         """Health check endpoint"""
         return jsonify({"status": "healthy"})
+
+    @app.route('/logs', methods=['GET'])
+    def get_logs():
+        """
+        Retrieve SUT client logs.
+
+        Query params:
+        - lines: Number of recent lines to return (default: 1000)
+        - since: ISO timestamp - return logs after this time (optional)
+        - download: true to download as file, false for JSON (default: false)
+
+        Returns:
+        {
+            "status": "success",
+            "log_file": "path/to/sut_client.log",
+            "lines": [...],
+            "line_count": 1000
+        }
+        """
+        try:
+            log_path = settings.log_file
+
+            if not log_path or not Path(str(log_path)).exists():
+                return jsonify({
+                    "status": "error",
+                    "message": "Log file not found or logging not enabled"
+                }), 404
+
+            download = request.args.get('download', 'false').lower() == 'true'
+
+            if download:
+                # Return full log file as download
+                return send_file(
+                    str(log_path),
+                    mimetype='text/plain',
+                    as_attachment=True,
+                    download_name=f"sut_client_{settings.hostname}.log"
+                )
+
+            # Return last N lines as JSON
+            lines_requested = int(request.args.get('lines', 1000))
+            since_str = request.args.get('since')
+
+            with open(str(log_path), 'r', encoding='utf-8', errors='replace') as f:
+                all_lines = f.readlines()
+
+            # Filter by timestamp if provided
+            if since_str:
+                try:
+                    since_dt = datetime.fromisoformat(since_str.replace('Z', '+00:00'))
+                    filtered_lines = []
+                    for line in all_lines:
+                        # Try to extract timestamp from log line
+                        # Format: 2025-12-31 10:30:45,123 - ...
+                        if len(line) >= 23:
+                            try:
+                                line_time = datetime.fromisoformat(line[:23].replace(',', '.'))
+                                if line_time >= since_dt:
+                                    filtered_lines.append(line)
+                            except ValueError:
+                                filtered_lines.append(line)  # Include lines without timestamp
+                        else:
+                            filtered_lines.append(line)
+                    all_lines = filtered_lines
+                except ValueError:
+                    pass  # Invalid timestamp, ignore filter
+
+            # Get last N lines
+            recent_lines = all_lines[-lines_requested:] if lines_requested > 0 else all_lines
+
+            return jsonify({
+                "status": "success",
+                "log_file": str(log_path),
+                "hostname": settings.hostname,
+                "lines": [line.rstrip('\n') for line in recent_lines],
+                "line_count": len(recent_lines),
+                "total_lines": len(all_lines)
+            })
+
+        except Exception as e:
+            logger.error(f"Error retrieving logs: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    @app.route('/logs/clear', methods=['POST'])
+    def clear_logs():
+        """
+        Clear/rotate the SUT client log file.
+        Creates a backup before clearing.
+
+        Returns:
+        {
+            "status": "success",
+            "message": "Logs cleared",
+            "backup": "sut_client.log.backup"
+        }
+        """
+        try:
+            log_path = settings.log_file
+
+            if not log_path or not Path(str(log_path)).exists():
+                return jsonify({
+                    "status": "error",
+                    "message": "Log file not found"
+                }), 404
+
+            # Create backup
+            backup_path = Path(str(log_path) + '.backup')
+            import shutil
+            shutil.copy2(str(log_path), str(backup_path))
+
+            # Clear the log file
+            with open(str(log_path), 'w') as f:
+                f.write('')
+
+            logger.info("Log file cleared (backup created)")
+
+            return jsonify({
+                "status": "success",
+                "message": "Logs cleared",
+                "backup": str(backup_path)
+            })
+
+        except Exception as e:
+            logger.error(f"Error clearing logs: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    @app.route('/system_info', methods=['GET'])
+    def system_info():
+        """Return detailed system information for SUT"""
+        import platform
+        import psutil
+
+        # Get CPU info
+        cpu_brand = get_cpu_model()
+
+        # Get GPU info
+        gpu_model = get_gpu_model()
+
+        # Get RAM info
+        try:
+            ram_bytes = psutil.virtual_memory().total
+            ram_gb = round(ram_bytes / (1024 ** 3))
+        except Exception:
+            ram_gb = 0
+
+        # Get OS info
+        os_name = platform.system()
+        os_version = platform.version()
+        os_release = platform.release()
+
+        # Get BIOS info (Windows only)
+        bios_name = "Unknown"
+        bios_version = "Unknown"
+        if platform.system() == "Windows":
+            try:
+                import wmi
+                w = wmi.WMI()
+                bios = w.Win32_BIOS()
+                if bios:
+                    bios_name = bios[0].Name or "Unknown"
+                    bios_version = bios[0].SMBIOSBIOSVersion or "Unknown"
+            except Exception as e:
+                logger.warning(f"BIOS detection failed: {e}")
+
+        # Get screen resolution
+        screen_width, screen_height = get_screen_resolution()
+
+        return jsonify({
+            "cpu": {
+                "brand_string": cpu_brand,
+            },
+            "gpu": {
+                "name": gpu_model,
+            },
+            "ram": {
+                "total_gb": ram_gb,
+            },
+            "os": {
+                "name": os_name,
+                "version": os_version,
+                "release": os_release,
+                "build": os_version,  # Windows build is in version
+            },
+            "bios": {
+                "name": bios_name,
+                "version": bios_version,
+            },
+            "screen": {
+                "width": screen_width,
+                "height": screen_height,
+            },
+            "hostname": settings.hostname,
+            "device_id": settings.device_id,
+        })
 
     @app.route('/apply-preset', methods=['POST'])
     def apply_preset():
@@ -201,21 +398,192 @@ def create_app() -> Flask:
             "screen_height": screen_height
         })
 
+    # =========================================================================
+    # DISPLAY RESOLUTION MANAGEMENT
+    # =========================================================================
+
+    @app.route('/display/current', methods=['GET'])
+    def display_current():
+        """
+        Get the current display resolution.
+
+        Returns:
+        {
+            "status": "success",
+            "resolution": {
+                "width": 1920,
+                "height": 1080,
+                "refresh_rate": 60
+            }
+        }
+        """
+        try:
+            display_mgr = get_display_manager()
+            current = display_mgr.get_current_resolution()
+            return jsonify({
+                "status": "success",
+                "resolution": current.to_dict()
+            })
+        except Exception as e:
+            logger.error(f"Error getting current resolution: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    @app.route('/display/resolutions', methods=['GET'])
+    def display_resolutions():
+        """
+        Get list of supported display resolutions.
+
+        Query params:
+        - common_only: true|false (default: false) - Only return common gaming resolutions
+
+        Returns:
+        {
+            "status": "success",
+            "resolutions": [
+                {"width": 3840, "height": 2160, "refresh_rate": 60},
+                {"width": 2560, "height": 1440, "refresh_rate": 144},
+                ...
+            ],
+            "current": {"width": 1920, "height": 1080, "refresh_rate": 60}
+        }
+        """
+        try:
+            display_mgr = get_display_manager()
+            common_only = request.args.get('common_only', 'false').lower() == 'true'
+
+            if common_only:
+                resolutions = display_mgr.get_common_resolutions()
+            else:
+                resolutions = display_mgr.get_supported_resolutions()
+
+            current = display_mgr.get_current_resolution()
+
+            return jsonify({
+                "status": "success",
+                "resolutions": [r.to_dict() for r in resolutions],
+                "current": current.to_dict(),
+                "count": len(resolutions)
+            })
+        except Exception as e:
+            logger.error(f"Error getting supported resolutions: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    @app.route('/display/resolution', methods=['POST'])
+    def display_set_resolution():
+        """
+        Set the display resolution.
+
+        Request body:
+        {
+            "width": 1920,
+            "height": 1080,
+            "refresh_rate": 60  # Optional, uses highest available if not specified
+        }
+
+        Returns:
+        {
+            "status": "success",
+            "message": "Resolution changed to 1920x1080@60Hz",
+            "resolution": {"width": 1920, "height": 1080, "refresh_rate": 60}
+        }
+        """
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({"status": "error", "message": "No data provided"}), 400
+
+            width = data.get('width')
+            height = data.get('height')
+            refresh_rate = data.get('refresh_rate')
+
+            if not width or not height:
+                return jsonify({
+                    "status": "error",
+                    "message": "width and height are required"
+                }), 400
+
+            display_mgr = get_display_manager()
+
+            # Check if resolution is supported
+            if not display_mgr.is_resolution_supported(width, height):
+                return jsonify({
+                    "status": "error",
+                    "message": f"Resolution {width}x{height} is not supported by this display"
+                }), 400
+
+            # Change resolution
+            success, message = display_mgr.set_resolution(width, height, refresh_rate)
+
+            if success:
+                current = display_mgr.get_current_resolution()
+                return jsonify({
+                    "status": "success",
+                    "message": message,
+                    "resolution": current.to_dict()
+                })
+            else:
+                return jsonify({
+                    "status": "error",
+                    "message": message
+                }), 500
+
+        except Exception as e:
+            logger.error(f"Error setting resolution: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    @app.route('/display/restore', methods=['POST'])
+    def display_restore():
+        """
+        Restore the original display resolution.
+
+        Call this after automation completes to restore the resolution
+        that was active before any changes were made.
+
+        Returns:
+        {
+            "status": "success",
+            "message": "Original resolution restored",
+            "resolution": {"width": 2560, "height": 1440, "refresh_rate": 144}
+        }
+        """
+        try:
+            display_mgr = get_display_manager()
+            success, message = display_mgr.restore_original_resolution()
+
+            if success:
+                current = display_mgr.get_current_resolution()
+                return jsonify({
+                    "status": "success",
+                    "message": message,
+                    "resolution": current.to_dict()
+                })
+            else:
+                return jsonify({
+                    "status": "error",
+                    "message": message
+                }), 500
+
+        except Exception as e:
+            logger.error(f"Error restoring resolution: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
     @app.route('/installed_games', methods=['GET'])
     def installed_games():
         """
         Scan Steam library folders and return installed games.
-        Used by Discovery Service to get game inventory on SUT.
+        Detects both Steam games (with manifests) and standalone games (folders without manifests).
         """
         try:
             libraries = get_steam_library_folders()
             installed = []
+            seen_dirs = set()  # Track install dirs to avoid duplicates
 
             for lib in libraries:
                 steamapps = os.path.join(lib, "steamapps")
                 if not os.path.exists(steamapps):
                     continue
 
+                # First pass: Get Steam games with manifests
                 for filename in os.listdir(steamapps):
                     if filename.startswith("appmanifest_") and filename.endswith(".acf"):
                         app_id = filename.replace("appmanifest_", "").replace(".acf", "")
@@ -225,7 +593,6 @@ def create_app() -> Flask:
                             with open(manifest_path, 'r', encoding='utf-8') as f:
                                 content = f.read()
 
-                            # Parse name
                             name_match = re.search(r'"name"\s+"([^"]+)"', content)
                             installdir_match = re.search(r'"installdir"\s+"([^"]+)"', content)
 
@@ -233,16 +600,36 @@ def create_app() -> Flask:
                                 game_name = name_match.group(1)
                                 install_dir = installdir_match.group(1)
                                 full_path = os.path.join(steamapps, "common", install_dir)
+                                seen_dirs.add(install_dir.lower())
 
                                 installed.append({
                                     "steam_app_id": app_id,
                                     "name": game_name,
                                     "install_dir": install_dir,
                                     "install_path": full_path,
-                                    "exists": os.path.exists(full_path)
+                                    "exists": os.path.exists(full_path),
+                                    "source": "steam"
                                 })
                         except Exception as e:
                             logger.warning(f"Failed to parse {filename}: {e}")
+
+                # Second pass: Detect standalone games in common folder without manifests
+                common_path = os.path.join(steamapps, "common")
+                if os.path.exists(common_path):
+                    for folder in os.listdir(common_path):
+                        if folder.lower() not in seen_dirs:
+                            folder_path = os.path.join(common_path, folder)
+                            if os.path.isdir(folder_path):
+                                # This is a standalone/benchmark folder without Steam manifest
+                                installed.append({
+                                    "steam_app_id": None,
+                                    "name": folder,  # Use folder name as game name
+                                    "install_dir": folder,
+                                    "install_path": folder_path,
+                                    "exists": True,
+                                    "source": "standalone"
+                                })
+                                logger.info(f"Found standalone game: {folder}")
 
             return jsonify({
                 "success": True,
@@ -346,6 +733,57 @@ def create_app() -> Flask:
             return jsonify(result)
         except Exception as e:
             logger.error(f"Terminate game error: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    @app.route('/focus', methods=['POST'])
+    def focus_game():
+        """
+        Focus the game window to ensure it's in foreground.
+        This should be called before each automation step to prevent
+        the game from being minimized or losing focus.
+
+        Request body (optional):
+        {
+            "minimize_others": false  # Also minimize other windows
+        }
+        """
+        try:
+            game_info = get_current_game_info()
+            pid = game_info.get('pid')
+
+            if not pid:
+                return jsonify({
+                    "status": "error",
+                    "message": "No game is currently running"
+                }), 400
+
+            data = request.get_json() or {}
+            minimize_others = data.get('minimize_others', False)
+
+            # Focus the game window
+            success = ensure_window_foreground_v2(pid, timeout=3)
+
+            # Optionally minimize other windows
+            minimized_count = 0
+            if minimize_others and success:
+                minimized_count = minimize_other_windows(pid)
+
+            if success:
+                return jsonify({
+                    "status": "success",
+                    "message": f"Game window focused (PID: {pid})",
+                    "pid": pid,
+                    "minimized_others": minimized_count
+                })
+            else:
+                return jsonify({
+                    "status": "warning",
+                    "message": f"Could not confirm focus for PID {pid}, but game is running",
+                    "pid": pid
+                })
+
+        except Exception as e:
+            logger.error(f"Focus game error: {e}")
             return jsonify({"status": "error", "message": str(e)}), 500
 
     # =========================================================================
@@ -482,6 +920,11 @@ def create_app() -> Flask:
                 input_controller.move_mouse(x, y)
                 result["message"] = f"Moved mouse to ({x}, {y})"
 
+            elif action_type == 'close_game' or action_type == 'terminate_game':
+                terminate_result = terminate_game()
+                result['message'] = terminate_result.get('message', 'Game terminated')
+                result['terminated'] = True
+
             elif action_type == 'wait':
                 duration = data.get('duration', 1.0)
                 time.sleep(duration)
@@ -491,7 +934,7 @@ def create_app() -> Flask:
                 return jsonify({
                     "status": "error",
                     "message": f"Unknown action: {action_type}",
-                    "valid_actions": ["click", "double_click", "hold_click", "drag", "scroll",
+                    "valid_actions": ["click", "double_click", "hold_click", "drag", "scroll", "close_game",
                                       "key", "hold_key", "hotkey", "type", "move", "wait"]
                 }), 400
 
@@ -609,6 +1052,69 @@ def create_app() -> Flask:
     # STEAM ENDPOINTS (from KATANA Gemma v0.2)
     # =========================================================================
 
+    @app.route('/steam/current', methods=['GET'])
+    def steam_current_user():
+        """
+        Get the currently logged-in Steam user.
+
+        Returns:
+        {
+            "status": "success",
+            "logged_in": true,
+            "username": "steam_username",
+            "user_id": 123456789  # Steam ID from ActiveUser registry
+        }
+
+        If not logged in:
+        {
+            "status": "success",
+            "logged_in": false,
+            "username": null,
+            "user_id": null
+        }
+        """
+        try:
+            # Check if Steam is running
+            steam_running = is_steam_running()
+
+            if not steam_running:
+                return jsonify({
+                    "status": "success",
+                    "logged_in": False,
+                    "steam_running": False,
+                    "username": None,
+                    "user_id": None,
+                    "message": "Steam is not running"
+                })
+
+            # Get the AutoLoginUser (the username set for login)
+            username = get_steam_auto_login_user()
+
+            # Verify if actually logged in (ActiveUser != 0)
+            verified, user_id, _ = verify_steam_login(timeout=3)
+
+            if verified and username:
+                return jsonify({
+                    "status": "success",
+                    "logged_in": True,
+                    "steam_running": True,
+                    "username": username,
+                    "user_id": user_id
+                })
+            else:
+                return jsonify({
+                    "status": "success",
+                    "logged_in": False,
+                    "steam_running": True,
+                    "username": username,  # May have username but not logged in
+                    "user_id": None,
+                    "message": "Steam is running but not logged in"
+                })
+
+        except Exception as e:
+            logger.error(f"Error getting current Steam user: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
     @app.route('/login_steam', methods=['POST'])
     def login_steam_route():
         """
@@ -618,14 +1124,14 @@ def create_app() -> Flask:
         {
             "username": "steam_username",
             "password": "steam_password",
-            "timeout": 60  # Optional
+            "timeout": 180  # Optional, default 3 minutes for slow connections
         }
         """
         try:
             data = request.get_json() or {}
             username = data.get('username')
             password = data.get('password')
-            timeout = data.get('timeout', 60)
+            timeout = data.get('timeout', 180)
 
             if not username or not password:
                 return jsonify({
@@ -707,8 +1213,18 @@ def start_service(master_override: Optional[str] = None):
     """
     settings = get_settings()
 
+    # Add file handler if configured
+    if settings.log_file:
+        file_handler = logging.FileHandler(str(settings.log_file))
+        file_handler.setFormatter(
+            logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        )
+        logging.getLogger().addHandler(file_handler)
+
     logger.info("=" * 60)
     logger.info("PML SUT Client")
+    if settings.log_file:
+        logger.info(f"Logging to file: {settings.log_file}")
     logger.info("=" * 60)
     logger.info(f"Device ID: {settings.device_id}")
     logger.info(f"Hostname: {settings.hostname}")
@@ -832,3 +1348,4 @@ def start_service(master_override: Optional[str] = None):
 
 if __name__ == "__main__":
     start_service()
+

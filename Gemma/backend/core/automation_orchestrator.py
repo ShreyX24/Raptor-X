@@ -15,9 +15,17 @@ from datetime import datetime
 # Add the main directory to the path to import modules
 sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 
+import base64
+import yaml
+import requests
+
 from .run_manager import AutomationRun, RunResult, RunStatus
 from .events import event_bus, EventType
 from .timeline_manager import TimelineManager
+from .account_pool import get_account_pool
+
+# Steam dialogs config path
+STEAM_DIALOGS_CONFIG = Path(__file__).parent.parent.parent / "config" / "steam_dialogs.yaml"
 
 if TYPE_CHECKING:
     from .run_storage import RunStorageManager
@@ -105,9 +113,11 @@ class StepProgressCallback:
             screenshot_url=screenshot_url,
         )
 
-        # Update timeline
+        # Update timeline - include duration for wait steps
         if self.timeline:
-            self.timeline.step_started(step_number, description, self.total_steps)
+            # Get duration from current step config if it's a wait step
+            duration = getattr(self, '_current_step_duration', None)
+            self.timeline.step_started(step_number, description, self.total_steps, duration=duration)
 
         # Emit WebSocket event for real-time UI updates
         event_bus.emit(EventType.AUTOMATION_STEP_STARTED, {
@@ -228,6 +238,19 @@ class AutomationOrchestrator:
 
         # Store timeline reference on run for API access
         run.timeline = timeline
+
+        # Acquire Steam account pair for this SUT (for multi-SUT automation)
+        account_pool = get_account_pool()
+        account_acquired = False
+        if account_pool.is_configured():
+            account_acquired = account_pool.acquire_account_pair(run.sut_ip)
+            if account_acquired:
+                account_info = account_pool.get_current_account(run.sut_ip, run.game_name)
+                timeline.info(f"Steam account acquired: {account_info}")
+                logger.info(f"Acquired Steam account '{account_info}' for SUT {run.sut_ip}")
+            else:
+                timeline.warning("No Steam account pairs available - using existing Steam login on SUT")
+                logger.warning(f"No account pairs available for SUT {run.sut_ip}")
 
         try:
             # Reload game configs from disk to pick up any YAML changes
@@ -358,7 +381,13 @@ class AutomationOrchestrator:
             logger.error(error_msg, exc_info=True)
             timeline.run_failed(error_msg)
             return False, None, error_msg
-    
+
+        finally:
+            # Release Steam account pair if we acquired one
+            if account_acquired:
+                account_pool.release_account_pair(run.sut_ip)
+                logger.info(f"Released Steam account pair for SUT {run.sut_ip}")
+
     def _execute_single_iteration(self, run: AutomationRun, game_config, device, iteration_num: int, timeline: TimelineManager = None) -> bool:
         """Execute a single automation iteration"""
         try:
@@ -419,6 +448,146 @@ class AutomationOrchestrator:
 
             game_launcher = GameLauncher(network)
 
+            # ===== Steam Account Login =====
+            # If an account pair was acquired, check if we need to switch accounts
+            account_pool = get_account_pool()
+            if account_pool.has_allocation(run.sut_ip):
+                credentials = account_pool.get_account_for_game(run.sut_ip, run.game_name)
+                if credentials:
+                    steam_username, steam_password = credentials
+
+                    # Get configurable timeout from env var (default 180s for slow connections)
+                    steam_login_timeout = int(os.environ.get("STEAM_LOGIN_TIMEOUT", "180"))
+
+                    def attempt_steam_login(username: str, password: str) -> dict:
+                        """Attempt Steam login and return result dict"""
+                        try:
+                            return network.login_steam(username, password, timeout=steam_login_timeout)
+                        except Exception as e:
+                            logger.warning(f"Steam login request failed: {e}")
+                            return {'success': False, 'status': 'error', 'message': str(e)}
+
+                    def handle_steam_login_with_retry(initial_username: str, initial_password: str) -> bool:
+                        """
+                        Handle Steam login with automatic retry using alternative account if conflict detected.
+
+                        Returns True if login succeeded, False if failed (after retries).
+                        """
+                        username, password = initial_username, initial_password
+
+                        # First attempt
+                        if timeline:
+                            timeline.info(f"Steam: Logging in as {username}")
+                        logger.info(f"Attempting Steam login for: {username}")
+
+                        login_result = attempt_steam_login(username, password)
+
+                        if login_result.get('success'):
+                            if timeline:
+                                timeline.info(f"Steam login successful: {username}")
+                            logger.info(f"Steam login completed for {username}")
+                            # Clear any previous externally busy status for this account
+                            account_pool.clear_externally_busy(username)
+                            return True
+
+                        elif login_result.get('status') == 'conflict':
+                            # Account is in use on another device - try alternative
+                            if timeline:
+                                timeline.warning(f"Steam: Account '{username}' is in use on another device!")
+                            logger.warning(f"Steam account '{username}' is in use on another device")
+
+                            # Mark this account as externally busy
+                            account_pool.mark_account_externally_busy(run.sut_ip, username, run.game_name)
+
+                            # Try to get an alternative account
+                            if timeline:
+                                timeline.info("Checking for alternative Steam account...")
+                            logger.info(f"Looking for alternative Steam account for SUT {run.sut_ip}")
+
+                            alternative = account_pool.try_alternative_account(run.sut_ip, run.game_name)
+
+                            if alternative:
+                                alt_username, alt_password = alternative
+                                if timeline:
+                                    timeline.info(f"Steam: Trying alternative account '{alt_username}'")
+                                logger.info(f"Trying alternative Steam account: {alt_username}")
+
+                                # Retry with alternative account
+                                alt_result = attempt_steam_login(alt_username, alt_password)
+
+                                if alt_result.get('success'):
+                                    if timeline:
+                                        timeline.info(f"Steam login successful with alternative: {alt_username}")
+                                    logger.info(f"Steam login completed with alternative account: {alt_username}")
+                                    account_pool.clear_externally_busy(alt_username)
+                                    return True
+                                elif alt_result.get('status') == 'conflict':
+                                    # Alternative also in use - fail
+                                    if timeline:
+                                        timeline.error(f"Alternative account '{alt_username}' also in use on another device!")
+                                    logger.error(f"Alternative account '{alt_username}' also in use elsewhere")
+                                    account_pool.mark_account_externally_busy(run.sut_ip, alt_username, run.game_name)
+                                    return False
+                                else:
+                                    if timeline:
+                                        timeline.warning(f"Alternative account login failed: {alt_result.get('message', 'unknown')}")
+                                    logger.warning(f"Alternative Steam login failed: {alt_result.get('message')}")
+                                    return False
+                            else:
+                                # No alternative accounts available
+                                if timeline:
+                                    timeline.error("No alternative Steam accounts available!")
+                                    timeline.error("All configured account pairs are either allocated or in use elsewhere")
+                                logger.error("No alternative Steam account pairs available")
+                                return False
+                        else:
+                            # Other login failure (timeout, etc.)
+                            if timeline:
+                                timeline.warning(f"Steam login failed: {login_result.get('message', 'unknown')}")
+                            logger.warning(f"Steam login failed for {username}: {login_result.get('message')}")
+                            return False
+
+                    # Check current logged-in Steam user before attempting login
+                    current_steam = network.get_current_steam_user()
+                    if current_steam and current_steam.get("logged_in"):
+                        current_user = current_steam.get("username", "").lower()
+                        if current_user == steam_username.lower():
+                            if timeline:
+                                timeline.info(f"Steam: Already logged in as {steam_username}")
+                            logger.info(f"Steam already logged in as {steam_username}, skipping login")
+                        else:
+                            # Different user logged in - need to switch
+                            if timeline:
+                                timeline.info(f"Steam: Need to switch from {current_user} to {steam_username}")
+                            logger.info(f"Switching Steam account from {current_user} to {steam_username}")
+
+                            login_success = handle_steam_login_with_retry(steam_username, steam_password)
+                            if not login_success:
+                                # Steam login failed and no alternatives - fail the iteration
+                                error_msg = f"Steam login failed: All accounts in use or unavailable"
+                                if timeline:
+                                    timeline.error(error_msg)
+                                logger.error(error_msg)
+                                if self.storage:
+                                    self.storage.complete_iteration(run.run_id, iteration_num, success=False, error_message=error_msg)
+                                return False
+                    else:
+                        # No user logged in or Steam not running - login
+                        logger.info(f"Steam not logged in, initiating login for: {steam_username}")
+
+                        login_success = handle_steam_login_with_retry(steam_username, steam_password)
+                        if not login_success:
+                            # Steam login failed and no alternatives - fail the iteration
+                            error_msg = f"Steam login failed: All accounts in use or unavailable"
+                            if timeline:
+                                timeline.error(error_msg)
+                            logger.error(error_msg)
+                            if self.storage:
+                                self.storage.complete_iteration(run.run_id, iteration_num, success=False, error_message=error_msg)
+                            return False
+                else:
+                    logger.debug(f"No credentials returned for SUT {run.sut_ip}, using existing Steam session")
+
             # Create a stop event for this iteration
             stop_event = threading.Event()
 
@@ -450,6 +619,47 @@ class AutomationOrchestrator:
                 else:
                     timeline.preset_skipped("No preset configured or sync failed")
 
+            # ===== Resolution Switching =====
+            # Check if game config has a target resolution different from current
+            resolution_changed = False
+            target_resolution = getattr(game_config, 'resolution', None)
+            if target_resolution:
+                # Parse resolution string like "1920x1080"
+                try:
+                    target_width, target_height = map(int, target_resolution.lower().split('x'))
+
+                    # Only change if different from current
+                    if target_width != screen_width or target_height != screen_height:
+                        if timeline:
+                            timeline.info(f"Changing resolution from {screen_width}x{screen_height} to {target_width}x{target_height}")
+                        logger.info(f"Target resolution {target_width}x{target_height} differs from current {screen_width}x{screen_height}")
+
+                        # Check if target resolution is supported
+                        if network.is_resolution_supported(target_width, target_height):
+                            if network.set_resolution(target_width, target_height):
+                                resolution_changed = True
+                                screen_width, screen_height = target_width, target_height
+                                if timeline:
+                                    timeline.info(f"Resolution changed to {target_width}x{target_height}")
+                                logger.info(f"Resolution changed to {target_width}x{target_height}")
+
+                                # Update OmniParser client with new resolution
+                                vision_model.screen_width = target_width
+                                vision_model.screen_height = target_height
+
+                                # Wait for display to settle
+                                time.sleep(2)
+                            else:
+                                if timeline:
+                                    timeline.warning(f"Failed to change resolution to {target_width}x{target_height}")
+                                logger.warning(f"Failed to change resolution to {target_width}x{target_height}")
+                        else:
+                            if timeline:
+                                timeline.warning(f"Resolution {target_width}x{target_height} not supported by SUT")
+                            logger.warning(f"Resolution {target_width}x{target_height} not supported by SUT")
+                except ValueError:
+                    logger.warning(f"Invalid resolution format in game config: {target_resolution}")
+
             # Discover game path from SUT or use YAML config as fallback
             game_path = self._discover_game_path(network, game_config)
 
@@ -469,6 +679,31 @@ class AutomationOrchestrator:
                     logger.info(f"Game launched successfully: {game_path}")
                     if timeline:
                         timeline.game_launched(game_config.name)
+
+                    # ===== Check for Steam Dialogs (Optional) =====
+                    # Steam may show popups like "account in use" or "graphics API selection"
+                    # after game launch. We detect and handle them via OmniParser.
+                    # Can be disabled per-game via steam_dialog_check: false in game YAML
+                    steam_check_enabled = game_config.metadata.get('steam_dialog_check', True) if hasattr(game_config, 'metadata') else True
+                    steam_dialog_result = self._check_steam_dialogs(
+                        network=network,
+                        device=device,
+                        run=run,
+                        game_config=game_config,
+                        account_pool=account_pool,
+                        timeline=timeline,
+                        enabled=steam_check_enabled
+                    )
+                    if steam_dialog_result == "retry_with_alt_account":
+                        # Account conflict - need to retry with different account
+                        logger.warning("Steam account conflict - will retry with alternative account")
+                        if timeline:
+                            timeline.warning("Steam account conflict detected, trying alternative account")
+                        raise RuntimeError("STEAM_ACCOUNT_CONFLICT")
+                    elif steam_dialog_result == "fail":
+                        # Dialog detected but cannot be handled
+                        raise RuntimeError("Steam dialog could not be handled")
+
                 except Exception as e:
                     error_msg = f"Failed to launch game '{game_config.name}': {str(e)}"
                     logger.error(error_msg)
@@ -482,6 +717,46 @@ class AutomationOrchestrator:
                     if timeline:
                         timeline.error(f"Game launch failed: {error_msg}")
                     raise RuntimeError(error_msg)
+
+                # ===== Wait for actual game process (if launcher is separate) =====
+                game_process_name = game_config.game_process
+                if game_process_name and game_process_name != game_config.process_id:
+                    # Game has a separate launcher - wait for the actual game process
+                    if timeline:
+                        timeline.info(f"Waiting for game process: {game_process_name}")
+                    logger.info(f"Launcher started, waiting for actual game process: {game_process_name}")
+
+                    game_process_timeout = 120  # 2 minutes to wait for game process
+                    game_process_found = False
+                    start_wait = time.time()
+
+                    while time.time() - start_wait < game_process_timeout:
+                        # Check if game process is running via SUT's /check_process endpoint
+                        try:
+                            check_resp = network.session.post(
+                                f"{network.base_url}/check_process",
+                                json={"process_name": game_process_name},
+                                timeout=5
+                            )
+                            if check_resp.status_code == 200:
+                                check_result = check_resp.json()
+                                if check_result.get("running"):
+                                    game_process_found = True
+                                    detected_name = check_result.get("name", game_process_name)
+                                    detected_pid = check_result.get("pid", "N/A")
+                                    logger.info(f"Game process '{detected_name}' detected (PID: {detected_pid})!")
+                                    if timeline:
+                                        timeline.info(f"Game process detected: {detected_name} (PID: {detected_pid})")
+                                    break
+                        except Exception as e:
+                            logger.debug(f"Process check failed: {e}")
+
+                        time.sleep(5)  # Check every 5 seconds
+
+                    if not game_process_found:
+                        logger.warning(f"Game process '{game_process_name}' not detected within {game_process_timeout}s, continuing anyway")
+                        if timeline:
+                            timeline.warning(f"Game process '{game_process_name}' not detected, continuing with automation")
 
                 # ===== Game Initialization Wait =====
                 init_wait = startup_wait if startup_wait else 30  # Use config value or default 30s
@@ -554,11 +829,19 @@ class AutomationOrchestrator:
                             automation.stop_event.set()
                     except:
                         pass
-                        
+
+                # Restore resolution if we changed it
+                if 'resolution_changed' in locals() and resolution_changed and 'network' in locals():
+                    try:
+                        logger.info("Restoring original SUT resolution...")
+                        network.restore_resolution()
+                    except Exception as res_err:
+                        logger.warning(f"Failed to restore resolution: {res_err}")
+
                 # Force garbage collection
                 import gc
                 gc.collect()
-                
+
                 logger.debug(f"Cleanup completed for iteration {iteration_num}")
                 
             except Exception as cleanup_error:
@@ -651,6 +934,225 @@ class AutomationOrchestrator:
                 root_logger.removeHandler(handler)
                 handler.close()
             self._blackbox_handlers.clear()
+
+    def _check_steam_dialogs(
+        self,
+        network,
+        device,
+        run: 'AutomationRun',
+        game_config,
+        account_pool,
+        timeline=None,
+        enabled: bool = True
+    ) -> Optional[str]:
+        """
+        Check for Steam popup dialogs after game launch and handle them.
+
+        Uses OmniParser to detect dialogs like:
+        - "Account in use on another computer" (conflict)
+        - "Graphics API selection" (DX11/DX12/Vulkan)
+        - EULA agreements
+        - Cloud sync conflicts
+
+        Args:
+            network: NetworkManager instance
+            device: Device info with IP
+            run: Current automation run
+            game_config: GameConfig object
+            account_pool: Steam account pool for handling conflicts
+            timeline: TimelineManager for logging
+            enabled: Whether to run the check (default True)
+
+        Returns:
+            None if no dialog, disabled, or handled successfully
+            "retry_with_alt_account" if account conflict detected
+            "fail" if dialog detected but cannot be handled
+        """
+        if not enabled:
+            logger.debug("Steam dialog check disabled for this run")
+            return None
+
+        try:
+            sut_base_url = f"http://{device.ip}:{device.port}"
+            queue_service_url = "http://localhost:9000"  # Queue service for OmniParser
+
+            # Load steam dialogs config
+            if not STEAM_DIALOGS_CONFIG.exists():
+                logger.warning(f"Steam dialogs config not found: {STEAM_DIALOGS_CONFIG}")
+                return None
+
+            with open(STEAM_DIALOGS_CONFIG, 'r', encoding='utf-8') as f:
+                dialogs_config = yaml.safe_load(f)
+
+            settings = dialogs_config.get('settings', {})
+            dialogs = sorted(
+                dialogs_config.get('dialogs', []),
+                key=lambda d: d.get('priority', 99)
+            )
+
+            if not dialogs:
+                return None
+
+            # Get screen resolution from SUT
+            try:
+                screen_resp = network.session.get(f"{sut_base_url}/system_info", timeout=5)
+                if screen_resp.status_code == 200:
+                    system_info = screen_resp.json()
+                    screen_width = system_info.get('screen', {}).get('width', 1920)
+                    screen_height = system_info.get('screen', {}).get('height', 1080)
+                else:
+                    screen_width, screen_height = 1920, 1080
+            except Exception:
+                screen_width, screen_height = 1920, 1080
+
+            if timeline:
+                timeline.info("Checking for Steam dialogs...")
+
+            # Wait for dialog to appear
+            initial_wait = settings.get('initial_wait', 3)
+            time.sleep(initial_wait)
+
+            max_attempts = settings.get('check_attempts', 3)
+            check_interval = settings.get('check_interval', 2)
+            omniparser_timeout = settings.get('omniparser_timeout', 60)
+
+            for attempt in range(max_attempts):
+                logger.debug(f"Steam dialog check attempt {attempt + 1}/{max_attempts}")
+
+                # Get screenshot from SUT
+                try:
+                    screenshot_resp = requests.get(f"{sut_base_url}/screenshot", timeout=10)
+                    if screenshot_resp.status_code != 200:
+                        logger.warning(f"Failed to get screenshot: {screenshot_resp.status_code}")
+                        continue
+                    screenshot_bytes = screenshot_resp.content
+                except Exception as e:
+                    logger.warning(f"Screenshot failed: {e}")
+                    continue
+
+                # Parse with OmniParser via queue service
+                try:
+                    img_base64 = base64.b64encode(screenshot_bytes).decode('utf-8')
+                    parse_resp = requests.post(
+                        f"{queue_service_url}/parse/",
+                        json={"base64_image": img_base64},
+                        timeout=omniparser_timeout
+                    )
+                    if parse_resp.status_code != 200:
+                        logger.warning(f"OmniParser failed: {parse_resp.status_code}")
+                        continue
+                    parse_result = parse_resp.json()
+                except Exception as e:
+                    logger.warning(f"OmniParser error: {e}")
+                    continue
+
+                # Extract text from parsed content
+                content_list = parse_result.get('parsed_content_list', [])
+                parsed_text = " ".join(
+                    item.get('content', '') if isinstance(item, dict) else str(item)
+                    for item in content_list
+                ).lower()
+
+                # Check each dialog pattern
+                for dialog_cfg in dialogs:
+                    detection = dialog_cfg.get('detection', {})
+                    keywords = detection.get('keywords', [])
+                    require_all = detection.get('require_all', False)
+
+                    if require_all:
+                        matched = keywords if all(kw.lower() in parsed_text for kw in keywords) else []
+                    else:
+                        matched = [kw for kw in keywords if kw.lower() in parsed_text]
+
+                    if matched:
+                        dialog_name = dialog_cfg.get('name', dialog_cfg['id'])
+                        handler = dialog_cfg.get('handler', 'continue')
+                        logger.info(f"Steam dialog detected: {dialog_name} (matched: {matched})")
+
+                        if timeline:
+                            timeline.warning(f"Steam dialog detected: {dialog_name}")
+
+                        # Find and click button (prefer exact matches)
+                        action = dialog_cfg.get('action', {})
+                        button_text = action.get('button_text', '')
+                        alternatives = action.get('alternatives', [])
+                        all_buttons = [button_text] + alternatives
+
+                        # Two-pass: first exact match, then partial
+                        button_coords = None
+                        for exact_match in [True, False]:
+                            if button_coords:
+                                break
+                            for item in content_list:
+                                if isinstance(item, dict):
+                                    content_str = item.get('content', '').lower().strip()
+                                    bbox = item.get('bbox', [])
+                                    for btn in all_buttons:
+                                        btn_lower = btn.lower().strip()
+                                        if exact_match:
+                                            # Exact match only
+                                            is_match = content_str == btn_lower
+                                        else:
+                                            # Partial match - but content must START with button text
+                                            # Avoids "X CANCEL" matching "cancel"
+                                            is_match = content_str.startswith(btn_lower)
+                                        if is_match and bbox and len(bbox) >= 4:
+                                            x = int((bbox[0] + bbox[2]) / 2 * screen_width)
+                                            y = int((bbox[1] + bbox[3]) / 2 * screen_height)
+                                            button_coords = (x, y)
+                                            logger.debug(f"Found button '{btn}' (exact={exact_match}) at ({x}, {y})")
+                                            break
+                                    if button_coords:
+                                        break
+
+                        # Click the button
+                        if button_coords:
+                            try:
+                                click_resp = requests.post(
+                                    f"{sut_base_url}/action",
+                                    json={"type": "click", "x": button_coords[0], "y": button_coords[1]},
+                                    timeout=10
+                                )
+                                if click_resp.status_code == 200:
+                                    logger.info(f"Clicked '{button_text}' at {button_coords}")
+                                time.sleep(0.5)
+                            except Exception as e:
+                                logger.warning(f"Click failed: {e}")
+                        else:
+                            # Try escape as fallback
+                            try:
+                                requests.post(
+                                    f"{sut_base_url}/action",
+                                    json={"type": "key", "key": "escape"},
+                                    timeout=10
+                                )
+                                time.sleep(0.5)
+                            except Exception:
+                                pass
+
+                        # Return based on handler
+                        if handler == "try_alternative_account":
+                            if account_pool:
+                                current_account = getattr(run, '_current_steam_username', None)
+                                if current_account:
+                                    account_pool.mark_account_externally_busy(
+                                        run.sut_ip, current_account, game_config.name
+                                    )
+                            return "retry_with_alt_account"
+                        elif handler == "fail_run":
+                            return "fail"
+                        else:  # "continue", "retry_once", etc
+                            return None
+
+                if attempt < max_attempts - 1:
+                    time.sleep(check_interval)
+
+            logger.debug("No Steam dialog detected")
+            return None
+
+        except Exception as e:
+            logger.warning(f"Error checking Steam dialogs: {e}")
+            return None
 
     def _discover_game_path(self, network, game_config) -> Optional[str]:
         """
