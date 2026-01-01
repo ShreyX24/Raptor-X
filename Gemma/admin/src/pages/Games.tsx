@@ -492,6 +492,11 @@ function RunGameModal({ game, devices, preSelectedSut, onClose }: RunGameModalPr
   // Derive game slug from game name (simple conversion)
   const gameSlug = installedInfo?.preset_short_name || game.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
 
+  // Get selected device info (stable reference via useMemo pattern)
+  const selectedDeviceInfo = devices.find(d => d.ip === selectedDevice);
+  const selectedDevicePort = selectedDeviceInfo?.port || 8080;
+  const selectedDeviceId = selectedDeviceInfo?.device_id;
+
   // Check game availability when device is selected
   useEffect(() => {
     if (!selectedDevice) {
@@ -503,11 +508,7 @@ function RunGameModal({ game, devices, preSelectedSut, onClose }: RunGameModalPr
       setCheckingAvailability(true);
       setError(null);
       try {
-        // Get the device's actual port
-        const device = devices.find(d => d.ip === selectedDevice);
-        const port = device?.port || 8080;  // Default to 8080 (SUT client port)
-
-        const result = await getSutInstalledGames(selectedDevice, port);
+        const result = await getSutInstalledGames(selectedDevice, selectedDevicePort);
         if (!result.online) {
           setError('SUT is offline');
           setInstalledInfo(null);
@@ -539,11 +540,11 @@ function RunGameModal({ game, devices, preSelectedSut, onClose }: RunGameModalPr
     };
 
     checkAvailability();
-  }, [selectedDevice, game.name, devices]);
+  }, [selectedDevice, selectedDevicePort, game.name]);
 
   // Fetch SUT display resolutions when device is selected
   useEffect(() => {
-    if (!selectedDevice) {
+    if (!selectedDevice || !selectedDeviceId) {
       setSutResolutions([]);
       return;
     }
@@ -551,8 +552,8 @@ function RunGameModal({ game, devices, preSelectedSut, onClose }: RunGameModalPr
     const fetchSutResolutions = async () => {
       setLoadingSutResolutions(true);
       try {
-        // Use device IP as identifier for the resolution API
-        const response = await getSutResolutions(selectedDevice);
+        // Use device_id for the resolution API
+        const response = await getSutResolutions(selectedDeviceId);
         setSutResolutions(response.resolutions || []);
       } catch (err) {
         console.error('Failed to fetch SUT resolutions:', err);
@@ -568,7 +569,7 @@ function RunGameModal({ game, devices, preSelectedSut, onClose }: RunGameModalPr
     };
 
     fetchSutResolutions();
-  }, [selectedDevice]);
+  }, [selectedDevice, selectedDeviceId]);
 
   // Fetch preset matrix when game is found
   useEffect(() => {
