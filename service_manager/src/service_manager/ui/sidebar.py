@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QColor, QBrush, QIcon, QPixmap, QPainter, QFont
 
-from ..config import SERVICES, ServiceConfig
+from ..config import get_services, ServiceConfig
 
 
 class ServiceItemDelegate(QStyledItemDelegate):
@@ -113,7 +113,7 @@ class ServiceSidebar(QWidget):
 
     def _populate_list(self):
         """Populate list with services"""
-        for config in SERVICES:
+        for config in get_services():
             self._add_service_item(config)
 
     def _add_service_item(self, config):
@@ -133,8 +133,8 @@ class ServiceSidebar(QWidget):
 
     def _get_config(self, service_name: str) -> ServiceConfig:
         """Get config for a service (static or dynamic)"""
-        # First check static SERVICES
-        config = next((c for c in SERVICES if c.name == service_name), None)
+        # First check static services
+        config = next((c for c in get_services() if c.name == service_name), None)
         if config:
             return config
         # Then check dynamic configs

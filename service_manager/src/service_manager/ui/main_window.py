@@ -16,7 +16,7 @@ from .settings_dialog import SettingsDialog
 from .dashboard_panel import DashboardPanel
 from .flow_diagram import FlowDiagramContainer
 from ..services.process_manager import ProcessManager
-from ..config import SERVICES, apply_settings_to_services
+from ..config import get_services, apply_settings_to_services
 from ..settings import get_settings_manager
 
 
@@ -54,13 +54,13 @@ class MainWindow(QMainWindow):
                 settings.load()
             else:
                 # User cancelled - create default config
-                settings.create_default_config(SERVICES)
+                settings.create_default_config(get_services())
                 settings.save()
         else:
             settings.load()
 
         # Apply settings to service configs
-        apply_settings_to_services()
+        apply_settings_to_services(get_services())
 
     def _setup_ui(self):
         central_widget = QWidget()
@@ -191,7 +191,7 @@ class MainWindow(QMainWindow):
         self.log_container.restart_requested.connect(self._restart_service)
 
     def _init_log_panels(self):
-        for config in SERVICES:
+        for config in get_services():
             # Only add panels for enabled services
             if config.enabled:
                 self.log_container.add_panel(config.name, config.display_name)
@@ -259,10 +259,7 @@ class MainWindow(QMainWindow):
 
     def _restart_all_services(self):
         self.status_label.setText("Restarting all services...")
-        self.process_manager.stop_all()
-        # Start all after a short delay
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(1000, self.process_manager.start_all)
+        self.process_manager.restart_all()
 
     def _clear_all_logs(self):
         for panel in self.log_container.panels.values():
@@ -311,7 +308,7 @@ class MainWindow(QMainWindow):
 
     def _apply_service_settings(self):
         """Apply settings to all log panels and sidebar"""
-        for config in SERVICES:
+        for config in get_services():
             # Update log panel
             panel = self.log_container.get_panel(config.name)
             if panel:
@@ -334,8 +331,11 @@ class MainWindow(QMainWindow):
     def _on_settings_changed(self, old_omniparser_urls: str = ""):
         """Handle settings change"""
         # Reload and apply settings
-        apply_settings_to_services()
+        apply_settings_to_services(get_services())
         self._apply_service_settings()
+
+        # Refresh ProcessManager's cached configs (picks up new working directories, etc.)
+        self.process_manager.refresh_service_configs()
 
         # Update OmniParser instances in process manager
         settings = get_settings_manager()
@@ -392,7 +392,7 @@ class MainWindow(QMainWindow):
         total = self.process_manager.get_total_count()
         self.running_label.setText(f"{running}/{total} services running")
         ports = []
-        for config in SERVICES:
+        for config in get_services():
             if self.process_manager.is_running(config.name) and config.port:
                 ports.append(f"{config.display_name}: {config.port}")
         if ports:

@@ -1,22 +1,43 @@
 # Gemma E2E - Implementation Plans
 
 > **Location:** `doc/plans/`
-> **Last Updated:** 2025-12-27
+> **Last Updated:** 2025-12-28
 
 This folder contains implementation plans for major features and integrations.
 
-## Plan Index
+---
+
+## Active Roadmap
+
+**[gemma-roadmap-2025.md](./gemma-roadmap-2025.md)** - Current development priorities
+
+### Current Sprint
+1. Fix Run Timestamps (Critical)
+2. Windows Resolution Management
+3. Steam Account Pool
+4. Multi-SUT Batch Runs
+5. Real-time Automation Timeline
+6. Run Scheduler
+
+---
+
+## Completed Plans
 
 | Plan | Status | Description |
 |------|--------|-------------|
-| [steam-account-pool-and-ocr-config.md](./steam-account-pool-and-ocr-config.md) | Partial | Multi-SUT Steam account management + Per-game OCR config (OCR done) |
-| [queue-service-multi-server-omniparser.md](./queue-service-multi-server-omniparser.md) | Done | Round-robin OmniParser load balancing |
-| [omniparser-server-management.md](./omniparser-server-management.md) | Pending | Start/stop OmniParser from Service Manager |
-| [gemma-frontend-control-center.md](./gemma-frontend-control-center.md) | Pending | Comprehensive React dashboard |
-| [service-manager-dashboard-omniparser.md](./service-manager-dashboard-omniparser.md) | Done | PySide6 dashboard with flow diagram |
-| [service-manager-gui-initial.md](./service-manager-gui-initial.md) | Done | Initial Service Manager design |
-| [gemma-preset-manager-integration.md](./gemma-preset-manager-integration.md) | Done | SUT Discovery Service as gateway |
-| [performance-extraction-intel-tracing.md](./performance-extraction-intel-tracing.md) | Pending | Benchmark results + Intel PTAT/SocWatch tracing |
+| [queue-service-multi-server-omniparser.md](./queue-service-multi-server-omniparser.md) | **Done** | Round-robin OmniParser load balancing |
+| [service-manager-dashboard-omniparser.md](./service-manager-dashboard-omniparser.md) | **Done** | PySide6 dashboard with flow diagram |
+| [service-manager-gui-initial.md](./service-manager-gui-initial.md) | **Done** | Initial Service Manager design |
+| [gemma-preset-manager-integration.md](./gemma-preset-manager-integration.md) | **Done** | SUT Discovery Service as gateway |
+
+## Partial/Pending Plans
+
+| Plan | Status | Description |
+|------|--------|-------------|
+| [steam-account-pool-and-ocr-config.md](./steam-account-pool-and-ocr-config.md) | Partial | OCR config done; Steam pool in roadmap |
+| [gemma-frontend-control-center.md](./gemma-frontend-control-center.md) | Partial | Dashboard done; Workflow Builder pending |
+| [omniparser-server-management.md](./omniparser-server-management.md) | Future | Start/stop OmniParser from Service Manager |
+| [performance-extraction-intel-tracing.md](./performance-extraction-intel-tracing.md) | Future | Benchmark results + Intel PTAT/SocWatch |
 
 ## Status Legend
 

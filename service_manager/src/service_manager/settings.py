@@ -82,6 +82,68 @@ class OmniParserServer:
         )
 
 
+@dataclass
+class SteamAccountPair:
+    """Steam account pair for multi-SUT automation.
+
+    Each pair has two accounts:
+    - af_account: Used for games starting with A-F
+    - gz_account: Used for games starting with G-Z
+
+    This allows running two games concurrently on different SUTs
+    without Steam login conflicts.
+    """
+    name: str  # Friendly name, e.g., "Pair 1"
+    af_username: str  # Account for A-F games
+    af_password: str
+    gz_username: str  # Account for G-Z games
+    gz_password: str
+    enabled: bool = True
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "af_username": self.af_username,
+            "af_password": self.af_password,
+            "gz_username": self.gz_username,
+            "gz_password": self.gz_password,
+            "enabled": self.enabled,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SteamAccountPair":
+        return cls(
+            name=data.get("name", ""),
+            af_username=data.get("af_username", ""),
+            af_password=data.get("af_password", ""),
+            gz_username=data.get("gz_username", ""),
+            gz_password=data.get("gz_password", ""),
+            enabled=data.get("enabled", True),
+        )
+
+    def to_env_string(self) -> str:
+        """Convert to string format for environment variable.
+
+        Format: name:af_user:af_pass:gz_user:gz_pass
+        """
+        return f"{self.name}:{self.af_username}:{self.af_password}:{self.gz_username}:{self.gz_password}"
+
+    @classmethod
+    def from_env_string(cls, s: str) -> "SteamAccountPair":
+        """Parse from environment variable string format."""
+        parts = s.split(":")
+        if len(parts) >= 5:
+            return cls(
+                name=parts[0],
+                af_username=parts[1],
+                af_password=parts[2],
+                gz_username=parts[3],
+                gz_password=parts[4],
+                enabled=True,
+            )
+        raise ValueError(f"Invalid account pair format: {s}")
+
+
 class SettingsManager:
     """Manages JSON configuration for the service manager"""
 
@@ -91,7 +153,11 @@ class SettingsManager:
         self._profiles: Dict[str, Profile] = {}
         self._omniparser_servers: List[OmniParserServer] = []
         self._omniparser_instance_count: int = 0  # 0 = disabled, 1-5 = local instances
+        self._steam_account_pairs: List[SteamAccountPair] = []
+        self._steam_login_timeout: int = 180  # Default 3 minutes for slow connections
         self._active_profile: str = "local"
+        self._project_dir: str = ""  # Base directory for all services
+        self._omniparser_dir: str = ""  # OmniParser installation directory
         self._loaded = False
 
     @property
@@ -134,6 +200,19 @@ class SettingsManager:
             # Parse OmniParser instance count
             self._omniparser_instance_count = self._config.get("omniparser_instance_count", 0)
 
+            # Parse Steam account pairs
+            self._steam_account_pairs = [
+                SteamAccountPair.from_dict(p)
+                for p in self._config.get("steam_account_pairs", [])
+            ]
+
+            # Parse Steam login timeout
+            self._steam_login_timeout = self._config.get("steam_login_timeout", 180)
+
+            # Parse directory settings
+            self._project_dir = self._config.get("project_dir", "")
+            self._omniparser_dir = self._config.get("omniparser_dir", "")
+
             self._active_profile = self._config.get("active_profile", "local")
             self._loaded = True
             return True
@@ -152,6 +231,8 @@ class SettingsManager:
             config = {
                 "version": "1.0",
                 "default_host": self._config.get("default_host", "localhost"),
+                "project_dir": self._project_dir,
+                "omniparser_dir": self._omniparser_dir,
                 "services": {
                     name: settings.to_dict()
                     for name, settings in self._services.items()
@@ -164,6 +245,10 @@ class SettingsManager:
                     server.to_dict() for server in self._omniparser_servers
                 ],
                 "omniparser_instance_count": self._omniparser_instance_count,
+                "steam_account_pairs": [
+                    pair.to_dict() for pair in self._steam_account_pairs
+                ],
+                "steam_login_timeout": self._steam_login_timeout,
                 "active_profile": self._active_profile,
             }
 
@@ -275,6 +360,49 @@ class SettingsManager:
         # Otherwise use manually configured servers
         enabled = [s.url for s in self._omniparser_servers if s.enabled]
         return ",".join(enabled) if enabled else ""
+
+    def get_project_dir(self) -> str:
+        """Get the project base directory"""
+        return self._project_dir
+
+    def set_project_dir(self, path: str):
+        """Set the project base directory"""
+        self._project_dir = path
+
+    def get_omniparser_dir(self) -> str:
+        """Get the OmniParser installation directory"""
+        return self._omniparser_dir
+
+    def set_omniparser_dir(self, path: str):
+        """Set the OmniParser installation directory"""
+        self._omniparser_dir = path
+
+    def get_steam_account_pairs(self) -> List[SteamAccountPair]:
+        """Get all configured Steam account pairs"""
+        return self._steam_account_pairs.copy()
+
+    def set_steam_account_pairs(self, pairs: List[SteamAccountPair]):
+        """Set the Steam account pairs list"""
+        self._steam_account_pairs = pairs
+
+    def get_steam_accounts_env(self) -> str:
+        """Get enabled account pairs as a string for STEAM_ACCOUNT_PAIRS env var.
+
+        Format: pair1_name:af_user:af_pass:gz_user:gz_pass|pair2_name:...
+        Each pair is separated by |, fields within pair separated by :
+        """
+        enabled = [p for p in self._steam_account_pairs if p.enabled]
+        if not enabled:
+            return ""
+        return "|".join(p.to_env_string() for p in enabled)
+
+    def get_steam_login_timeout(self) -> int:
+        """Get Steam login timeout in seconds"""
+        return self._steam_login_timeout
+
+    def set_steam_login_timeout(self, timeout: int):
+        """Set Steam login timeout in seconds (min 30, max 600)"""
+        self._steam_login_timeout = max(30, min(600, timeout))
 
 
 # Global settings instance

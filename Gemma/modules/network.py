@@ -56,11 +56,31 @@ class NetworkManager:
     
     def get_resolution(self) -> dict:
         """
-        Get the screen resolution of the SUT.
-        
+        Get the current display resolution of the SUT.
+
+        Uses /display/current endpoint for accurate dynamic resolution,
+        with fallback to /status endpoint.
+
         Returns:
             Dictionary with 'width' and 'height' keys
         """
+        try:
+            # Use /display/current for accurate current resolution
+            response = self.session.get(f"{self.base_url}/display/current", timeout=5)
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get("status") == "success" and data.get("resolution"):
+                res = data["resolution"]
+                logger.info(f"SUT current display resolution: {res.get('width')}x{res.get('height')}")
+                return {
+                    "width": res.get("width", 1920),
+                    "height": res.get("height", 1080)
+                }
+        except Exception as e:
+            logger.warning(f"Failed to get resolution from /display/current: {e}")
+
+        # Fallback to /status endpoint
         try:
             response = self.session.get(f"{self.base_url}/status", timeout=5)
             response.raise_for_status()
@@ -73,44 +93,78 @@ class NetworkManager:
             logger.warning(f"Failed to get resolution from SUT, defaulting to 1920x1080: {e}")
             return {"width": 1920, "height": 1080}
 
-    def login_steam(self, username: str, password: str) -> bool:
+    def get_current_steam_user(self) -> Optional[Dict[str, Any]]:
+        """
+        Get the currently logged-in Steam user on the SUT.
+
+        Returns:
+            Dictionary with logged_in, username, user_id, or None if request fails
+            Example: {"logged_in": True, "username": "steam_user", "user_id": 123456}
+        """
+        try:
+            response = self.session.get(f"{self.base_url}/steam/current", timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get("status") == "success":
+                return {
+                    "logged_in": data.get("logged_in", False),
+                    "username": data.get("username"),
+                    "user_id": data.get("user_id"),
+                    "steam_running": data.get("steam_running", False)
+                }
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to get current Steam user: {e}")
+            return None
+
+    def login_steam(self, username: str, password: str, timeout: int = 180) -> dict:
         """
         Login to Steam via SUT service.
-        
+
         Args:
             username: Steam username
             password: Steam password
-        
+            timeout: Max seconds to wait for login (default 180 for slow connections)
+
         Returns:
-            True if login successful, False otherwise
+            dict: Result with 'success' bool, 'status' string, and optional 'error_reason'
+                  status can be: 'success', 'warning', 'error', 'conflict'
+                  error_reason can be: 'conflict' (account in use elsewhere), 'timeout', 'not_found'
         """
         try:
-            payload = {"username": username, "password": password}
-            logger.info(f"[Steam] Logging in as: {username}")
-            
-            # Timeout: kill processes (~3s) + steam.exe launch + login (~60s)
-            response = self.session.post(f"{self.base_url}/login_steam", json=payload, timeout=120)
-            
+            payload = {"username": username, "password": password, "timeout": timeout}
+            logger.info(f"[Steam] Logging in as: {username} (timeout: {timeout}s)")
+
+            # HTTP timeout: login timeout + 20s buffer for network overhead
+            http_timeout = timeout + 20
+            response = self.session.post(f"{self.base_url}/login_steam", json=payload, timeout=http_timeout)
+
             result = response.json()
             status = result.get('status', 'unknown')
             message = result.get('message', '')
             user_id = result.get('user_id', '')
-            
+            error_reason = result.get('error_reason')
+
             if status == 'success':
                 logger.info(f"[Steam] Login successful: {message}")
                 if user_id:
                     logger.info(f"[Steam] User ID: {user_id}")
-                return True
+                return {'success': True, 'status': 'success', 'user_id': user_id}
             elif status == 'warning':
                 logger.warning(f"[Steam] Warning: {message}")
-                return True  # Proceed with caution
+                return {'success': True, 'status': 'warning', 'message': message}
+            elif status == 'conflict':
+                logger.error(f"[Steam] CONFLICT: {message}")
+                logger.error(f"[Steam] Account '{username}' is in use on another device!")
+                return {'success': False, 'status': 'conflict', 'error_reason': 'conflict', 'message': message}
             else:
                 logger.error(f"[Steam] Login failed: {message or result.get('error', 'Unknown error')}")
-                return False
-                
+                return {'success': False, 'status': 'error', 'error_reason': error_reason or 'unknown', 'message': message}
+
         except Exception as e:
             logger.error(f"[Steam] Request failed: {e}")
-            return False
+            return {'success': False, 'status': 'error', 'error_reason': 'request_failed', 'message': str(e)}
 
     def send_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -274,6 +328,145 @@ class NetworkManager:
         except requests.RequestException as e:
             logger.error(f"Failed to get SUT status: {str(e)}")
             raise
+
+    # =========================================================================
+    # DISPLAY RESOLUTION MANAGEMENT
+    # =========================================================================
+
+    def get_supported_resolutions(self, common_only: bool = False) -> list:
+        """
+        Get list of supported display resolutions from the SUT.
+
+        Args:
+            common_only: If True, only return common gaming resolutions (720p, 1080p, 1440p, 4K)
+
+        Returns:
+            List of resolution dicts with width, height, refresh_rate
+        """
+        try:
+            params = {"common_only": "true"} if common_only else {}
+            response = self.session.get(
+                f"{self.base_url}/display/resolutions",
+                params=params,
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get("status") == "success":
+                return data.get("resolutions", [])
+            else:
+                logger.warning(f"Failed to get resolutions: {data.get('message')}")
+                return []
+        except requests.RequestException as e:
+            logger.error(f"Failed to get supported resolutions: {e}")
+            return []
+
+    def get_current_resolution(self) -> Optional[Dict[str, int]]:
+        """
+        Get the current display resolution from the SUT.
+
+        Returns:
+            Dict with width, height, refresh_rate or None if failed
+        """
+        try:
+            response = self.session.get(
+                f"{self.base_url}/display/current",
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get("status") == "success":
+                return data.get("resolution")
+            else:
+                logger.warning(f"Failed to get current resolution: {data.get('message')}")
+                return None
+        except requests.RequestException as e:
+            logger.error(f"Failed to get current resolution: {e}")
+            return None
+
+    def set_resolution(self, width: int, height: int, refresh_rate: int = None) -> bool:
+        """
+        Set the display resolution on the SUT.
+
+        Args:
+            width: Target width in pixels
+            height: Target height in pixels
+            refresh_rate: Optional refresh rate (uses highest available if not specified)
+
+        Returns:
+            True if resolution change succeeded, False otherwise
+        """
+        try:
+            payload = {"width": width, "height": height}
+            if refresh_rate:
+                payload["refresh_rate"] = refresh_rate
+
+            logger.info(f"Setting SUT resolution to {width}x{height}" +
+                       (f"@{refresh_rate}Hz" if refresh_rate else ""))
+
+            response = self.session.post(
+                f"{self.base_url}/display/resolution",
+                json=payload,
+                timeout=15
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get("status") == "success":
+                logger.info(f"Resolution changed: {data.get('message')}")
+                return True
+            else:
+                logger.error(f"Failed to set resolution: {data.get('message')}")
+                return False
+        except requests.RequestException as e:
+            logger.error(f"Failed to set resolution: {e}")
+            return False
+
+    def restore_resolution(self) -> bool:
+        """
+        Restore the original display resolution on the SUT.
+
+        Call this after automation completes to restore the resolution
+        that was active before any changes were made.
+
+        Returns:
+            True if restore succeeded, False otherwise
+        """
+        try:
+            logger.info("Restoring original SUT resolution...")
+
+            response = self.session.post(
+                f"{self.base_url}/display/restore",
+                timeout=15
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get("status") == "success":
+                logger.info(f"Resolution restored: {data.get('message')}")
+                return True
+            else:
+                logger.warning(f"Resolution restore: {data.get('message')}")
+                return data.get("status") != "error"
+        except requests.RequestException as e:
+            logger.error(f"Failed to restore resolution: {e}")
+            return False
+
+    def is_resolution_supported(self, width: int, height: int) -> bool:
+        """
+        Check if a specific resolution is supported by the SUT.
+
+        Args:
+            width: Target width in pixels
+            height: Target height in pixels
+
+        Returns:
+            True if resolution is supported, False otherwise
+        """
+        resolutions = self.get_supported_resolutions()
+        return any(r.get("width") == width and r.get("height") == height for r in resolutions)
 
     def close(self):
         """Close the network session."""

@@ -303,9 +303,49 @@ export async function getPresetConstants(): Promise<PresetConstants> {
 
 /**
  * Get preset matrix for a game (available quality × resolution combinations)
+ * Transforms API response to frontend-expected format
  */
 export async function getPresetMatrix(gameSlug: string): Promise<PresetMatrixResponse> {
-  return fetchPresetJson<PresetMatrixResponse>(`/api/presets/${encodeURIComponent(gameSlug)}/matrix`);
+  // Raw API response has different structure
+  interface RawMatrixResponse {
+    game: string;
+    quality_levels: string[];
+    resolutions: string[];
+    available: Record<string, Record<string, { exists: boolean; has_files: boolean; status: string }>>;
+    default_quality: string;
+    default_resolution: string;
+  }
+
+  const raw = await fetchPresetJson<RawMatrixResponse>(`/api/presets/${encodeURIComponent(gameSlug)}/matrix`);
+
+  // Transform to frontend expected format
+  const available_presets: Record<string, string[]> = {};
+  let total_available = 0;
+  let total_placeholders = 0;
+
+  for (const quality of Object.keys(raw.available || {})) {
+    available_presets[quality] = [];
+    for (const resolution of Object.keys(raw.available[quality] || {})) {
+      const preset = raw.available[quality][resolution];
+      // Include if has_files (actual preset exists) - status "ready"
+      if (preset.has_files || preset.status === 'ready') {
+        available_presets[quality].push(resolution);
+        total_available++;
+      } else if (preset.exists) {
+        total_placeholders++;
+      }
+    }
+  }
+
+  return {
+    game_slug: raw.game,
+    game_name: raw.game,
+    default_quality: raw.default_quality,
+    default_resolution: raw.default_resolution,
+    available_presets,
+    total_available,
+    total_placeholders,
+  };
 }
 
 /**

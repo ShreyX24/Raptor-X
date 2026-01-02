@@ -3,12 +3,17 @@ Process Manager - Manages QProcess instances for all services
 """
 
 import os
+import json
+from pathlib import Path
 from typing import Dict, Optional
 from PySide6.QtCore import QObject, QProcess, Signal, QProcessEnvironment, QTimer
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PySide6.QtCore import QUrl
-from ..config import ServiceConfig, SERVICES, create_omniparser_config, OMNIPARSER_MAX_INSTANCES
+from ..config import ServiceConfig, get_services, create_omniparser_config, OMNIPARSER_MAX_INSTANCES
 from ..settings import get_settings_manager
+
+# Restart requests file (shared with Admin Panel)
+RESTART_REQUESTS_FILE = Path.home() / ".gemma" / "restart_requests.json"
 
 
 class ProcessManager(QObject):
@@ -23,9 +28,10 @@ class ProcessManager(QObject):
         self.processes: Dict[str, QProcess] = {}
         self.configs: Dict[str, ServiceConfig] = {}
         self.remote_statuses: Dict[str, str] = {}  # Track remote service status
+        self._stopping_services: set = set()  # Track services being intentionally stopped
         self.network_manager = QNetworkAccessManager(self)
 
-        for config in SERVICES:
+        for config in get_services():
             self.register_service(config)
 
         # Register OmniParser instances based on settings
@@ -36,6 +42,12 @@ class ProcessManager(QObject):
         self.health_check_timer = QTimer(self)
         self.health_check_timer.timeout.connect(self._check_remote_services)
         self.health_check_timer.start(10000)  # Check every 10 seconds
+
+        # Timer for restart requests from Admin Panel
+        self.restart_request_timer = QTimer(self)
+        self.restart_request_timer.timeout.connect(self._check_restart_requests)
+        self.restart_request_timer.start(2000)  # Check every 2 seconds
+        self._processed_requests: set = set()  # Track processed request timestamps
     
     def register_service(self, config: ServiceConfig):
         self.configs[config.name] = config
@@ -71,6 +83,18 @@ class ProcessManager(QObject):
     def get_omniparser_services(self) -> list:
         """Get list of registered OmniParser service names"""
         return [name for name in self.configs if name.startswith("omniparser-")]
+
+    def refresh_service_configs(self):
+        """Refresh service configs from current settings (e.g., after project dir change)"""
+        for config in get_services():
+            if config.name in self.configs:
+                # Update the working_dir and other settings that may have changed
+                self.configs[config.name].working_dir = config.working_dir
+                self.configs[config.name].host = config.host
+                self.configs[config.name].port = config.port
+                self.configs[config.name].remote = config.remote
+                self.configs[config.name].enabled = config.enabled
+                self.configs[config.name].env_vars = config.env_vars
 
     def is_running(self, name: str) -> bool:
         return name in self.processes and self.processes[name].state() == QProcess.Running
@@ -118,6 +142,21 @@ class ProcessManager(QObject):
                 env.insert("OMNIPARSER_URLS", omniparser_urls)
                 self.output_received.emit(name, f"OmniParser URLs: {omniparser_urls}\n")
 
+        # Special handling for gemma-backend: inject Steam account pairs and timeout
+        if name == "gemma-backend":
+            settings = get_settings_manager()
+            steam_accounts = settings.get_steam_accounts_env()
+            if steam_accounts:
+                env.insert("STEAM_ACCOUNT_PAIRS", steam_accounts)
+                # Don't log the actual credentials, just the count
+                pair_count = steam_accounts.count("|") + 1
+                self.output_received.emit(name, f"Steam account pairs: {pair_count} configured\n")
+
+            # Inject Steam login timeout
+            steam_timeout = settings.get_steam_login_timeout()
+            env.insert("STEAM_LOGIN_TIMEOUT", str(steam_timeout))
+            self.output_received.emit(name, f"Steam login timeout: {steam_timeout}s\n")
+
         process.setProcessEnvironment(env)
         
         process.readyReadStandardOutput.connect(lambda p=process, n=name: self._handle_stdout(n, p))
@@ -152,6 +191,7 @@ class ProcessManager(QObject):
                 del self.processes[name]
             return True
 
+        self._stopping_services.add(name)  # Mark as intentionally stopping
         self.status_changed.emit(name, "stopping")
         self.output_received.emit(name, "--- Stopping service ---\n")
 
@@ -168,18 +208,40 @@ class ProcessManager(QObject):
         return True
     
     def restart_service(self, name: str) -> bool:
-        """Restart a service - stops then starts after a delay"""
+        """Restart a service - stops then starts when fully stopped"""
         if name in self.processes and self.processes[name].state() != QProcess.NotRunning:
+            process = self.processes[name]
+
+            # Connect to finished signal to start after stop completes
+            def on_finished():
+                # Disconnect to avoid multiple triggers
+                try:
+                    process.finished.disconnect(on_finished)
+                except RuntimeError:
+                    pass  # Already disconnected
+                # Small delay to ensure cleanup, then start
+                QTimer.singleShot(500, lambda: self.start_service(name))
+
+            process.finished.connect(on_finished)
             self.stop_service(name)
-            # Wait a bit for stop to complete, then start
-            QTimer.singleShot(1500, lambda: self.start_service(name))
             return True
         else:
             return self.start_service(name)
     
     def start_all(self):
+        """Start all services respecting dependencies and startup delays"""
         started = set()
+        delay_ms = 0
+
+        def schedule_start(name: str, delay: int):
+            """Schedule a service start after delay milliseconds"""
+            if delay > 0:
+                QTimer.singleShot(delay, lambda: self.start_service(name))
+            else:
+                self.start_service(name)
+
         def start_with_deps(n):
+            nonlocal delay_ms
             if n in started:
                 return
             cfg = self.configs.get(n)
@@ -197,14 +259,72 @@ class ProcessManager(QObject):
             for dep in cfg.depends_on:
                 if dep not in started:
                     start_with_deps(dep)
-            self.start_service(n)
+
+            # Apply startup_delay for services that need it (e.g., frontends)
+            if cfg.startup_delay > 0:
+                delay_ms += int(cfg.startup_delay * 1000)
+
+            schedule_start(n, delay_ms)
             started.add(n)
+
+            # Add base delay between services to let them initialize
+            delay_ms += 500  # 500ms between each service
+
         for n in self.configs:
             start_with_deps(n)
-    
+
     def stop_all(self):
+        """Stop all services"""
         for name in reversed(list(self.processes.keys())):
             self.stop_service(name)
+
+    def restart_all(self):
+        """Restart all services - waits for all to stop before starting"""
+        running_count = self.get_running_count()
+        if running_count == 0:
+            # Nothing running, just start all
+            self.start_all()
+            return
+
+        # Track how many services we're waiting to stop
+        self._restart_pending = True
+        self._services_to_stop = set(
+            name for name, proc in self.processes.items()
+            if proc.state() == QProcess.Running
+        )
+
+        # Connect to finished signals to track when all are stopped
+        def on_service_stopped(name: str):
+            if not self._restart_pending:
+                return
+            self._services_to_stop.discard(name)
+            if len(self._services_to_stop) == 0:
+                # All services stopped, now start them
+                self._restart_pending = False
+                QTimer.singleShot(500, self.start_all)
+
+        # Temporarily connect to status changes
+        def check_stopped(name: str, status: str):
+            if status == "stopped":
+                on_service_stopped(name)
+
+        self._restart_status_handler = check_stopped
+        self.status_changed.connect(check_stopped)
+
+        # Stop all services
+        self.stop_all()
+
+        # Fallback: if services don't stop within 10 seconds, force start anyway
+        def fallback_start():
+            if self._restart_pending:
+                self._restart_pending = False
+                try:
+                    self.status_changed.disconnect(self._restart_status_handler)
+                except:
+                    pass
+                self.start_all()
+
+        QTimer.singleShot(10000, fallback_start)
     
     def get_running_count(self) -> int:
         return sum(1 for p in self.processes.values() if p.state() == QProcess.Running)
@@ -236,12 +356,24 @@ class ProcessManager(QObject):
             self.output_received.emit(name, "Service running on port " + str(config.port) + "")
     
     def _handle_finished(self, name: str, exit_code: int):
-        self.output_received.emit(name, "--- Exited with code " + str(exit_code) + " ---")
+        # Check if this was an intentional stop
+        was_stopping = name in self._stopping_services
+        if was_stopping:
+            self._stopping_services.discard(name)
+            self.output_received.emit(name, "--- Service stopped ---\n")
+        else:
+            self.output_received.emit(name, "--- Exited with code " + str(exit_code) + " ---\n")
+
         if name in self.processes:
             del self.processes[name]
         self.status_changed.emit(name, "stopped")
-    
+
     def _handle_error(self, name: str, error: QProcess.ProcessError):
+        # Don't show error if we're intentionally stopping the service
+        if name in self._stopping_services and error == QProcess.Crashed:
+            # This is expected when force-killing on Windows, don't show error
+            return
+
         error_messages = {
             QProcess.FailedToStart: "Failed to start",
             QProcess.Crashed: "Process crashed",
@@ -292,3 +424,56 @@ class ProcessManager(QObject):
     def get_remote_status(self, name: str) -> str:
         """Get the status of a remote service"""
         return self.remote_statuses.get(name, "unknown")
+
+    def _check_restart_requests(self):
+        """Check for restart requests from Admin Panel and process them"""
+        if not RESTART_REQUESTS_FILE.exists():
+            return
+
+        try:
+            with open(RESTART_REQUESTS_FILE, "r") as f:
+                requests_data = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return
+
+        if not requests_data:
+            return
+
+        # Process each request
+        processed_any = False
+        remaining_requests = []
+
+        for req in requests_data:
+            service_name = req.get("service")
+            timestamp = req.get("timestamp", 0)
+            request_id = f"{service_name}:{timestamp}"
+
+            # Skip already processed requests
+            if request_id in self._processed_requests:
+                continue
+
+            # Skip if service doesn't exist
+            if service_name not in self.configs:
+                self._processed_requests.add(request_id)
+                continue
+
+            # Process the restart request
+            self.output_received.emit(
+                service_name,
+                f"[Admin Panel] Restart requested\n"
+            )
+            self.restart_service(service_name)
+            self._processed_requests.add(request_id)
+            processed_any = True
+
+        # Clear the file after processing
+        if processed_any:
+            try:
+                with open(RESTART_REQUESTS_FILE, "w") as f:
+                    json.dump([], f)
+            except IOError:
+                pass
+
+        # Clean up old processed request IDs (keep last 100)
+        if len(self._processed_requests) > 100:
+            self._processed_requests = set(list(self._processed_requests)[-50:])

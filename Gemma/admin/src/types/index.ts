@@ -26,6 +26,10 @@ export interface GameConfig {
   settings_menu_path: string[];
   automation_steps: AutomationStep[];
   presets?: Preset[];
+  // Extended properties for dashboard
+  path?: string;           // Installation path on SUT
+  preset_id?: string;      // Preset manager game slug
+  steam_app_id?: string;   // Steam app ID for matching
 }
 
 export interface AutomationStep {
@@ -474,3 +478,9 @@ export interface AllServicesHealth {
     enabled: boolean;
   }>;
 }
+
+// ============================================
+// Admin Panel Types (re-export)
+// ============================================
+
+export * from './admin';

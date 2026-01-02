@@ -736,31 +736,53 @@ def create_app() -> Flask:
             return jsonify({"status": "error", "message": str(e)}), 500
 
     @app.route('/focus', methods=['POST'])
-    def focus_game():
+    def focus_window():
         """
-        Focus the game window to ensure it's in foreground.
-        This should be called before each automation step to prevent
-        the game from being minimized or losing focus.
+        Focus a window to ensure it's in foreground.
+
+        Can focus either:
+        1. The current game (default, no params needed)
+        2. Any process by name (e.g., "steam" to focus Steam window)
 
         Request body (optional):
         {
+            "process_name": "steam",  # Optional: focus this process instead of game
             "minimize_others": false  # Also minimize other windows
         }
         """
         try:
-            game_info = get_current_game_info()
-            pid = game_info.get('pid')
-
-            if not pid:
-                return jsonify({
-                    "status": "error",
-                    "message": "No game is currently running"
-                }), 400
-
             data = request.get_json() or {}
+            process_name = data.get('process_name')
             minimize_others = data.get('minimize_others', False)
 
-            # Focus the game window
+            pid = None
+            target_name = None
+
+            if process_name:
+                # Focus specific process by name
+                proc = find_process_by_name(process_name)
+                if proc:
+                    pid = proc.pid
+                    target_name = process_name
+                    logger.info(f"Found process '{process_name}' with PID {pid}")
+                else:
+                    return jsonify({
+                        "status": "error",
+                        "message": f"Process '{process_name}' not found"
+                    }), 404
+            else:
+                # Focus current game (original behavior)
+                game_info = get_current_game_info()
+                pid = game_info.get('pid')
+                target_name = "game"
+
+                if not pid:
+                    return jsonify({
+                        "status": "error",
+                        "message": "No game is currently running"
+                    }), 400
+
+            # Focus the window
             success = ensure_window_foreground_v2(pid, timeout=3)
 
             # Optionally minimize other windows
@@ -771,19 +793,21 @@ def create_app() -> Flask:
             if success:
                 return jsonify({
                     "status": "success",
-                    "message": f"Game window focused (PID: {pid})",
+                    "message": f"Window focused (PID: {pid})",
                     "pid": pid,
+                    "process_name": target_name,
                     "minimized_others": minimized_count
                 })
             else:
                 return jsonify({
                     "status": "warning",
-                    "message": f"Could not confirm focus for PID {pid}, but game is running",
-                    "pid": pid
+                    "message": f"Could not confirm focus for PID {pid}",
+                    "pid": pid,
+                    "process_name": target_name
                 })
 
         except Exception as e:
-            logger.error(f"Focus game error: {e}")
+            logger.error(f"Focus window error: {e}")
             return jsonify({"status": "error", "message": str(e)}), 500
 
     # =========================================================================

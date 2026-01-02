@@ -5,6 +5,7 @@ metadata:
   created_with: Katana Workflow Builder
   created_date: '2025-11-21 13:45:12'
   path: '730'
+  steam_app_id: '730'
   process_id: cs2.exe
   process_name: cs2.exe
   benchmark_duration: 110

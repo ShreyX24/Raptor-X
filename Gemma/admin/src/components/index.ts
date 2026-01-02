@@ -27,3 +27,13 @@ export type { TimelineEvent } from './RunTimeline';
 
 // Campaign components
 export { CampaignModal } from './CampaignModal';
+
+// Data-dense dashboard components (Unified Dashboard)
+export { RadialGauge, MiniGauge } from './RadialGauge';
+export { CollapsiblePanel, Panel } from './CollapsiblePanel';
+export { FleetStatusPanel, CompactSutCard } from './FleetStatusPanel';
+export { GameLibraryPanel, GameListItem } from './GameLibraryPanel';
+export { QuickLaunchPanel } from './QuickLaunchPanel';
+export { ActiveRunsPanel, MiniRunIndicator } from './ActiveRunsPanel';
+export { RunMetricsPanel, CompactMetricsRow } from './RunMetricsPanel';
+export { SnakeTimeline } from './SnakeTimeline';

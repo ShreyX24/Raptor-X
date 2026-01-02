@@ -11,6 +11,7 @@ import type {
 import { TIMEOUTS } from '../config';
 
 const API_BASE = '/api';
+const DISCOVERY_API = '/discovery-api';  // Proxied to discovery service (localhost:5001/api)
 
 class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -195,31 +196,52 @@ export async function getSutStatus(deviceId: string): Promise<unknown> {
   return fetchJson<unknown>(`${API_BASE}/sut/${deviceId}/status`);
 }
 
+// System info from SUT - flat structure matching actual response
+export interface SUTSystemInfo {
+  cpu: { brand_string: string };
+  gpu: { name: string };
+  ram: { total_gb: number };
+  os: { name: string; version: string; release: string; build: string };
+  bios: { name: string; version: string };
+  screen: { width: number; height: number };
+  hostname: string;
+  device_id: string;
+}
+
+// Backend response wraps data in 'data' field
+interface SUTSystemInfoBackendResponse {
+  data: SUTSystemInfo;
+  status: string;
+  response_time: number;
+}
+
+// Legacy type for backward compatibility
 export interface SUTSystemInfoResponse {
-  system_info: {
-    cpu: { brand_string: string };
-    gpu: { name: string };
-    ram: { total_gb: number };
-    os: { name: string; version: string; release: string; build: string };
-    bios: { name: string; version: string };
-    screen: { width: number; height: number };
-    hostname: string;
-    device_id: string;
-  };
+  system_info: SUTSystemInfo;
   sut_ip: string;
   timestamp: string;
 }
 
-export async function getSutSystemInfo(deviceId: string): Promise<SUTSystemInfoResponse> {
-  return fetchJson<SUTSystemInfoResponse>(`${API_BASE}/sut/${deviceId}/system_info`, {
-    timeout: TIMEOUTS.default,
-  });
+export async function getSutSystemInfo(deviceId: string): Promise<SUTSystemInfo | null> {
+  try {
+    const response = await fetchJson<SUTSystemInfoBackendResponse>(`${API_BASE}/sut/${deviceId}/system_info`, {
+      timeout: TIMEOUTS.default,
+    });
+    return response.data || null;
+  } catch {
+    return null;
+  }
 }
 
-export async function getSutSystemInfoByIp(ip: string): Promise<SUTSystemInfoResponse> {
-  return fetchJson<SUTSystemInfoResponse>(`${API_BASE}/sut/by-ip/${ip}/system_info`, {
-    timeout: TIMEOUTS.default,
-  });
+export async function getSutSystemInfoByIp(ip: string): Promise<SUTSystemInfo | null> {
+  try {
+    const response = await fetchJson<SUTSystemInfoBackendResponse>(`${API_BASE}/sut/by-ip/${ip}/system_info`, {
+      timeout: TIMEOUTS.default,
+    });
+    return response.data || null;
+  } catch {
+    return null;
+  }
 }
 
 export interface InstalledGame {
@@ -235,12 +257,23 @@ export interface InstalledGamesResponse {
 }
 
 export async function getSutInstalledGames(sutIp: string): Promise<InstalledGamesResponse> {
-  // Direct call to SUT client
+  // Direct call to SUT client (may fail due to CORS)
   const response = await fetchWithTimeout(`http://${sutIp}:8080/installed_games`, {
     timeout: TIMEOUTS.default,
   });
   if (!response.ok) {
     throw new ApiError(response.status, 'Failed to get installed games');
+  }
+  return response.json();
+}
+
+export async function getSutInstalledGamesViaProxy(deviceId: string): Promise<InstalledGamesResponse> {
+  // Go through discovery service proxy to avoid CORS
+  const response = await fetchWithTimeout(`${DISCOVERY_API}/suts/${deviceId}/games`, {
+    timeout: TIMEOUTS.default,
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, 'Failed to get installed games via proxy');
   }
   return response.json();
 }

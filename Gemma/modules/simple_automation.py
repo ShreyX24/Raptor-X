@@ -160,6 +160,19 @@ class SimpleAutomation:
 
             # Emit step started event via callback
             if self.progress_callback and hasattr(self.progress_callback, 'on_step_start'):
+                # Extract duration for wait steps (used by timeline countdown display)
+                step_duration = None
+                action = step.get("action", {})
+                if isinstance(action, dict):
+                    action_type = action.get("type", "").lower()
+                    if action_type == "wait":
+                        step_duration = action.get("duration")
+                        logger.info(f"Wait step detected with duration: {step_duration}s")
+                # Set duration on callback so timeline can use it
+                if step_duration:
+                    self.progress_callback._current_step_duration = step_duration
+                else:
+                    self.progress_callback._current_step_duration = None
                 self.progress_callback.on_step_start(current_step, step_description)
 
             # Check for stop event

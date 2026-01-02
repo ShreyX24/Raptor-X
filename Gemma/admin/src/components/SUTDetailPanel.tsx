@@ -7,7 +7,7 @@ import type { SUT } from '../types';
 import {
   getSutSystemInfoByIp,
   getSutInstalledGames,
-  type SUTSystemInfoResponse,
+  type SUTSystemInfo,
   type InstalledGame,
 } from '../api';
 
@@ -98,7 +98,7 @@ function HardwareRow({ icon, label, value, subValue }: HardwareRowProps) {
 }
 
 export function SUTDetailPanel({ sut, onClose }: SUTDetailPanelProps) {
-  const [systemInfo, setSystemInfo] = useState<SUTSystemInfoResponse['system_info'] | null>(null);
+  const [systemInfo, setSystemInfo] = useState<SUTSystemInfo | null>(null);
   const [installedGames, setInstalledGames] = useState<InstalledGame[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -123,8 +123,9 @@ export function SUTDetailPanel({ sut, onClose }: SUTDetailPanelProps) {
           getSutInstalledGames(sutIp),
         ]);
 
-        if (sysInfoResult.status === 'fulfilled') {
-          setSystemInfo(sysInfoResult.value.system_info);
+        if (sysInfoResult.status === 'fulfilled' && sysInfoResult.value) {
+          // API now returns SUTSystemInfo directly
+          setSystemInfo(sysInfoResult.value);
         }
 
         if (gamesResult.status === 'fulfilled') {
