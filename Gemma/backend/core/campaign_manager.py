@@ -95,7 +95,56 @@ class CampaignManager:
         self.campaigns: Dict[str, Campaign] = {}
         self.campaign_history: List[Campaign] = []
         self._lock = threading.Lock()
+
+        # Load campaign history from storage
+        self._load_history_from_storage()
+
         logger.info("CampaignManager initialized")
+
+    def _load_history_from_storage(self):
+        """Load completed campaigns from persistent storage"""
+        try:
+            if not hasattr(self.run_manager, 'storage'):
+                return
+
+            campaign_dicts = self.run_manager.storage.load_campaign_history()
+            for data in campaign_dicts:
+                campaign = Campaign(
+                    campaign_id=data['campaign_id'],
+                    name=data['name'],
+                    sut_ip=data['sut_ip'],
+                    sut_device_id=data.get('sut_device_id', ''),
+                    games=data['games'],
+                    iterations_per_game=data.get('iterations_per_game', 1),
+                    status=CampaignStatus(data['status']),
+                    run_ids=data.get('run_ids', []),
+                    quality=data.get('quality'),
+                    resolution=data.get('resolution'),
+                )
+                # Set progress
+                progress_data = data.get('progress', {})
+                campaign.progress = CampaignProgress(
+                    total_games=progress_data.get('total_games', len(data['games'])),
+                    completed_games=progress_data.get('completed_games', 0),
+                    failed_games=progress_data.get('failed_games', 0),
+                )
+                # Set timestamps
+                if data.get('created_at'):
+                    try:
+                        campaign.created_at = datetime.fromisoformat(data['created_at'])
+                    except:
+                        pass
+                if data.get('completed_at'):
+                    try:
+                        campaign.completed_at = datetime.fromisoformat(data['completed_at']) if isinstance(data['completed_at'], str) else data['completed_at']
+                    except:
+                        pass
+
+                self.campaign_history.append(campaign)
+
+            logger.info(f"Loaded {len(self.campaign_history)} campaigns from storage")
+        except Exception as e:
+            logger.error(f"Error loading campaign history: {e}")
 
     def create_campaign(
         self,

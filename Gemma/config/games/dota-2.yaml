@@ -2,6 +2,7 @@ metadata:
   game_name: Dota 2
   preset_id: dota-2  # Maps to preset-manager folder name
   version: '1.0'
+  steam_app_id: '570'
   created_with: Katana Workflow Builder
   created_date: '2025-10-28 03:40:33'
 steps:

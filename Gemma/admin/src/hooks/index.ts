@@ -8,3 +8,4 @@ export { useCampaigns } from './useCampaigns';
 export { useQueueStats } from './useQueueStats';
 export { useServiceHealth } from './useServiceHealth';
 export { useWorkflowBuilder } from './useWorkflowBuilder';
+export { useAdminConfig } from './useAdminConfig';

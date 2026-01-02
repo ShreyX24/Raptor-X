@@ -546,10 +546,10 @@ def launch_game(
                 response_data["warning"] = "Process launched but window not in foreground (timeout)"
 
         else:
-            logger.error(f"LAUNCH FAILED: Game process '{current_game_process_name}' not found within {max_wait_time} seconds")
+            logger.error(f"LAUNCH FAILED: Game process '{current_game_process_name}' not found within {max_wait_time}s")
             response_data = {
                 "status": "error",
-                "error": f"Game process '{current_game_process_name}' not detected after {max_wait_time}s. Game may not be installed or process name is incorrect.",
+                "error": f"Game process '{current_game_process_name}' not detected after {max_wait_time}s. Game may not be installed, process name is incorrect, or a Steam dialog may be blocking launch.",
                 "subprocess_pid": game_process.pid if game_process else None,
                 "subprocess_status": subprocess_status,
                 "resolved_path": game_path if is_steam_id else None,

@@ -114,6 +114,9 @@ class AutomationRun:
     campaign_id: Optional[str] = None  # Links to parent campaign (if part of multi-game campaign)
     quality: Optional[str] = None  # 'low' | 'medium' | 'high' | 'ultra'
     resolution: Optional[str] = None  # '720p' | '1080p' | '1440p' | '2160p'
+    # Runtime references (not serialized)
+    stop_event: Optional[Any] = field(default=None, repr=False)  # threading.Event for cancellation
+    timeline: Optional[Any] = field(default=None, repr=False)  # TimelineManager reference
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
@@ -269,6 +272,21 @@ class RunManager:
                 except Exception:
                     pass
 
+            # Parse preset_level (e.g., "high-1080p") into quality and resolution
+            quality = None
+            resolution = None
+            if manifest.config and manifest.config.preset_level:
+                preset_parts = manifest.config.preset_level.split('-')
+                if len(preset_parts) >= 2:
+                    quality = preset_parts[0]  # e.g., "high"
+                    resolution = preset_parts[1]  # e.g., "1080p"
+                elif len(preset_parts) == 1:
+                    # Just quality or resolution
+                    if preset_parts[0] in ['720p', '1080p', '1440p', '2160p']:
+                        resolution = preset_parts[0]
+                    else:
+                        quality = preset_parts[0]
+
             run = AutomationRun(
                 run_id=manifest.run_id,
                 game_name=manifest.config.games[0] if manifest.config and manifest.config.games else "Unknown",
@@ -279,6 +297,9 @@ class RunManager:
                 sut_info=sut_info,
                 folder_name=manifest.folder_name,
                 created_at=created_at_dt,
+                campaign_id=manifest.campaign_id,  # Preserve campaign link for filtering
+                quality=quality,
+                resolution=resolution,
             )
 
             # Set progress times
@@ -426,15 +447,30 @@ class RunManager:
             raise
     
     def stop_run(self, run_id: str) -> bool:
-        """Stop a specific run"""
+        """Stop a specific run - actually interrupts the automation"""
         with self._lock:
             if run_id in self.active_runs:
                 run = self.active_runs[run_id]
                 if run.status == RunStatus.RUNNING:
+                    # Set status first
                     run.status = RunStatus.STOPPED
                     run.error_message = "Stopped by user"
                     run.progress.end_time = datetime.now()
-                    
+
+                    # CRITICAL: Set the stop_event to interrupt SimpleAutomation
+                    # This causes the automation loop to exit at the next checkpoint
+                    if run.stop_event:
+                        run.stop_event.set()
+                        logger.info(f"Set stop_event for run {run_id}")
+
+                    # Emit timeline event so frontend shows "User cancelled"
+                    if run.timeline:
+                        try:
+                            run.timeline.run_cancelled("User cancelled")
+                            logger.info(f"Emitted run_cancelled timeline event for {run_id}")
+                        except Exception as e:
+                            logger.warning(f"Failed to emit timeline event: {e}")
+
                     logger.info(f"Stopped run {run_id}")
                     return True
         return False
@@ -468,10 +504,10 @@ class RunManager:
         with self._lock:
             # Get active runs from memory
             active_dict = {run_id: run.to_dict() for run_id, run in self.active_runs.items()}
-            
-            # Get history from memory only (Phase 1 - no database)
-            history_list = [run.to_dict() for run in self.run_history[-50:]]
-            
+
+            # Get history from memory (sorted newest first, take first 50)
+            history_list = [run.to_dict() for run in self.run_history[:50]]
+
             return {
                 'active': active_dict,
                 'history': history_list
@@ -816,10 +852,20 @@ class RunManager:
 
             # Create run config
             run_type = "campaign" if run.campaign_id else "single"
+            # Build preset_level from quality and resolution (e.g., "high-1080p")
+            preset_level = ""
+            if run.quality and run.resolution:
+                preset_level = f"{run.quality}-{run.resolution}"
+            elif run.quality:
+                preset_level = run.quality
+            elif run.resolution:
+                preset_level = run.resolution
+
             config = RunConfig(
                 run_type=run_type,
                 games=[run.game_name],
                 iterations=run.iterations,
+                preset_level=preset_level,
             )
 
             # Get campaign name if part of campaign

@@ -1,4 +1,5 @@
 import { Routes, Route, NavLink, Link } from 'react-router-dom';
+import { Brain, ScanEye, FileChartColumn, Antenna, ListOrdered } from 'lucide-react';
 import { Dashboard } from './pages/Dashboard';
 import { Devices } from './pages/Devices';
 import { Games } from './pages/Games';
@@ -6,12 +7,51 @@ import { Runs } from './pages/Runs';
 import { Queue } from './pages/Queue';
 import { WorkflowBuilder } from './pages/WorkflowBuilder';
 import { Settings } from './pages/Settings';
-import { ServiceHealthBar } from './components';
-import { useServiceHealth } from './hooks';
+import { useServiceHealth, useRuns } from './hooks';
+import { ToastProvider } from './contexts/ToastContext';
+import { ToastContainer } from './components/shared/ToastContainer';
+import type { ServiceHealthStatus } from './types';
+
+// Service Icon component for footer with activity animation
+interface ServiceIconProps {
+  icon: React.ComponentType<{ className?: string }>;
+  name: string;
+  status?: ServiceHealthStatus['status'];
+  extra?: number;
+  active?: boolean; // Show activity animation
+}
+
+function ServiceIcon({ icon: Icon, name, status, extra, active }: ServiceIconProps) {
+  const statusColors = {
+    online: 'text-success',
+    offline: 'text-danger',
+    error: 'text-danger',
+    starting: 'text-warning',
+  };
+
+  const colorClass = status ? statusColors[status] : 'text-text-muted';
+
+  // Activity animation - blink when active
+  const activityClass = active && status === 'online' ? 'animate-pulse' : '';
+
+  return (
+    <div className="flex items-center gap-2 group" title={`${name}: ${status || 'unknown'}`}>
+      <Icon className={`w-5 h-5 ${colorClass} ${activityClass} transition-colors`} />
+      <span className="text-xs text-text-muted font-medium">{name}</span>
+      {extra !== undefined && extra > 0 && (
+        <span className="text-xs text-text-muted font-numbers">({extra})</span>
+      )}
+    </div>
+  );
+}
 
 function App() {
-  // Service health for footer status bar
-  const { services } = useServiceHealth();
+  // Service health for footer status bar - poll every 10s since /api/status takes ~3s
+  const { services } = useServiceHealth(10000);
+  const { activeRunsList } = useRuns();
+
+  // Check if there's active automation running
+  const hasActiveRuns = activeRunsList.length > 0;
 
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
     `px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
@@ -21,6 +61,7 @@ function App() {
     }`;
 
   return (
+    <ToastProvider>
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header - Single unified navbar */}
       <header className="bg-surface border-b border-border sticky top-0 z-50">
@@ -102,39 +143,51 @@ function App() {
         </Routes>
       </main>
 
-      {/* Footer - Service Status + Quick Actions */}
-      <footer className="bg-surface border-t border-border sticky bottom-0 z-40 px-4 py-2">
-        <div className="flex items-center justify-between">
-          <ServiceHealthBar services={services} />
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => fetch('/api/discovery/scan', { method: 'POST' })}
-              className="px-2 py-1 text-xs bg-surface-elevated hover:bg-surface-hover text-text-secondary border border-border rounded-lg transition-colors"
-            >
-              Scan SUTs
-            </button>
-            <button
-              onClick={() => fetch('/api/games/reload', { method: 'POST' })}
-              className="px-2 py-1 text-xs bg-surface-elevated hover:bg-surface-hover text-text-secondary border border-border rounded-lg transition-colors"
-            >
-              Reload Games
-            </button>
-            <Link
-              to="/queue"
-              className="px-2 py-1 text-xs bg-surface-elevated hover:bg-surface-hover text-text-secondary border border-border rounded-lg transition-colors"
-            >
-              Queue
-            </Link>
-            <Link
-              to="/runs"
-              className="px-2 py-1 text-xs bg-surface-elevated hover:bg-surface-hover text-text-secondary border border-border rounded-lg transition-colors"
-            >
-              History
-            </Link>
-          </div>
+      {/* Footer - Service Status Icons */}
+      <footer className="bg-surface border-t border-border sticky bottom-0 z-40 px-4 py-2.5">
+        <div className="flex items-center justify-center gap-6">
+          {/* Gemma Backend */}
+          <ServiceIcon
+            icon={Brain}
+            name="Gemma"
+            status={services?.gemmaBackend.status}
+            active={hasActiveRuns}
+          />
+          {/* SUT Discovery */}
+          <ServiceIcon
+            icon={Antenna}
+            name="Discovery"
+            status={services?.discoveryService.status}
+          />
+          {/* Queue Service */}
+          <ServiceIcon
+            icon={ListOrdered}
+            name="Queue"
+            status={services?.queueService.status}
+            extra={services?.queueService.queueDepth}
+            active={hasActiveRuns}
+          />
+          {/* Preset Manager */}
+          <ServiceIcon
+            icon={FileChartColumn}
+            name="Presets"
+            status={services?.presetManager.status}
+          />
+          {/* OmniParser Instances */}
+          {services?.omniparserInstances.map((instance, idx) => (
+            <ServiceIcon
+              key={instance.name}
+              icon={ScanEye}
+              name={`OP${idx + 1}`}
+              status={instance.status}
+              active={hasActiveRuns}
+            />
+          ))}
         </div>
       </footer>
+      <ToastContainer />
     </div>
+    </ToastProvider>
   );
 }
 

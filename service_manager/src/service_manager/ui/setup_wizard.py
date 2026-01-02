@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
-from ..config import SERVICES
+from ..config import get_services
 from ..settings import ServiceSettings, get_settings_manager
 
 
@@ -93,7 +93,7 @@ class ServiceConfigPage(QWizardPage):
         self.services_layout.setContentsMargins(10, 10, 10, 10)
 
         # Create config widget for each service
-        for config in SERVICES:
+        for config in get_services():
             widget = self._create_service_widget(config)
             self.services_layout.addWidget(widget)
 
@@ -198,14 +198,14 @@ class SummaryPage(QWizardPage):
 
         if hasattr(welcome_page, 'is_quick_setup') and welcome_page.is_quick_setup:
             # Quick setup - all localhost
-            for config in SERVICES:
+            for config in get_services():
                 port_str = f":{config.port}" if config.port else ""
                 local_services.append(f"  - {config.display_name} (localhost{port_str})")
         else:
             # Custom setup
             settings = config_page.get_settings()
             for name, svc_settings in settings.items():
-                config = next((c for c in SERVICES if c.name == name), None)
+                config = next((c for c in get_services() if c.name == name), None)
                 if config:
                     port_str = f":{svc_settings.port}" if svc_settings.port else ""
                     addr = f"{svc_settings.host}{port_str}"
@@ -249,10 +249,10 @@ class SetupWizard(QWizard):
 
         if hasattr(welcome_page, 'is_quick_setup') and welcome_page.is_quick_setup:
             # Quick setup - use defaults
-            settings_manager.create_default_config(SERVICES)
+            settings_manager.create_default_config(get_services())
         else:
             # Custom setup - apply wizard settings
-            settings_manager.create_default_config(SERVICES)
+            settings_manager.create_default_config(get_services())
             settings_manager.apply_wizard_config(config_page.get_settings())
 
         settings_manager.save()

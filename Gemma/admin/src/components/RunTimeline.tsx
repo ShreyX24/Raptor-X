@@ -25,22 +25,43 @@ function useCountdown(startTime: string | null, durationSeconds: number | null):
   return remaining;
 }
 
-// Live wait counter component
-function WaitCounter({ event }: { event: TimelineEvent }) {
-  // Extract wait duration from metadata
+// Live wait counter component - displays above circles
+function WaitCounter({ event, position = 'inline' }: { event: TimelineEvent; position?: 'inline' | 'above' }) {
+  // Extract wait duration from metadata - check all possible keys
   const waitDuration =
+    (event.metadata?.countdown as number) ||
+    (event.metadata?.timeout as number) ||
     (event.metadata?.seconds as number) ||
     (event.metadata?.wait_seconds as number) ||
     (event.metadata?.duration as number) ||
+    (event.metadata?.benchmark_duration as number) ||
     null;
 
   const remaining = useCountdown(event.timestamp, waitDuration);
 
   if (remaining === null || remaining <= 0) return null;
 
+  // Format time as MM:SS for longer durations
+  const formatTime = (seconds: number) => {
+    if (seconds >= 60) {
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      return `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+    return `${seconds}s`;
+  };
+
+  if (position === 'above') {
+    return (
+      <span className="font-numbers font-bold text-white text-xl animate-pulse drop-shadow-lg tracking-wide">
+        {formatTime(remaining)}
+      </span>
+    );
+  }
+
   return (
     <span className="ml-1 text-primary font-mono text-[10px] animate-pulse">
-      {remaining}s
+      {formatTime(remaining)}
     </span>
   );
 }
@@ -53,7 +74,7 @@ export interface TimelineEvent {
   event_type: string;
   message: string;
   timestamp: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped';
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped' | 'warning' | 'error';
   duration_ms: number | null;
   metadata: Record<string, unknown>;
   replaces_event_id: string | null;
@@ -64,6 +85,8 @@ interface RunTimelineProps {
   runId: string;
   pollInterval?: number;  // ms, default 2000
   compact?: boolean;
+  runStatus?: string;  // Overall run status - used to adjust event display for completed/failed runs
+  filterIteration?: number;  // Filter to show only events from a specific iteration (1-indexed)
 }
 
 // Status colors
@@ -72,12 +95,45 @@ const statusColors: Record<string, { bg: string; border: string; text: string }>
   in_progress: { bg: 'bg-primary/20', border: 'border-primary', text: 'text-primary' },
   completed: { bg: 'bg-success/20', border: 'border-success', text: 'text-success' },
   failed: { bg: 'bg-danger/20', border: 'border-danger', text: 'text-danger' },
+  error: { bg: 'bg-danger/20', border: 'border-danger', text: 'text-danger' },
   skipped: { bg: 'bg-warning/20', border: 'border-warning', text: 'text-warning' },
+  warning: { bg: 'bg-warning/20', border: 'border-warning', text: 'text-warning' },
 };
 
+// Steam event types for special handling
+const STEAM_EVENT_TYPES = [
+  'steam_dialog_checking',
+  'steam_dialog_detected',
+  'steam_dialog_dismissed',
+  'steam_account_busy',
+  'steam_account_switching',
+  'steam_no_accounts',
+];
+
 // Event type icons
-function EventIcon({ eventType: _eventType, status }: { eventType: string; status: string }) {
+function EventIcon({ eventType, status }: { eventType: string; status: string }) {
   const iconClass = "w-3.5 h-3.5";
+  const isSteamEvent = STEAM_EVENT_TYPES.includes(eventType);
+
+  // Steam icon for Steam-related events
+  if (isSteamEvent && status !== 'in_progress') {
+    // Warning/exclamation for busy/no accounts
+    if (status === 'warning' || status === 'error' || eventType === 'steam_account_busy' || eventType === 'steam_no_accounts') {
+      return (
+        <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+      );
+    }
+    // Account switching - arrows
+    if (eventType === 'steam_account_switching') {
+      return (
+        <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+        </svg>
+      );
+    }
+  }
 
   // Spinner for in-progress
   if (status === 'in_progress') {
@@ -98,11 +154,20 @@ function EventIcon({ eventType: _eventType, status }: { eventType: string; statu
     );
   }
 
-  // X for failed
-  if (status === 'failed') {
+  // X for failed/error
+  if (status === 'failed' || status === 'error') {
     return (
       <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+      </svg>
+    );
+  }
+
+  // Warning icon for warning status
+  if (status === 'warning') {
+    return (
+      <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
       </svg>
     );
   }
@@ -141,11 +206,27 @@ function TimelineNode({ event, isFirst: _isFirst, isLast, onClick, isSelected }:
     ? event.message.substring(0, 25) + '...'
     : event.message;
 
+  // Check if this is a waiting event (has duration metadata)
+  const isWaitingEvent = event.status === 'in_progress' && (
+    event.metadata?.countdown ||
+    event.metadata?.timeout ||
+    event.metadata?.seconds ||
+    event.metadata?.wait_seconds ||
+    event.metadata?.duration ||
+    event.metadata?.benchmark_duration
+  );
+
   return (
     <div className="flex flex-col items-center min-w-[100px] relative group">
-      {/* Time label above */}
-      <div className="text-[10px] text-text-muted mb-1 font-mono opacity-0 group-hover:opacity-100 transition-opacity">
-        {formatTime(event.timestamp)}
+      {/* Time label above - shown on hover, or countdown if waiting */}
+      <div className="h-6 mb-1 flex items-center justify-center">
+        {isWaitingEvent ? (
+          <WaitCounter event={event} position="above" />
+        ) : (
+          <div className="text-[10px] text-text-muted font-mono opacity-0 group-hover:opacity-100 transition-opacity">
+            {formatTime(event.timestamp)}
+          </div>
+        )}
       </div>
 
       {/* Node */}
@@ -182,8 +263,6 @@ function TimelineNode({ event, isFirst: _isFirst, isLast, onClick, isSelected }:
       {/* Message label below */}
       <div className="mt-2 text-[10px] text-text-secondary text-center max-w-[90px] line-clamp-2" title={event.message}>
         {shortMessage}
-        {/* Show live countdown for in_progress waiting events */}
-        {event.status === 'in_progress' && <WaitCounter event={event} />}
       </div>
     </div>
   );
@@ -257,12 +336,57 @@ function EventDetailPanel({ event, onClose }: { event: TimelineEvent; onClose: (
   );
 }
 
-export function RunTimeline({ runId, pollInterval = 2000, compact = false }: RunTimelineProps) {
+// Helper function to extract iteration number from event
+function getEventIteration(event: TimelineEvent): number | null {
+  // Check metadata first
+  if (event.metadata?.iteration !== undefined) {
+    return Number(event.metadata.iteration);
+  }
+  if (event.metadata?.current_iteration !== undefined) {
+    return Number(event.metadata.current_iteration);
+  }
+
+  // Check group field (might be like "iteration_1" or "iteration-1")
+  if (event.group) {
+    const match = event.group.match(/iteration[_-]?(\d+)/i);
+    if (match) return parseInt(match[1], 10);
+  }
+
+  // Check message for iteration patterns like "Iteration 1", "iteration 2/3", "Starting iteration 1"
+  const msgMatch = event.message.match(/iteration\s*(\d+)/i);
+  if (msgMatch) return parseInt(msgMatch[1], 10);
+
+  // Check event type
+  const typeMatch = event.event_type.match(/iteration[_-]?(\d+)/i);
+  if (typeMatch) return parseInt(typeMatch[1], 10);
+
+  return null;
+}
+
+export function RunTimeline({ runId, pollInterval = 2000, compact = false, runStatus, filterIteration }: RunTimelineProps) {
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<TimelineEvent | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Adjust event status based on overall run status
+  // When a run has failed/completed, in_progress events should reflect that
+  const adjustEventStatus = useCallback((event: TimelineEvent): TimelineEvent => {
+    if (!runStatus) return event;
+
+    // If run is failed and event is still in_progress, mark it as failed
+    if (runStatus === 'failed' && (event.status === 'in_progress' || event.status === 'pending')) {
+      return { ...event, status: 'failed' };
+    }
+
+    // If run is completed and event is still in_progress, mark it as completed
+    if (runStatus === 'completed' && event.status === 'in_progress') {
+      return { ...event, status: 'completed' };
+    }
+
+    return event;
+  }, [runStatus]);
 
   const fetchTimeline = useCallback(async () => {
     try {
@@ -297,12 +421,26 @@ export function RunTimeline({ runId, pollInterval = 2000, compact = false }: Run
     }
   }, [events.length]);
 
-  // Filter out replaced events for display (keep latest version)
-  const displayEvents = events.filter(event => {
-    // Check if any other event replaces this one
-    const isReplaced = events.some(e => e.replaces_event_id === event.event_id);
-    return !isReplaced;
-  });
+  // Filter out replaced events for display (keep latest version) and adjust status
+  const displayEvents = events
+    .filter(event => {
+      // Check if any other event replaces this one
+      const isReplaced = events.some(e => e.replaces_event_id === event.event_id);
+      if (isReplaced) return false;
+
+      // Apply iteration filter if specified
+      if (filterIteration !== undefined) {
+        const eventIteration = getEventIteration(event);
+        // Include events that match the iteration OR have no iteration (global events)
+        // Also include events before the first iteration starts (setup events)
+        if (eventIteration !== null && eventIteration !== filterIteration) {
+          return false;
+        }
+      }
+
+      return true;
+    })
+    .map(adjustEventStatus);
 
   if (loading && events.length === 0) {
     return (

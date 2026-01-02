@@ -11,6 +11,11 @@ export default defineConfig({
         target: 'http://localhost:5000',
         changeOrigin: true,
       },
+      '/discovery-api': {
+        target: 'http://localhost:5001/api',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/discovery-api/, ''),
+      },
       '/socket.io': {
         target: 'http://localhost:5000',
         changeOrigin: true,

@@ -9,9 +9,13 @@ interface GameCardProps {
   isSelected?: boolean;
   disabled?: boolean;
   sutIp?: string;  // Optional SUT IP to check availability
+  // Campaign selection mode
+  campaignMode?: boolean;
+  isCampaignSelected?: boolean;
+  onCampaignToggle?: (gameName: string, selected: boolean) => void;
 }
 
-export function GameCard({ game, onSelect, onRun, isSelected, disabled, sutIp }: GameCardProps) {
+export function GameCard({ game, onSelect, onRun, isSelected, disabled, sutIp, campaignMode, isCampaignSelected, onCampaignToggle }: GameCardProps) {
   const [availability, setAvailability] = useState<GameAvailabilityResult | null>(null);
   const [checking, setChecking] = useState(false);
 
@@ -46,6 +50,7 @@ export function GameCard({ game, onSelect, onRun, isSelected, disabled, sutIp }:
 
   // Determine border color based on availability
   const getBorderClass = () => {
+    if (campaignMode && isCampaignSelected) return 'border-purple-500 ring-2 ring-purple-200 bg-purple-50';
     if (isSelected) return 'border-blue-500 bg-blue-50';
     if (!sutIp) return 'border-gray-200 bg-white';
     if (checking) return 'border-gray-300 bg-gray-50';
@@ -53,21 +58,47 @@ export function GameCard({ game, onSelect, onRun, isSelected, disabled, sutIp }:
     return 'border-red-300 bg-red-50/30';
   };
 
+  // Handle card click in campaign mode
+  const handleCardClick = () => {
+    if (disabled) return;
+    if (campaignMode) {
+      onCampaignToggle?.(game.name, !isCampaignSelected);
+    } else {
+      onSelect?.(game);
+    }
+  };
+
   return (
     <div
       className={`rounded-lg border p-4 transition-all ${
         disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-md'
       } ${getBorderClass()}`}
-      onClick={() => !disabled && onSelect?.(game)}
+      onClick={handleCardClick}
     >
       <div className="flex items-start justify-between">
-        <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-gray-900 truncate">
-            {game.display_name || game.name}
-          </h3>
-          <p className="text-sm text-gray-500 truncate">
-            {game.process_name}
-          </p>
+        <div className="flex items-start gap-3 flex-1 min-w-0">
+          {/* Campaign Mode Checkbox */}
+          {campaignMode && (
+            <div className="flex-shrink-0 pt-0.5">
+              <input
+                type="checkbox"
+                checked={isCampaignSelected}
+                onChange={(e) => {
+                  e.stopPropagation();
+                  onCampaignToggle?.(game.name, e.target.checked);
+                }}
+                className="h-5 w-5 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+              />
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-gray-900 truncate">
+              {game.display_name || game.name}
+            </h3>
+            <p className="text-sm text-gray-500 truncate">
+              {game.process_name}
+            </p>
+          </div>
         </div>
         <div className="flex flex-col items-end gap-1">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500 to-blue-500 text-white font-bold">
@@ -169,16 +200,32 @@ export function GameCard({ game, onSelect, onRun, isSelected, disabled, sutIp }:
         </div>
       )}
 
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          onRun?.(game.name);
-        }}
-        disabled={disabled || (!!sutIp && !availability?.available)}
-        className="mt-4 w-full rounded bg-green-500 px-3 py-2 text-sm font-medium text-white hover:bg-green-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
-      >
-        Run Automation
-      </button>
+      {campaignMode ? (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onCampaignToggle?.(game.name, !isCampaignSelected);
+          }}
+          className={`mt-4 w-full rounded px-3 py-2 text-sm font-medium transition-colors ${
+            isCampaignSelected
+              ? 'bg-purple-500 text-white hover:bg-purple-600'
+              : 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300'
+          }`}
+        >
+          {isCampaignSelected ? '✓ Added to Campaign' : 'Add to Campaign'}
+        </button>
+      ) : (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onRun?.(game.name);
+          }}
+          disabled={disabled || (!!sutIp && !availability?.available)}
+          className="mt-4 w-full rounded bg-green-500 px-3 py-2 text-sm font-medium text-white hover:bg-green-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
+        >
+          Run Automation
+        </button>
+      )}
     </div>
   );
 }

@@ -354,7 +354,146 @@ class SUTClient:
     def set_timeout(self, timeout: float):
         """Set request timeout"""
         self.timeout = timeout
-        
+
+    def get_logs(self, ip: str, port: int = 8080, lines: int = 1000, since: str = None) -> ActionResult:
+        """
+        Retrieve logs from SUT device.
+
+        Args:
+            ip: SUT IP address
+            port: SUT port
+            lines: Number of recent log lines to retrieve
+            since: ISO timestamp - only return logs after this time
+
+        Returns:
+            ActionResult with log lines in data['lines']
+        """
+        try:
+            params = {'lines': lines}
+            if since:
+                params['since'] = since
+
+            response = self.session.get(
+                f"http://{ip}:{port}/logs",
+                params=params,
+                timeout=self.timeout
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                return ActionResult(
+                    success=True,
+                    data=data,
+                    response_time=response.elapsed.total_seconds()
+                )
+            elif response.status_code == 404:
+                return ActionResult(
+                    success=False,
+                    error="Log file not found on SUT (logging may not be enabled)"
+                )
+            else:
+                return ActionResult(
+                    success=False,
+                    error=f"HTTP {response.status_code}: {response.text}"
+                )
+
+        except requests.RequestException as e:
+            return ActionResult(
+                success=False,
+                error=str(e)
+            )
+
+    def download_logs(self, ip: str, port: int = 8080, save_path: str = None) -> ActionResult:
+        """
+        Download full log file from SUT device.
+
+        Args:
+            ip: SUT IP address
+            port: SUT port
+            save_path: Path to save the log file
+
+        Returns:
+            ActionResult with file info
+        """
+        try:
+            response = self.session.get(
+                f"http://{ip}:{port}/logs",
+                params={'download': 'true'},
+                timeout=self.timeout
+            )
+
+            if response.status_code == 200:
+                result_data = {
+                    'content_type': response.headers.get('content-type', 'text/plain'),
+                    'size': len(response.content)
+                }
+
+                if save_path:
+                    try:
+                        with open(save_path, 'wb') as f:
+                            f.write(response.content)
+                        result_data['saved_to'] = save_path
+                    except IOError as e:
+                        logger.warning(f"Failed to save log to {save_path}: {e}")
+
+                return ActionResult(
+                    success=True,
+                    data=result_data,
+                    response_time=response.elapsed.total_seconds()
+                )
+            elif response.status_code == 404:
+                return ActionResult(
+                    success=False,
+                    error="Log file not found on SUT (logging may not be enabled)"
+                )
+            else:
+                return ActionResult(
+                    success=False,
+                    error=f"HTTP {response.status_code}: {response.text}"
+                )
+
+        except requests.RequestException as e:
+            return ActionResult(
+                success=False,
+                error=str(e)
+            )
+
+    def clear_logs(self, ip: str, port: int = 8080) -> ActionResult:
+        """
+        Clear/rotate logs on SUT device (creates backup first).
+
+        Args:
+            ip: SUT IP address
+            port: SUT port
+
+        Returns:
+            ActionResult
+        """
+        try:
+            response = self.session.post(
+                f"http://{ip}:{port}/logs/clear",
+                timeout=self.timeout
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                return ActionResult(
+                    success=True,
+                    data=data,
+                    response_time=response.elapsed.total_seconds()
+                )
+            else:
+                return ActionResult(
+                    success=False,
+                    error=f"HTTP {response.status_code}: {response.text}"
+                )
+
+        except requests.RequestException as e:
+            return ActionResult(
+                success=False,
+                error=str(e)
+            )
+
     def close(self):
         """Close the session"""
         self.session.close()

@@ -20,11 +20,12 @@ async function checkServiceHealth(
   displayName: string,
   url: string,
   port: number,
-  healthEndpoint: string = '/health'
+  healthEndpoint: string = '/health',
+  timeoutMs: number = 5000
 ): Promise<ServiceHealthStatus> {
   try {
     const response = await fetch(`${url}${healthEndpoint}`, {
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     if (response.ok) {
@@ -61,7 +62,7 @@ async function checkServiceHealth(
 }
 
 // Number of consecutive failures before marking service as offline
-const FAILURE_THRESHOLD = 2;
+const FAILURE_THRESHOLD = 3;
 
 export function useServiceHealth(pollInterval: number = 5000): UseServiceHealthResult {
   const [services, setServices] = useState<AllServicesHealth | null>(null);
@@ -89,7 +90,7 @@ export function useServiceHealth(pollInterval: number = 5000): UseServiceHealthR
         queueStatus,
         presetStatus,
       ] = await Promise.all([
-        // Raptor X Backend
+        // Raptor X Backend - use longer timeout since /api/status does internal health checks
         getSystemStatus()
           .then((data) => {
             failureCountsRef.current['raptor-x-backend'] = 0;
@@ -108,15 +109,27 @@ export function useServiceHealth(pollInterval: number = 5000): UseServiceHealthR
               lastChecked: new Date().toISOString(),
             };
           })
-          .catch(() => {
+          .catch((err) => {
             failureCountsRef.current['raptor-x-backend']++;
-            // Only mark offline after consecutive failures
-            const shouldMarkOffline = failureCountsRef.current['raptor-x-backend'] >= FAILURE_THRESHOLD;
+            const failCount = failureCountsRef.current['raptor-x-backend'];
             const lastStatus = lastKnownStatusRef.current['raptor-x-backend'];
+
+            // Only mark offline after FAILURE_THRESHOLD consecutive failures
+            // If we were previously online, stay online until threshold reached
+            const shouldStayOnline = lastStatus === 'online' && failCount < FAILURE_THRESHOLD;
+            const newStatus = shouldStayOnline ? 'online' : 'offline';
+
+            // Update last known status if going offline
+            if (newStatus === 'offline') {
+              lastKnownStatusRef.current['raptor-x-backend'] = 'offline';
+            }
+
+            console.debug(`[ServiceHealth] Gemma check failed (${failCount}/${FAILURE_THRESHOLD}), status: ${newStatus}`, err);
+
             return {
               name: 'raptor-x-backend',
               displayName: 'Raptor X Backend',
-              status: (shouldMarkOffline ? 'offline' : (lastStatus === 'online' ? 'online' : 'offline')) as 'online' | 'offline',
+              status: newStatus as 'online' | 'offline',
               url: '/api',
               port: 5000,
               lastChecked: new Date().toISOString(),

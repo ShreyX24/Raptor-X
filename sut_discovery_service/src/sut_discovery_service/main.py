@@ -36,6 +36,15 @@ async def lifespan(app: FastAPI):
     global _udp_announcer
     config = get_config()
 
+    # Add file handler if configured
+    if config.log_file:
+        file_handler = logging.FileHandler(config.log_file)
+        file_handler.setFormatter(
+            logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        )
+        logging.getLogger().addHandler(file_handler)
+        logger.info(f"Logging to file: {config.log_file}")
+
     # Startup
     logger.info("=" * 60)
     logger.info("SUT Discovery Service v1.0.0")

@@ -1,6 +1,6 @@
 metadata:
   game_name: Assassin's Creed Mirage
-  preset_id: ac-mirage  # Maps to preset-manager folder name
+  preset_id: assassins-creed-mirage  # Maps to preset-manager folder name
   steam_app_id: '3035570'
   version: '1.0'
   created_with: Katana Workflow Builder

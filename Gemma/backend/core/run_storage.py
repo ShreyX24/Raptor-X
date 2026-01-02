@@ -199,6 +199,13 @@ class RunManifest:
     summary: Dict[str, Any] = field(default_factory=dict)
     errors: List[str] = field(default_factory=list)
 
+    # Campaign support
+    campaign_id: Optional[str] = None
+    campaign_name: Optional[str] = None
+
+    # Timeline events for replay
+    timeline_events: List[Dict[str, Any]] = field(default_factory=list)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
         return {
@@ -213,6 +220,9 @@ class RunManifest:
             'iterations': [asdict(i) for i in self.iterations],
             'summary': self.summary,
             'errors': self.errors,
+            'campaign_id': self.campaign_id,
+            'campaign_name': self.campaign_name,
+            'timeline_events': self.timeline_events,
         }
 
     @classmethod
@@ -227,6 +237,9 @@ class RunManifest:
             status=data.get('status', 'unknown'),
             summary=data.get('summary', {}),
             errors=data.get('errors', []),
+            campaign_id=data.get('campaign_id'),
+            campaign_name=data.get('campaign_name'),
+            timeline_events=data.get('timeline_events', []),
         )
 
         if data.get('sut'):
@@ -324,7 +337,9 @@ class RunStorageManager:
         run_id: str,
         sut_info: SUTInfo,
         config: RunConfig,
-        timestamp: datetime = None
+        timestamp: datetime = None,
+        campaign_id: str = None,
+        campaign_name: str = None
     ) -> RunManifest:
         """
         Create a new run with folder structure and manifest.
@@ -334,6 +349,8 @@ class RunStorageManager:
             sut_info: SUT hardware information
             config: Run configuration
             timestamp: Optional timestamp
+            campaign_id: Optional campaign ID for grouping
+            campaign_name: Optional campaign name
 
         Returns:
             RunManifest object
@@ -348,7 +365,15 @@ class RunStorageManager:
             timestamp=timestamp
         )
 
-        run_dir = self.base_dir / folder_name
+        # If part of campaign, nest under campaign folder
+        if campaign_id:
+            campaign_folder = self._get_or_create_campaign_folder(
+                campaign_id, campaign_name, sut_info, timestamp
+            )
+            run_dir = campaign_folder / folder_name
+        else:
+            run_dir = self.base_dir / folder_name
+
         run_dir.mkdir(parents=True, exist_ok=True)
 
         # Create iteration folders
@@ -378,15 +403,23 @@ class RunStorageManager:
                 status="pending"
             ))
 
+        # Determine full folder path for manifest
+        if campaign_id:
+            full_folder_name = f"{campaign_folder.name}/{folder_name}"
+        else:
+            full_folder_name = folder_name
+
         # Create manifest
         manifest = RunManifest(
             run_id=run_id,
-            folder_name=folder_name,
+            folder_name=full_folder_name,
             created_at=timestamp.isoformat(),
             status="running",
             sut=sut_info,
             config=config,
             iterations=iterations,
+            campaign_id=campaign_id,
+            campaign_name=campaign_name,
         )
 
         # Save manifest
@@ -624,7 +657,7 @@ class RunStorageManager:
 
     def load_run_history(self) -> List[RunManifest]:
         """
-        Load all runs from disk.
+        Load all runs from disk, including runs nested in campaign folders.
 
         Returns:
             List of RunManifest objects, sorted by creation date (newest first)
@@ -634,28 +667,128 @@ class RunStorageManager:
         if not self.base_dir.exists():
             return runs
 
-        for run_dir in self.base_dir.iterdir():
-            if not run_dir.is_dir():
-                continue
-
-            manifest_path = run_dir / "manifest.json"
-            if not manifest_path.exists():
+        # Find all manifest.json files recursively (handles both standalone and campaign runs)
+        for manifest_path in self.base_dir.rglob("manifest.json"):
+            # Skip campaign_manifest.json (only load run manifests)
+            if manifest_path.name != "manifest.json":
                 continue
 
             try:
                 with open(manifest_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
+
+                # Skip if this is not a run manifest (no run_id field)
+                if 'run_id' not in data:
+                    continue
+
                 manifest = RunManifest.from_dict(data)
                 runs.append(manifest)
                 self._run_cache[manifest.run_id] = manifest
             except Exception as e:
-                logger.warning(f"Failed to load manifest from {run_dir}: {e}")
+                logger.warning(f"Failed to load manifest from {manifest_path}: {e}")
 
         # Sort by creation date (newest first)
         runs.sort(key=lambda r: r.created_at, reverse=True)
 
         logger.info(f"Loaded {len(runs)} runs from history")
         return runs
+
+    def load_campaign_history(self) -> List[Dict[str, Any]]:
+        """
+        Load campaign history from disk by finding campaign_manifest.json files.
+
+        Returns:
+            List of campaign dictionaries, sorted by creation date (newest first)
+        """
+        campaigns = []
+
+        if not self.base_dir.exists():
+            return campaigns
+
+        # Find all campaign_manifest.json files
+        for manifest_path in self.base_dir.glob("*/campaign_manifest.json"):
+            try:
+                with open(manifest_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                # Get all runs for this campaign to determine games and status
+                campaign_id = data.get('campaign_id')
+                if not campaign_id:
+                    continue
+
+                # Find all runs in this campaign
+                campaign_runs = [r for r in self._run_cache.values() if r.campaign_id == campaign_id]
+
+                if not campaign_runs:
+                    # No runs found - skip this campaign
+                    continue
+
+                # Determine campaign status from run statuses
+                statuses = [r.status for r in campaign_runs]
+                if all(s == 'completed' for s in statuses):
+                    status = 'completed'
+                elif all(s in ('completed', 'failed', 'stopped') for s in statuses):
+                    # All done but some failed
+                    if any(s == 'completed' for s in statuses):
+                        status = 'partially_completed'
+                    elif any(s == 'stopped' for s in statuses):
+                        status = 'stopped'
+                    else:
+                        status = 'failed'
+                else:
+                    # Still has running/queued runs - skip (not in history yet)
+                    continue
+
+                # Extract games from runs
+                games = list(set(r.config.games[0] for r in campaign_runs if r.config and r.config.games))
+
+                # Get quality/resolution from first run
+                first_run = campaign_runs[0]
+                quality = None
+                resolution = None
+                if first_run.config and first_run.config.preset_level:
+                    preset_parts = first_run.config.preset_level.split('-')
+                    if len(preset_parts) >= 2:
+                        quality = preset_parts[0]
+                        resolution = preset_parts[1]
+
+                # Get iterations from first run
+                iterations = first_run.config.iterations if first_run.config else 1
+
+                # Build campaign dict
+                campaign = {
+                    'campaign_id': campaign_id,
+                    'name': data.get('campaign_name', 'Unknown Campaign'),
+                    'sut_ip': data.get('sut_ip', ''),
+                    'sut_device_id': first_run.sut.device_id if first_run.sut else '',
+                    'games': games,
+                    'iterations_per_game': iterations,
+                    'status': status,
+                    'run_ids': [r.run_id for r in campaign_runs],
+                    'progress': {
+                        'total_games': len(games),
+                        'completed_games': sum(1 for s in statuses if s == 'completed'),
+                        'failed_games': sum(1 for s in statuses if s == 'failed'),
+                        'current_game': None,
+                        'current_game_index': len(games),
+                    },
+                    'created_at': data.get('created_at', ''),
+                    'completed_at': max((r.completed_at for r in campaign_runs if r.completed_at), default=None),
+                    'error_message': None,
+                    'quality': quality,
+                    'resolution': resolution,
+                }
+
+                campaigns.append(campaign)
+
+            except Exception as e:
+                logger.warning(f"Failed to load campaign from {manifest_path}: {e}")
+
+        # Sort by creation date (newest first)
+        campaigns.sort(key=lambda c: c.get('created_at', ''), reverse=True)
+
+        logger.info(f"Loaded {len(campaigns)} campaigns from history")
+        return campaigns
 
     def _save_manifest(self, manifest: RunManifest) -> bool:
         """Save manifest to disk"""
@@ -717,3 +850,176 @@ class RunStorageManager:
             "running": running,
             "disk_usage_mb": round(total_size / (1024 * 1024), 2),
         }
+
+    # =========================================================================
+    # Campaign Support
+    # =========================================================================
+
+    def _get_or_create_campaign_folder(
+        self,
+        campaign_id: str,
+        campaign_name: str,
+        sut_info: SUTInfo,
+        timestamp: datetime
+    ) -> Path:
+        """
+        Get or create a campaign folder.
+
+        Format: {date}_{campaign-name}_{ip}/
+        Example: 2025-12-31_BMW-SOTR-H3_192-168-0-103/
+        """
+        # Check if campaign folder already exists
+        if hasattr(self, '_campaign_folders') and campaign_id in self._campaign_folders:
+            return self._campaign_folders[campaign_id]
+
+        if not hasattr(self, '_campaign_folders'):
+            self._campaign_folders: Dict[str, Path] = {}
+
+        # Generate campaign folder name
+        date_str = timestamp.strftime("%Y-%m-%d")
+        ip_dashed = sut_info.ip.replace('.', '-')
+        safe_name = re.sub(r'[<>:"/\\|?*\s]', '-', campaign_name or 'campaign')
+
+        campaign_folder_name = f"{date_str}_{safe_name}_{ip_dashed}"
+        campaign_folder = self.base_dir / campaign_folder_name
+
+        campaign_folder.mkdir(parents=True, exist_ok=True)
+
+        # Create campaign manifest
+        campaign_manifest = {
+            'campaign_id': campaign_id,
+            'campaign_name': campaign_name,
+            'sut_ip': sut_info.ip,
+            'created_at': timestamp.isoformat(),
+            'runs': []
+        }
+        campaign_manifest_path = campaign_folder / 'campaign_manifest.json'
+        if not campaign_manifest_path.exists():
+            with open(campaign_manifest_path, 'w', encoding='utf-8') as f:
+                json.dump(campaign_manifest, f, indent=2)
+
+        self._campaign_folders[campaign_id] = campaign_folder
+        logger.info(f"Created campaign folder: {campaign_folder_name}")
+
+        return campaign_folder
+
+    # =========================================================================
+    # Timeline Persistence
+    # =========================================================================
+
+    def add_timeline_event(
+        self,
+        run_id: str,
+        event_type: str,
+        message: str,
+        status: str = "info",
+        details: Dict[str, Any] = None
+    ) -> bool:
+        """
+        Add a timeline event to the run manifest.
+
+        Args:
+            run_id: Run identifier
+            event_type: Type of event (e.g., "step", "screenshot", "error")
+            message: Event message
+            status: Event status (info, success, warning, error, skipped)
+            details: Optional additional details
+
+        Returns:
+            True if event was added
+        """
+        manifest = self._run_cache.get(run_id)
+        if not manifest:
+            return False
+
+        event = {
+            'timestamp': datetime.now().isoformat(),
+            'type': event_type,
+            'message': message,
+            'status': status,
+        }
+        if details:
+            event['details'] = details
+
+        manifest.timeline_events.append(event)
+
+        # Save periodically (every 10 events) or on important events
+        if len(manifest.timeline_events) % 10 == 0 or status in ['error', 'success']:
+            self._save_manifest(manifest)
+
+        return True
+
+    def get_timeline_events(self, run_id: str) -> List[Dict[str, Any]]:
+        """Get all timeline events for a run"""
+        manifest = self._run_cache.get(run_id)
+        if not manifest:
+            # Try loading from disk
+            for run_dir in self.base_dir.rglob('manifest.json'):
+                try:
+                    with open(run_dir, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    if data.get('run_id') == run_id:
+                        return data.get('timeline_events', [])
+                except Exception:
+                    continue
+            return []
+
+        return manifest.timeline_events
+
+    def save_timeline(self, run_id: str) -> bool:
+        """Force save timeline events to disk"""
+        manifest = self._run_cache.get(run_id)
+        if not manifest:
+            return False
+        return self._save_manifest(manifest)
+
+    # =========================================================================
+    # Service Logs Collection
+    # =========================================================================
+
+    def save_service_logs(
+        self,
+        run_id: str,
+        service_name: str,
+        log_lines: List[str],
+        hostname: str = None
+    ) -> Optional[str]:
+        """
+        Save collected service logs for a run.
+
+        Args:
+            run_id: Run identifier
+            service_name: Service name (e.g., "sut_client", "queue_service")
+            log_lines: List of log lines
+            hostname: Optional hostname for the service
+
+        Returns:
+            Path to saved log file, or None on failure
+        """
+        run_dir = self.get_run_dir(run_id)
+        if not run_dir:
+            return None
+
+        # Create service_logs directory
+        logs_dir = run_dir / "service_logs"
+        logs_dir.mkdir(exist_ok=True)
+
+        # Generate filename
+        hostname_suffix = f"_{hostname}" if hostname else ""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{service_name}{hostname_suffix}_{timestamp}.log"
+
+        filepath = logs_dir / filename
+        filepath.write_text('\n'.join(log_lines), encoding='utf-8')
+
+        logger.info(f"Saved {len(log_lines)} log lines from {service_name} to {filepath}")
+        return str(filepath)
+
+    def get_service_logs_dir(self, run_id: str) -> Optional[Path]:
+        """Get the service logs directory for a run"""
+        run_dir = self.get_run_dir(run_id)
+        if run_dir:
+            logs_dir = run_dir / "service_logs"
+            logs_dir.mkdir(exist_ok=True)
+            return logs_dir
+        return None

@@ -20,6 +20,7 @@ from ..communication.websocket_handler import WebSocketHandler
 from ..communication.sut_client import SUTClient
 from ..communication.omniparser_client import OmniparserClient
 from ..api.routes import APIRoutes
+from ..api.admin_routes import admin_bp
 from .game_manager import GameConfigManager
 
 # Service clients for microservices architecture
@@ -102,9 +103,10 @@ class BackendController:
             self.queue_client = None
             self.preset_manager_client = None
 
-        # Initialize run manager and automation orchestrator
+        # Initialize run manager, campaign manager, and automation orchestrator
         from .run_manager import RunManager
         from .automation_orchestrator import AutomationOrchestrator
+        from .campaign_manager import CampaignManager
 
         self.automation_orchestrator = AutomationOrchestrator(
             self.game_manager,
@@ -121,6 +123,11 @@ class BackendController:
         # Connect storage manager from RunManager to Orchestrator
         # This allows orchestrator to save screenshots and logs to persistent storage
         self.automation_orchestrator.set_storage(self.run_manager.storage)
+
+        # Initialize campaign manager for multi-game campaigns
+        self.campaign_manager = CampaignManager(self.run_manager)
+        # Set campaign_manager reference on run_manager for storage
+        self.run_manager.campaign_manager = self.campaign_manager
 
         # Set up run manager callbacks for WebSocket events
         self.run_manager.on_run_started = self._on_run_started
@@ -148,11 +155,15 @@ class BackendController:
         self.api_routes.queue_client = getattr(self, 'queue_client', None)
         self.api_routes.preset_manager_client = getattr(self, 'preset_manager_client', None)
 
-        # Pass run manager to API routes
+        # Pass run manager and campaign manager to API routes
         self.api_routes.run_manager = self.run_manager
+        self.api_routes.campaign_manager = self.campaign_manager
 
         # Register API routes with Flask app
         self.api_routes.register_routes(self.app)
+
+        # Register admin API blueprint
+        self.app.register_blueprint(admin_bp)
 
         # Background services
         self.monitor_thread: Optional[threading.Thread] = None

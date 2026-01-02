@@ -8,9 +8,10 @@ metadata:
   path: '1847520'
   process_id: Launcher
   process_name: Launcher.exe
+  game_process: HITMAN3  # The actual game process to track after launcher
   benchmark_name: Built-in Benchmark - Dubai
   benchmark_duration: 180
-  startup_wait: 20
+  startup_wait: 30  # Increased to allow launcher -> game transition
   resolution: 1920x1080
   preset: Ultra
   engine: Glacier 2

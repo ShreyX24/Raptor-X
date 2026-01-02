@@ -240,8 +240,13 @@ class AutomationOrchestrator:
         timeline = TimelineManager(run.run_id, base_run_dir)
         timeline.run_started(run.game_name, run.sut_ip, run.iterations)
 
-        # Store timeline reference on run for API access
+        # Store timeline reference on run for API access AND for stop_run() to emit cancel event
         run.timeline = timeline
+
+        # Create a shared stop_event and store it on the run object
+        # This allows stop_run() to set it and interrupt the automation
+        import threading
+        run.stop_event = threading.Event()
 
         # Acquire Steam account pair for this SUT (for multi-SUT automation)
         account_pool = get_account_pool()
@@ -311,6 +316,10 @@ class AutomationOrchestrator:
             total_runs = run.iterations
             error_logs = []
 
+            # Run-level state for resolution (only change once, restore at end)
+            run_resolution_changed = False
+            run_original_resolution = None  # Will store (width, height) from first iteration
+
             for iteration in range(run.iterations):
                 logger.info(f"Starting iteration {iteration + 1}/{run.iterations} for run {run.run_id}")
                 timeline.iteration_started(iteration + 1, run.iterations)
@@ -322,9 +331,15 @@ class AutomationOrchestrator:
                 
                 try:
                     # Execute single iteration (pass timeline for detailed events)
-                    iteration_success = self._execute_single_iteration(
-                        run, game_config, device, iteration + 1, timeline
+                    # Pass run-level resolution state to avoid changing per iteration
+                    iteration_success, iter_original_res, iter_res_changed = self._execute_single_iteration(
+                        run, game_config, device, iteration + 1, timeline,
+                        skip_resolution_change=run_resolution_changed
                     )
+                    # Store original resolution and state from first iteration
+                    if iteration == 0 and iter_res_changed:
+                        run_original_resolution = iter_original_res
+                        run_resolution_changed = iter_res_changed
 
                     if iteration_success:
                         successful_runs += 1
@@ -358,10 +373,39 @@ class AutomationOrchestrator:
                     logger.error(error_msg, exc_info=True)
                     timeline.error(error_msg, str(e))
                     timeline.iteration_completed(iteration + 1, success=False)
-            
+
+            # Check if run was cancelled by user
+            was_cancelled = run.status == RunStatus.STOPPED
+
+            # Restore resolution at end of run (not per iteration)
+            # This runs even if cancelled - each run only affects its own SUT
+            if run_resolution_changed and run_original_resolution:
+                try:
+                    from modules.network import NetworkManager
+                    orig_w, orig_h = run_original_resolution
+                    logger.info(f"Restoring original SUT resolution ({orig_w}x{orig_h}) after run {'cancellation' if was_cancelled else 'completion'}...")
+                    if timeline:
+                        timeline.info(f"Restoring original resolution ({orig_w}x{orig_h})...")
+                    # Create a fresh network connection just for resolution restore
+                    restore_network = NetworkManager(device.ip, device.port)
+                    if restore_network.set_resolution(orig_w, orig_h):
+                        if timeline:
+                            timeline.info(f"Resolution restored to {orig_w}x{orig_h}")
+                        logger.info(f"Resolution restored to {orig_w}x{orig_h}")
+                    else:
+                        logger.warning(f"Failed to restore resolution to {orig_w}x{orig_h}")
+                        if timeline:
+                            timeline.warning(f"Failed to restore resolution to {orig_w}x{orig_h}")
+                    restore_network.close()
+                    time.sleep(2)  # Wait for display to settle after restore
+                except Exception as res_err:
+                    logger.warning(f"Failed to restore resolution: {res_err}")
+                    if timeline:
+                        timeline.warning(f"Failed to restore resolution: {res_err}")
+
             # Calculate results
             success_rate = successful_runs / total_runs if total_runs > 0 else 0.0
-            
+
             results = RunResult(
                 success_rate=success_rate,
                 successful_runs=successful_runs,
@@ -369,20 +413,35 @@ class AutomationOrchestrator:
                 run_directory=self._get_run_directory(run),
                 error_logs=error_logs
             )
-            
+
             overall_success = successful_runs > 0  # At least one iteration succeeded
 
             # Log run completion in timeline
-            if overall_success:
-                timeline.run_completed(successful_runs, total_runs)
-            else:
-                timeline.run_failed(f"All {total_runs} iterations failed")
+            # Skip if cancelled - stop_run() already emitted run_cancelled event
+            if not was_cancelled:
+                if overall_success:
+                    timeline.run_completed(successful_runs, total_runs)
+                else:
+                    timeline.run_failed(f"All {total_runs} iterations failed")
 
             return overall_success, results, None
 
         except Exception as e:
             error_msg = f"Critical error in run execution: {str(e)}"
             logger.error(error_msg, exc_info=True)
+
+            # Try to restore resolution even on critical error (if we have the info)
+            if 'run_resolution_changed' in locals() and run_resolution_changed and 'run_original_resolution' in locals() and run_original_resolution:
+                try:
+                    from modules.network import NetworkManager
+                    orig_w, orig_h = run_original_resolution
+                    logger.info(f"Restoring resolution ({orig_w}x{orig_h}) after critical error...")
+                    restore_network = NetworkManager(device.ip, device.port)
+                    restore_network.set_resolution(orig_w, orig_h)
+                    restore_network.close()
+                except Exception as res_err:
+                    logger.warning(f"Failed to restore resolution after error: {res_err}")
+
             timeline.run_failed(error_msg)
             return False, None, error_msg
 
@@ -392,8 +451,15 @@ class AutomationOrchestrator:
                 account_pool.release_account_pair(run.sut_ip)
                 logger.info(f"Released Steam account pair for SUT {run.sut_ip}")
 
-    def _execute_single_iteration(self, run: AutomationRun, game_config, device, iteration_num: int, timeline: TimelineManager = None) -> bool:
-        """Execute a single automation iteration"""
+    def _execute_single_iteration(self, run: AutomationRun, game_config, device, iteration_num: int, timeline: TimelineManager = None, skip_resolution_change: bool = False) -> tuple:
+        """Execute a single automation iteration
+
+        Returns:
+            tuple: (success: bool, original_resolution: tuple or None, resolution_changed: bool)
+                   original_resolution is (width, height) if resolution was changed, else None
+        """
+        original_resolution = None  # Will store (width, height) if we change resolution
+        resolution_changed = False
         try:
             # Import automation modules dynamically
             from modules.network import NetworkManager
@@ -589,8 +655,9 @@ class AutomationOrchestrator:
                 else:
                     logger.debug(f"No credentials returned for SUT {run.sut_ip}, using existing Steam session")
 
-            # Create a stop event for this iteration
-            stop_event = threading.Event()
+            # Use the run's stop_event (created in execute_run) so stop_run() can interrupt us
+            # This is critical - if we create a new one here, stop_run() can't cancel us!
+            stop_event = run.stop_event
 
             # Create progress callback for step-level events (with timeline reference)
             progress_callback = StepProgressCallback(
@@ -622,7 +689,8 @@ class AutomationOrchestrator:
 
             # ===== Resolution Switching =====
             # Priority: run.resolution > game_config.resolution
-            resolution_changed = False
+            # Only change resolution on first iteration (skip_resolution_change=False)
+            # Resolution is restored at the END of the entire run, not per iteration
 
             # Map resolution presets to dimensions
             resolution_map = {
@@ -635,7 +703,7 @@ class AutomationOrchestrator:
             # Check for run-level resolution (from UI selection) or fall back to game config
             target_resolution = run.resolution or getattr(game_config, 'resolution', None)
 
-            if target_resolution:
+            if target_resolution and not skip_resolution_change:
                 # Parse resolution - could be preset (e.g., "1080p") or dimensions (e.g., "1920x1080")
                 try:
                     if target_resolution in resolution_map:
@@ -650,6 +718,9 @@ class AutomationOrchestrator:
                             timeline.info(f"Changing resolution from {screen_width}x{screen_height} to {target_width}x{target_height}")
                         logger.info(f"Target resolution {target_width}x{target_height} differs from current {screen_width}x{screen_height}")
 
+                        # Store original resolution for run-level restore
+                        original_resolution = (screen_width, screen_height)
+
                         # Check if target resolution is supported
                         if network.is_resolution_supported(target_width, target_height):
                             if network.set_resolution(target_width, target_height):
@@ -663,8 +734,9 @@ class AutomationOrchestrator:
                                 vision_model.screen_width = target_width
                                 vision_model.screen_height = target_height
 
-                                # Wait for display to settle
-                                time.sleep(2)
+                                # Wait 5 seconds for display to settle after resolution change
+                                logger.info("Waiting 5 seconds for display to settle...")
+                                time.sleep(5)
                             else:
                                 if timeline:
                                     timeline.warning(f"Failed to change resolution to {target_width}x{target_height}")
@@ -673,6 +745,8 @@ class AutomationOrchestrator:
                             if timeline:
                                 timeline.warning(f"Resolution {target_width}x{target_height} not supported by SUT")
                             logger.warning(f"Resolution {target_width}x{target_height} not supported by SUT")
+                    else:
+                        logger.info(f"Resolution already at target {target_width}x{target_height}, no change needed")
                 except ValueError:
                     logger.warning(f"Invalid resolution format in game config: {target_resolution}")
 
@@ -832,7 +906,7 @@ class AutomationOrchestrator:
                 # Mark iteration as failed in storage
                 if self.storage:
                     self.storage.complete_iteration(run.run_id, iteration_num, success=False, error_message="Run stopped")
-                return False
+                return (False, original_resolution, resolution_changed)
 
             # ===== Execute Automation =====
             if timeline:
@@ -851,7 +925,7 @@ class AutomationOrchestrator:
             if self.storage:
                 self.storage.complete_iteration(run.run_id, iteration_num, success=success)
 
-            return success
+            return (success, original_resolution, resolution_changed)
 
         except Exception as e:
             error_msg = str(e)
@@ -859,7 +933,7 @@ class AutomationOrchestrator:
             # Mark iteration as failed in storage
             if self.storage:
                 self.storage.complete_iteration(run.run_id, iteration_num, success=False, error_message=error_msg)
-            return False
+            return (False, original_resolution, resolution_changed)
         finally:
             # Comprehensive cleanup to prevent hanging resources
             try:
@@ -888,13 +962,8 @@ class AutomationOrchestrator:
                     except:
                         pass
 
-                # Restore resolution if we changed it
-                if 'resolution_changed' in locals() and resolution_changed and 'network' in locals():
-                    try:
-                        logger.info("Restoring original SUT resolution...")
-                        network.restore_resolution()
-                    except Exception as res_err:
-                        logger.warning(f"Failed to restore resolution: {res_err}")
+                # NOTE: Resolution is restored at the RUN level (after all iterations),
+                # not here per-iteration. See the iteration loop in _execute_automation_run.
 
                 # Force garbage collection
                 import gc

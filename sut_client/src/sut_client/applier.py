@@ -337,6 +337,82 @@ class PresetApplier:
             logger.warning(f"Failed to merge hardware config: {e}, using preset as-is")
             return preset_content
 
+    def _merge_graphics_sections(
+        self,
+        preset_content: bytes,
+        existing_path: Path,
+        config_def: Dict[str, Any]
+    ) -> bytes:
+        """
+        Merge graphics sections from preset while preserving hardware bindings.
+        Used for games like RDR2 that have hardware-specific elements (videoCardDescription).
+
+        Strategy: Replace only graphics-related sections, keep everything else from existing.
+
+        Args:
+            preset_content: The preset file content (bytes)
+            existing_path: Path to existing config on target system
+            config_def: Config definition with merge rules
+
+        Returns:
+            Modified content with graphics sections from preset, hardware from existing
+        """
+        if not existing_path.exists():
+            logger.warning(f"Existing config not found: {existing_path}, using preset as-is")
+            return preset_content
+
+        try:
+            import xml.etree.ElementTree as ET
+
+            # Parse existing config
+            existing_tree = ET.parse(existing_path)
+            existing_root = existing_tree.getroot()
+
+            # Parse preset content
+            preset_root = ET.fromstring(preset_content.decode('utf-8'))
+
+            # Sections to replace from preset (graphics settings)
+            sections_to_replace = config_def.get('replace_sections', [
+                'graphics', 'advancedGraphics', 'video'
+            ])
+
+            # Elements to always preserve from existing (hardware bindings)
+            elements_to_preserve = config_def.get('preserve_elements', [
+                'videoCardDescription', 'configSource', 'version'
+            ])
+
+            # Replace graphics sections from preset
+            for section_name in sections_to_replace:
+                preset_section = preset_root.find(section_name)
+                existing_section = existing_root.find(section_name)
+
+                if preset_section is not None:
+                    if existing_section is not None:
+                        # Replace existing section with preset section
+                        idx = list(existing_root).index(existing_section)
+                        existing_root.remove(existing_section)
+                        existing_root.insert(idx, preset_section)
+                        logger.info(f"Replaced <{section_name}> section from preset")
+                    else:
+                        # Add section if not in existing
+                        existing_root.append(preset_section)
+                        logger.info(f"Added <{section_name}> section from preset")
+
+            # Ensure preserved elements stay from existing (they already are since we modified existing_root)
+            for elem_name in elements_to_preserve:
+                existing_elem = existing_root.find(elem_name)
+                if existing_elem is not None:
+                    logger.info(f"Preserved <{elem_name}>: {existing_elem.text or existing_elem.get('value', '')[:50]}")
+
+            # Convert back to bytes with XML declaration
+            xml_declaration = '<?xml version="1.0" encoding="UTF-8"?>\n\n'
+            xml_content = ET.tostring(existing_root, encoding='unicode')
+            return (xml_declaration + xml_content).encode('utf-8')
+
+        except Exception as e:
+            logger.warning(f"Failed to merge graphics sections: {e}, using preset as-is")
+            return preset_content
+
     def expand_path(self, path_string: str) -> str:
         """Expand environment variables in path"""
         if not path_string:
@@ -420,12 +496,21 @@ class PresetApplier:
         expanded_search_paths = []
 
         # Expand %ALL_DRIVES% placeholder to all available drives
+        # Expand %STEAM_LIBRARIES% to all Steam library common folders
         for search_path in search_paths:
             if '%ALL_DRIVES%' in search_path.upper():
                 for drive in self.get_available_drives():
                     expanded = search_path.replace('%ALL_DRIVES%', drive)
                     expanded = expanded.replace('%all_drives%', drive)
                     expanded_search_paths.append(expanded)
+            elif '%STEAM_LIBRARIES%' in search_path.upper():
+                # Expand to all Steam library common folders
+                for lib in self.get_steam_libraries():
+                    common_path = lib / "steamapps" / "common"
+                    if common_path.exists():
+                        expanded = search_path.replace('%STEAM_LIBRARIES%', str(common_path))
+                        expanded = expanded.replace('%steam_libraries%', str(common_path))
+                        expanded_search_paths.append(expanded)
             else:
                 expanded_search_paths.append(search_path)
 
@@ -652,8 +737,15 @@ class PresetApplier:
                 # Ensure target directory exists
                 target_path.parent.mkdir(parents=True, exist_ok=True)
 
-                # Merge hardware config if needed (e.g., F1 24 preserves CPU/GPU info)
-                if config_def.get('preserve_hardware', False):
+                # Handle different merge strategies for XML configs
+                merge_strategy = config_def.get('merge_strategy')
+                if merge_strategy == 'replace_graphics_sections':
+                    # RDR2-style: Replace graphics sections, preserve hardware bindings
+                    preset_content = self._merge_graphics_sections(
+                        preset_content, target_path, config_def
+                    )
+                elif config_def.get('preserve_hardware', False):
+                    # F1 24-style: Merge hardware attributes into preset
                     preset_content = self._merge_hardware_config(
                         preset_content, target_path, config_def
                     )

@@ -1,180 +1,287 @@
 /**
- * Dashboard - Information-dense control center
- * Shows all services, metrics, and quick actions in a compact layout
+ * Dashboard - Data-Dense Operations Dashboard
+ * Unified view combining Fleet Status, Quick Launch, Active Runs, Games, and Metrics
+ * Grafana/Datadog-style layout with radial gauges and grid panels
  */
 
-import { useState, useCallback } from 'react';
-import { Link } from 'react-router-dom';
-import { useSystemStatus, useDevices, useGames, useRuns, useQueueStats } from '../hooks';
+import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useDevices, useGames, useRuns, useCampaigns } from '../hooks';
 import {
-  MetricCard,
-  MetricGrid,
-  QueueDepthChart,
-  StatusDot,
-  RunCard,
-  RecentRunsTable,
+  FleetStatusPanel,
+  QuickLaunchPanel,
+  ActiveRunsPanel,
+  GameLibraryPanel,
+  RunMetricsPanel,
+  SnakeTimeline,
 } from '../components';
-import type { SUT, GameConfig, SUTSystemInfo } from '../types';
-import { formatCpuDisplay, formatGpuDisplay, formatRamDisplay } from '../utils/cpuCodenames';
-
-// Compact SUT Card for dashboard
-function CompactSUTCard({
-  sut,
-  isSelected,
-  onClick,
-}: {
-  sut: SUT;
-  isSelected: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`
-        w-full p-2.5 rounded-lg border text-left transition-all
-        ${isSelected
-          ? 'bg-primary/20 border-primary glow'
-          : 'bg-surface border-border hover:border-border-hover hover:bg-surface-hover'
-        }
-      `}
-    >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <StatusDot status={sut.status === 'online' ? 'online' : 'offline'} />
-          <span className="text-sm font-medium text-text-primary truncate max-w-[100px]">
-            {sut.hostname || sut.ip}
-          </span>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-text-muted">
-          {sut.current_task && (
-            <span className="text-warning" title="Running task">
-              ...
-            </span>
-          )}
-          {sut.success_rate !== undefined && sut.success_rate > 0 && (
-            <span className="font-numbers tabular-nums">
-              {Math.round(sut.success_rate * 100)}%
-            </span>
-          )}
-        </div>
-      </div>
-    </button>
-  );
-}
-
-// Quick action button
-function ActionButton({
-  label,
-  onClick,
-  disabled,
-  variant = 'default',
-}: {
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  variant?: 'default' | 'primary' | 'danger';
-}) {
-  const variants = {
-    default: 'bg-surface-elevated hover:bg-surface-hover text-text-secondary border border-border',
-    primary: 'bg-primary hover:bg-primary-dark text-white',
-    danger: 'bg-danger/80 hover:bg-danger text-white',
-  };
-
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={`
-        px-3 py-1.5 rounded-lg text-sm font-medium transition-all
-        ${variants[variant]}
-        ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
-      `}
-    >
-      {label}
-    </button>
-  );
-}
+import { getSutInstalledGamesViaProxy } from '../api';
+import type { SUT, GameConfig } from '../types';
 
 export function Dashboard() {
   // Core data hooks
-  useSystemStatus();
   const { devices, onlineDevices } = useDevices();
   const { gamesList } = useGames();
   const { activeRunsList, history, start, stop } = useRuns();
+  const { activeCampaigns, stop: stopCampaignFn } = useCampaigns();
 
-  // New hooks for enhanced dashboard
-  const { stats: queueStats, depthHistory, isAvailable: queueAvailable } = useQueueStats();
-
-  // UI state
-  const [selectedSut, setSelectedSut] = useState<SUT | null>(null);
-  const [selectedGame, setSelectedGame] = useState<GameConfig | null>(null);
-  const [iterations, setIterations] = useState(1);
-  const [isStarting, setIsStarting] = useState(false);
+  // Cross-panel selection state
+  const [selectedSutId, setSelectedSutId] = useState<string | undefined>();
+  const [selectedGameNames, setSelectedGameNames] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [sutSystemInfo, setSutSystemInfo] = useState<SUTSystemInfo | null>(null);
-  const [sutInfoLoading, setSutInfoLoading] = useState(false);
+  const [installedGames, setInstalledGames] = useState<string[] | null>(null);
 
-  // Fetch SUT system info when a SUT is selected
-  const fetchSutSystemInfo = useCallback(async (sutIp: string) => {
-    setSutInfoLoading(true);
-    try {
-      const response = await fetch(`/api/sut/by-ip/${sutIp}/system_info`, {
-        signal: AbortSignal.timeout(10000),
-      });
-      if (response.ok) {
-        const result = await response.json();
-        setSutSystemInfo(result.data || null);
-      } else {
-        setSutSystemInfo(null);
-      }
-    } catch {
-      setSutSystemInfo(null);
-    } finally {
-      setSutInfoLoading(false);
+  // All runs for metrics
+  const allRuns = useMemo(() => [...activeRunsList, ...history], [activeRunsList, history]);
+
+  // Get selected SUT object
+  const selectedSut = useMemo(() =>
+    devices.find(d => d.device_id === selectedSutId),
+    [devices, selectedSutId]
+  );
+
+  // Fetch installed games when SUT is selected
+  useEffect(() => {
+    if (!selectedSut?.device_id) {
+      setInstalledGames(null);
+      return;
     }
+
+    // Helper: normalize string for matching (remove special chars, lowercase)
+    const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    // Helper: extract significant words (3+ chars) for word-based matching
+    const getWords = (s: string) => s.toLowerCase()
+      .split(/[\s\-_:,.]+/)
+      .filter(w => w.length >= 3);
+
+    // Helper: check if word sets overlap significantly
+    const hasSignificantOverlap = (words1: string[], words2: string[]) => {
+      const matchCount = words1.filter(w1 =>
+        words2.some(w2 => w1.includes(w2) || w2.includes(w1))
+      ).length;
+      return matchCount >= 2; // At least 2 matching words
+    };
+
+    const fetchInstalledGames = async () => {
+      try {
+        // Use proxy via discovery service to avoid CORS
+        const response = await getSutInstalledGamesViaProxy(selectedSut.device_id);
+        console.log('Installed games from SUT:', response.games);
+
+        // Match installed games to our game configs
+        const installedNames: string[] = [];
+
+        for (const installedGame of response.games) {
+          // Debug: log FFXIV processing
+          const isFFXIV = installedGame.name.toLowerCase().includes('ffxiv');
+          if (isFFXIV) {
+            console.log('[FFXIV] Processing:', installedGame.name, 'steam_app_id:', installedGame.steam_app_id);
+          }
+
+          // Try each matching strategy
+          let matchedConfig: GameConfig | undefined;
+          const installedLower = installedGame.name.toLowerCase();
+          const installedNorm = normalize(installedGame.name);
+          const installedWords = getWords(installedGame.name);
+
+          // 1. Match by Steam App ID (most reliable)
+          if (installedGame.steam_app_id) {
+            matchedConfig = gamesList.find(gc =>
+              gc.steam_app_id && String(gc.steam_app_id) === String(installedGame.steam_app_id)
+            );
+            if (matchedConfig) {
+              console.log(`[Steam ID] "${installedGame.name}" (${installedGame.steam_app_id}) -> "${matchedConfig.name}"`);
+            }
+          }
+
+          // 2. Exact name match (case-insensitive)
+          if (!matchedConfig) {
+            matchedConfig = gamesList.find(gc => {
+              const displayLower = (gc.display_name || '').toLowerCase();
+              const nameLower = gc.name.toLowerCase().replace(/-/g, ' ');
+              return displayLower === installedLower || nameLower === installedLower;
+            });
+            if (isFFXIV && matchedConfig) console.log('[FFXIV] Matched by Strategy 2 (exact):', matchedConfig.name);
+          }
+
+          // 3. Contains match (substring) - skip empty strings!
+          if (!matchedConfig) {
+            matchedConfig = gamesList.find(gc => {
+              const displayLower = (gc.display_name || '').toLowerCase();
+              const nameLower = gc.name.toLowerCase().replace(/-/g, ' ');
+              // Guard against empty string matches (every string contains "")
+              return (displayLower && (installedLower.includes(displayLower) || displayLower.includes(installedLower))) ||
+                     (nameLower && (installedLower.includes(nameLower) || nameLower.includes(installedLower)));
+            });
+            if (isFFXIV && matchedConfig) console.log('[FFXIV] Matched by Strategy 3 (contains):', matchedConfig.name);
+          }
+
+          // 4. Normalized string match (ignore all special chars) - skip empty strings!
+          if (!matchedConfig) {
+            matchedConfig = gamesList.find(gc => {
+              const displayNorm = normalize(gc.display_name || '');
+              const nameNorm = normalize(gc.name);
+              const presetNorm = normalize(gc.preset_id || '');
+              // Guard against empty string matches
+              return (displayNorm && (installedNorm.includes(displayNorm) || displayNorm.includes(installedNorm))) ||
+                     (nameNorm && (installedNorm.includes(nameNorm) || nameNorm.includes(installedNorm))) ||
+                     (presetNorm && (installedNorm.includes(presetNorm) || presetNorm.includes(installedNorm)));
+            });
+            if (isFFXIV && matchedConfig) console.log('[FFXIV] Matched by Strategy 4 (normalized):', matchedConfig.name);
+          }
+
+          // 5. Word-based matching (at least 2 significant words overlap)
+          if (!matchedConfig) {
+            // Debug for FFXIV
+            if (installedGame.name.toLowerCase().includes('ffxiv')) {
+              console.log('[FFXIV Debug] installedWords:', installedWords);
+              const ffxivConfig = gamesList.find(gc => gc.name.toLowerCase().includes('fantasy'));
+              if (ffxivConfig) {
+                const nameWords = getWords(ffxivConfig.name);
+                console.log('[FFXIV Debug] config name:', ffxivConfig.name);
+                console.log('[FFXIV Debug] nameWords:', nameWords);
+                console.log('[FFXIV Debug] hasSignificantOverlap:', hasSignificantOverlap(installedWords, nameWords));
+              } else {
+                console.log('[FFXIV Debug] No config with "fantasy" found in gamesList');
+                console.log('[FFXIV Debug] gamesList names:', gamesList.map(g => g.name));
+              }
+            }
+            matchedConfig = gamesList.find(gc => {
+              const displayWords = getWords(gc.display_name || '');
+              const nameWords = getWords(gc.name);
+              return hasSignificantOverlap(installedWords, displayWords) ||
+                     hasSignificantOverlap(installedWords, nameWords);
+            });
+          }
+
+          // 6. Known abbreviation mappings for benchmarks
+          if (!matchedConfig) {
+            const abbreviations: Record<string, string[]> = {
+              'ffxiv': ['final fantasy xiv', 'final-fantasy-xiv'],
+              'bmw': ['black myth wukong', 'black-myth-wukong'],
+              'sotr': ['shadow of the tomb raider', 'shadow-of-the-tomb-raider'],
+              'rdr2': ['red dead redemption 2', 'red-dead-redemption-2'],
+              'cp2077': ['cyberpunk 2077', 'cyberpunk-2077'],
+              'hzd': ['horizon zero dawn', 'horizon-zero-dawn'],
+              'cs2': ['counter strike 2', 'counter-strike-2'],
+            };
+
+            for (const [abbr, expansions] of Object.entries(abbreviations)) {
+              if (installedLower.includes(abbr)) {
+                matchedConfig = gamesList.find(gc =>
+                  expansions.some(exp =>
+                    gc.name.toLowerCase().includes(exp) ||
+                    (gc.display_name || '').toLowerCase().includes(exp)
+                  )
+                );
+                if (matchedConfig) break;
+              }
+            }
+          }
+
+          if (matchedConfig && !installedNames.includes(matchedConfig.name)) {
+            console.log(`Matched "${installedGame.name}" -> "${matchedConfig.name}"`);
+            installedNames.push(matchedConfig.name);
+          }
+
+          // Debug: show final FFXIV result
+          if (isFFXIV) {
+            if (matchedConfig) {
+              console.log('[FFXIV] Final match:', matchedConfig.name);
+            } else {
+              console.warn('[FFXIV] NO MATCH FOUND!');
+              console.warn('[FFXIV] gamesList has FFXIV?', gamesList.some(g => g.name.toLowerCase().includes('fantasy')));
+            }
+          }
+        }
+
+        console.log('Matched games:', installedNames, `(${installedNames.length}/${response.games.length})`);
+        setInstalledGames(installedNames);
+      } catch (err) {
+        console.error('Failed to fetch installed games:', err);
+        // On error, set null so games are NOT grayed out (null = no data available)
+        setInstalledGames(null);
+      }
+    };
+
+    fetchInstalledGames();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSut?.device_id, gamesList.length]);
+
+  // Handle SUT selection from FleetStatusPanel
+  const handleSelectSut = useCallback((sut: SUT | null) => {
+    setSelectedSutId(sut?.device_id);
   }, []);
 
-  // Handle SUT selection
-  const handleSelectSut = useCallback((sut: SUT | null) => {
-    setSelectedSut(sut);
-    if (sut) {
-      fetchSutSystemInfo(sut.ip);
-    } else {
-      setSutSystemInfo(null);
+  // Handle game selection from GameLibraryPanel (multi-select)
+  const handleSelectGames = useCallback((gameNames: string[]) => {
+    setSelectedGameNames(gameNames);
+  }, []);
+
+  // Handle quick run from GameLibraryPanel (double-click)
+  const handleQuickRun = useCallback(async (game: GameConfig) => {
+    // Use first online SUT if none selected
+    const targetSutId = selectedSutId || onlineDevices[0]?.device_id;
+    if (!targetSutId) {
+      setError('No SUT available for quick run');
+      return;
     }
-  }, [fetchSutSystemInfo]);
-
-  // Handlers
-  const handleStartRun = async () => {
-    if (!selectedSut || !selectedGame) return;
-
-    setIsStarting(true);
-    setError(null);
+    const sut = devices.find(d => d.device_id === targetSutId);
+    if (!sut) return;
 
     try {
-      await start(selectedSut.ip, selectedGame.name, iterations);
-      setSelectedSut(null);
-      setSelectedGame(null);
-      setIterations(1);
-      setSutSystemInfo(null);  // Clear system info after starting
+      await start(sut.ip, game.name, 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start run');
-    } finally {
-      setIsStarting(false);
     }
-  };
+  }, [selectedSutId, onlineDevices, devices, start]);
 
-  const handleStopAll = async () => {
-    for (const run of activeRunsList) {
-      await stop(run.run_id).catch(console.error);
+  // Handle run started from QuickLaunchPanel
+  const handleRunStarted = useCallback((_runId: string) => {
+    setError(null);
+    // Clear selection after successful run
+    setSelectedGameNames([]);
+  }, []);
+
+  // Handle campaign started from QuickLaunchPanel
+  const handleCampaignStarted = useCallback((_campaignId: string) => {
+    setError(null);
+    // Clear selection after successful campaign
+    setSelectedGameNames([]);
+  }, []);
+
+  // Handle stop run
+  const handleStopRun = useCallback(async (runId: string, killGame?: boolean) => {
+    try {
+      await stop(runId, killGame);
+    } catch (err) {
+      console.error('Failed to stop run:', err);
     }
-  };
+  }, [stop]);
+
+  // Handle stop campaign
+  const handleStopCampaign = useCallback(async (campaignId: string) => {
+    try {
+      await stopCampaignFn(campaignId);
+    } catch (err) {
+      console.error('Failed to stop campaign:', err);
+    }
+  }, [stopCampaignFn]);
+
+  // Handle re-run from metrics panel
+  const handleRerun = useCallback(async (gameName: string, sutIp: string) => {
+    try {
+      await start(sutIp, gameName, 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start re-run');
+    }
+  }, [start]);
 
   return (
-    <div className="flex flex-col h-[calc(100vh-96px)] p-4 bg-background text-text-primary overflow-hidden">
+    <div className="flex flex-col h-[calc(100vh-100px)] p-3 bg-background text-text-primary overflow-hidden">
       {/* Error Banner */}
       {error && (
-        <div className="flex items-center justify-between bg-danger/20 border border-danger/50 rounded-lg px-4 py-2 mb-4 flex-shrink-0">
+        <div className="flex items-center justify-between bg-danger/20 border border-danger/50 rounded-lg px-4 py-2 mb-3 flex-shrink-0">
           <span className="text-danger text-sm">{error}</span>
           <button
             onClick={() => setError(null)}
@@ -185,290 +292,104 @@ export function Dashboard() {
         </div>
       )}
 
-      {/* Main Grid - Fills remaining space */}
-      <div className="grid grid-cols-12 gap-4 flex-1 min-h-0">
-        {/* Left Panel (5 cols) - Metrics + SUTs + Quick Start + Recent Jobs */}
-        <div className="col-span-12 lg:col-span-5 flex flex-col gap-4 min-h-0">
-          {/* Metrics Grid */}
-          <div className="flex-shrink-0">
-            <MetricGrid columns={3} gap="sm">
-              <MetricCard
-                label="Online SUTs"
-                value={onlineDevices.length}
-                sublabel={`of ${devices.length} total`}
-                color={onlineDevices.length > 0 ? 'success' : 'default'}
-              />
-              <MetricCard
-                label="Active Runs"
-                value={activeRunsList.length}
-                color={activeRunsList.length > 0 ? 'info' : 'default'}
-              />
-              <MetricCard
-                label="Queue"
-                value={queueStats?.current_queue_size ?? '-'}
-                sublabel={queueAvailable ? 'items' : 'unavailable'}
-                color={
-                  !queueAvailable ? 'error' :
-                  (queueStats?.current_queue_size ?? 0) > 10 ? 'warning' : 'default'
-                }
-              />
-              <MetricCard
-                label="Games"
-                value={gamesList.length}
-              />
-              <MetricCard
-                label="Processed"
-                value={queueStats?.total_requests ?? 0}
-                sublabel="total jobs"
-              />
-              <MetricCard
-                label="Avg Time"
-                value={queueStats?.avg_processing_time
-                  ? `${(queueStats.avg_processing_time).toFixed(1)}s`
-                  : '-'
-                }
-                sublabel="per job"
-              />
-            </MetricGrid>
-          </div>
+      {/* Main 2-Column Layout: Left (content) + Right (metrics) */}
+      <div className="flex-1 min-h-0 flex gap-3">
 
-          {/* Online SUTs Grid */}
-          <div className="card p-4 flex-shrink-0">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-text-secondary">Online SUTs</h3>
-              <Link to="/devices" className="text-xs text-primary hover:text-primary-dark transition-colors">
-                View All
-              </Link>
+        {/* === LEFT COLUMN: Fleet + Quick Launch + Game Library === */}
+        <div className="flex-1 min-w-0 flex flex-col gap-3">
+
+          {/* Top Bar: Fleet Status + Quick Launch */}
+          <div className="flex gap-3 flex-shrink-0 h-48">
+            {/* Fleet Status (compact) */}
+            <div className="w-48 flex-shrink-0">
+              <FleetStatusPanel
+                devices={devices}
+                onlineDevices={onlineDevices}
+                selectedSutId={selectedSutId}
+                onSelectSut={handleSelectSut}
+                className="h-full"
+                compact
+              />
             </div>
 
-            {onlineDevices.length === 0 ? (
-              <div className="text-center py-4 text-text-muted text-sm">No online SUTs</div>
-            ) : (
-              <div className="grid grid-cols-2 gap-2">
-                {onlineDevices.slice(0, 4).map((sut) => (
-                  <CompactSUTCard
-                    key={sut.device_id}
-                    sut={sut}
-                    isSelected={selectedSut?.device_id === sut.device_id}
-                    onClick={() => handleSelectSut(sut)}
-                  />
-                ))}
-              </div>
-            )}
-
-            {onlineDevices.length > 4 && (
-              <div className="text-center mt-2">
-                <Link to="/devices" className="text-xs text-text-muted hover:text-text-secondary transition-colors">
-                  +{onlineDevices.length - 4} more
-                </Link>
-              </div>
-            )}
-          </div>
-
-          {/* Quick Start Panel */}
-          <div className="card p-4 flex-shrink-0">
-            <h3 className="text-sm font-semibold text-text-secondary mb-3">Quick Start</h3>
-
-            <div className="space-y-3">
-              {/* Selected SUT */}
-              <div className="flex items-center justify-between p-2.5 bg-surface-elevated rounded-lg text-sm">
-                <span className="text-text-muted">SUT:</span>
-                {selectedSut ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-text-primary font-medium">{selectedSut.hostname || selectedSut.ip}</span>
-                    <button onClick={() => handleSelectSut(null)} className="text-text-muted hover:text-text-secondary">×</button>
-                  </div>
-                ) : (
-                  <span className="text-text-muted italic">Select above</span>
-                )}
-              </div>
-
-              {/* SUT System Info - shown when SUT is selected */}
-              {selectedSut && (
-                <div className="p-3 bg-surface-elevated/50 rounded-lg border border-border text-xs">
-                  {sutInfoLoading ? (
-                    <div className="text-text-muted animate-pulse">Loading system info...</div>
-                  ) : sutSystemInfo ? (
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-2">
-                        <span className="text-brand-cyan font-medium">{formatCpuDisplay(sutSystemInfo.cpu.brand_string)}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-success">{formatGpuDisplay(sutSystemInfo.gpu.name)}</span>
-                        <span className="text-text-muted">•</span>
-                        <span className="text-primary">{formatRamDisplay(sutSystemInfo.ram.total_gb)}</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-text-muted">
-                        <span className="font-numbers">{sutSystemInfo.screen.width}x{sutSystemInfo.screen.height}</span>
-                        <span>•</span>
-                        <span>{sutSystemInfo.os.name} {sutSystemInfo.os.build && `(${sutSystemInfo.os.build})`}</span>
-                      </div>
-                      {sutSystemInfo.bios?.name && (
-                        <div className="text-text-muted/70 text-[10px]">
-                          BIOS: {sutSystemInfo.bios.name} {sutSystemInfo.bios.version && `v${sutSystemInfo.bios.version}`}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="text-text-muted">System info unavailable</div>
-                  )}
-                </div>
-              )}
-
-              {/* Game Selection */}
-              <div className="flex items-center justify-between p-2.5 bg-surface-elevated rounded-lg text-sm">
-                <span className="text-text-muted">Game:</span>
-                <select
-                  value={selectedGame?.name || ''}
-                  onChange={(e) => {
-                    const game = gamesList.find(g => g.name === e.target.value);
-                    setSelectedGame(game || null);
-                  }}
-                  disabled={!selectedSut}
-                  className="input text-sm py-1 px-2 max-w-[180px] disabled:opacity-50"
-                >
-                  <option value="">Select game</option>
-                  {gamesList.map((game) => (
-                    <option key={game.name} value={game.name}>
-                      {game.display_name || game.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Iterations Selection */}
-              <div className="flex items-center justify-between p-2.5 bg-surface-elevated rounded-lg text-sm">
-                <span className="text-text-muted">Iterations:</span>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setIterations(Math.max(1, iterations - 1))}
-                    className="w-7 h-7 flex items-center justify-center bg-surface hover:bg-surface-hover border border-border rounded-lg text-text-secondary transition-colors"
-                  >
-                    -
-                  </button>
-                  <input
-                    type="number"
-                    min="1"
-                    max="10"
-                    value={iterations}
-                    onChange={(e) => setIterations(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
-                    className="w-12 text-center input py-1 font-numbers"
-                  />
-                  <button
-                    onClick={() => setIterations(Math.min(10, iterations + 1))}
-                    className="w-7 h-7 flex items-center justify-center bg-surface hover:bg-surface-hover border border-border rounded-lg text-text-secondary transition-colors"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-
-              {/* Start Button */}
-              <button
-                onClick={handleStartRun}
-                disabled={!selectedSut || !selectedGame || isStarting}
-                className={`
-                  w-full py-2.5 rounded-lg font-semibold text-sm transition-all
-                  ${selectedSut && selectedGame
-                    ? 'bg-success hover:bg-success/80 text-white glow-success'
-                    : 'bg-surface-elevated text-text-muted cursor-not-allowed'
-                  }
-                `}
-              >
-                {isStarting ? 'Starting...' : `Start Automation${iterations > 1 ? ` (${iterations}x)` : ''}`}
-              </button>
+            {/* Quick Launch (takes remaining width) */}
+            <div className="flex-1 min-w-0">
+              <QuickLaunchPanel
+                devices={devices}
+                games={gamesList}
+                selectedSutId={selectedSutId}
+                selectedGameNames={selectedGameNames}
+                onSelectSut={handleSelectSut}
+                onRunStarted={handleRunStarted}
+                onCampaignStarted={handleCampaignStarted}
+                className="h-full"
+                compact
+              />
             </div>
           </div>
 
-          {/* Recent Runs - Only show in left panel when active runs exist */}
-          {activeRunsList.length > 0 && (
-            <div className="card p-4 flex-1 min-h-0 flex flex-col">
-              <div className="flex items-center justify-between mb-3 flex-shrink-0">
-                <h3 className="text-sm font-semibold text-text-secondary">Recent Runs</h3>
-                <Link to="/runs" className="text-xs text-primary hover:text-primary-dark transition-colors">
-                  View All
-                </Link>
-              </div>
-              <div className="flex-1 min-h-0 overflow-y-auto">
-                <RecentRunsTable
-                  runs={history}
-                  maxRows={6}
-                  onRerun={(sutIp, gameName, iterations) => {
-                    start(sutIp, gameName, iterations).catch(console.error);
-                  }}
-                />
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Right Panel (7 cols) - Queue Depth + Active Runs + Actions */}
-        <div className="col-span-12 lg:col-span-7 flex flex-col gap-4 min-h-0">
-          {/* Queue Depth Chart */}
-          <div className="flex-shrink-0">
-            <QueueDepthChart
-              data={depthHistory}
-              height={140}
+          {/* Game Library (takes remaining height) */}
+          <div className="flex-1 min-h-0">
+            <GameLibraryPanel
+              games={gamesList}
+              selectedGames={selectedGameNames}
+              installedGames={installedGames ?? undefined}
+              hasSutSelected={!!selectedSutId}
+              onSelectGames={handleSelectGames}
+              onQuickRun={handleQuickRun}
+              className="h-full"
             />
           </div>
+        </div>
 
-          {/* Active Runs - Collapses when empty, expands when has runs */}
-          <div className={`card p-4 flex flex-col ${activeRunsList.length > 0 ? 'flex-1 min-h-0' : 'flex-shrink-0'}`}>
-            <div className="flex items-center justify-between mb-3 flex-shrink-0">
-              <h3 className="text-sm font-semibold text-text-secondary">
-                Active Runs <span className="font-numbers text-primary">({activeRunsList.length})</span>
-              </h3>
-              {activeRunsList.length > 0 && (
-                <ActionButton
-                  label="Stop All"
-                  variant="danger"
-                  onClick={handleStopAll}
-                />
-              )}
-            </div>
+        {/* === RIGHT COLUMN: Active Runs + Timeline + Metrics === */}
+        {/* Wider when runs are active to show timeline properly */}
+        <div className={`flex-shrink-0 flex flex-col gap-3 overflow-hidden ${
+          activeRunsList.length > 0 ? 'w-[650px]' : 'w-[400px]'
+        }`}>
 
-            {activeRunsList.length === 0 ? (
-              <div className="text-center py-2 text-text-muted text-sm border border-dashed border-border rounded-lg">
-                No active runs - start automation above
-              </div>
-            ) : (
-              <div className="flex-1 min-h-0 overflow-y-auto">
-                <div className="space-y-2">
-                  {activeRunsList.map((run) => (
-                    <RunCard
-                      key={run.run_id}
-                      run={run}
-                      onStop={(id, killGame) => stop(id, killGame).catch(console.error)}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          {/* Active Runs Panel - only when runs active */}
+          {(activeRunsList.length > 0 || activeCampaigns.length > 0) && (
+            <ActiveRunsPanel
+              runs={activeRunsList}
+              campaigns={activeCampaigns}
+              onStopRun={handleStopRun}
+              onStopCampaign={handleStopCampaign}
+              maxHeight="200px"
+              className="flex-shrink-0"
+            />
+          )}
 
-          {/* Recent Runs Table - Expands when no active runs */}
-          {activeRunsList.length === 0 && (
-            <div className="card p-4 flex-1 min-h-0 flex flex-col">
-              <div className="flex items-center justify-between mb-3 flex-shrink-0">
-                <h3 className="text-sm font-semibold text-text-secondary">Recent Runs</h3>
-                <Link to="/runs" className="text-xs text-primary hover:text-primary-dark transition-colors">
-                  View All
-                </Link>
+          {/* Snake Timeline - only visible when a run is actually running */}
+          {activeRunsList.some(r => r.status === 'running') && (
+            <div className="flex-shrink-0 bg-surface border border-border rounded-lg overflow-hidden animate-in fade-in slide-in-from-top-2 duration-300">
+              <div className="px-3 py-2 border-b border-border bg-surface-elevated/50 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wide">
+                  Timeline
+                </h3>
               </div>
-              <div className="flex-1 min-h-0 overflow-y-auto">
-                <RecentRunsTable
-                  runs={history}
-                  maxRows={10}
-                  onRerun={(sutIp, gameName, iterations) => {
-                    start(sutIp, gameName, iterations).catch(console.error);
-                  }}
+              <div className="p-3">
+                <SnakeTimeline
+                  runId={activeRunsList.find(r => r.status === 'running')?.run_id || null}
+                  pollInterval={2000}
+                  maxRows={4}
                 />
               </div>
             </div>
           )}
 
+          {/* Run Metrics Panel - takes full remaining height */}
+          <div className="flex-1 min-h-0">
+            <RunMetricsPanel
+              runs={allRuns}
+              className="h-full"
+              expanded={activeRunsList.length === 0}
+              onRerun={handleRerun}
+            />
+          </div>
         </div>
       </div>
+
     </div>
   );
 }

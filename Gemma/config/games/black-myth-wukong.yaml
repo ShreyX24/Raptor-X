@@ -2,7 +2,7 @@
 metadata:
   game_name: "Black Myth: Wukong"
   preset_id: black-myth-wukong  # Maps to preset-manager folder name
-  steam_app_id: '2358720'
+  steam_app_id: '3132990'  # Benchmark tool ID (main game is 2358720)
   path: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Black Myth Wukong Benchmark Tool\\b1\\Binaries\\Win64\\b1-Win64-Shipping.exe"
   process_id: "b1"  # Substring match - will find b1-Win64-Shipping.exe
   version: "1.0"
