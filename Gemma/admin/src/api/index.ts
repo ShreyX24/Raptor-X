@@ -7,6 +7,7 @@ import type {
   SUT,
   AutomationRun,
   SutDisplayResolutionsResponse,
+  LogEntry,
 } from '../types';
 import { TIMEOUTS } from '../config';
 
@@ -192,12 +193,6 @@ export async function getRunsStats(): Promise<RunsStats> {
 }
 
 // Run Logs and Timeline APIs
-export interface LogEntry {
-  timestamp: string;
-  level: string;
-  message: string;
-}
-
 export interface RunLogsResponse {
   logs: LogEntry[];
   run_id: string;
@@ -471,6 +466,109 @@ export async function stopCampaign(campaignId: string): Promise<{ status: string
   return fetchJson<{ status: string; message: string }>(`${API_BASE}/campaigns/${campaignId}/stop`, {
     method: 'POST',
   });
+}
+
+// =====================================================================
+// Multi-SUT Campaign APIs
+// =====================================================================
+
+export interface SUTWorkStatus {
+  pending_count: number;
+  completed_count: number;
+  failed_count: number;
+  current_game: string | null;
+  current_run_id: string | null;
+  current_account: 'af' | 'gz' | null;
+  pending_games_af: string[];
+  pending_games_gz: string[];
+}
+
+export interface MultiSUTCampaign {
+  campaign_id: string;
+  name: string;
+  suts: string[];
+  games: string[];
+  iterations_per_game: number;
+  quality?: string;
+  resolution?: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'partially_completed' | 'stopped';
+  created_at: string;
+  completed_at: string | null;
+  error_message: string | null;
+  total_games: number;
+  completed_games: number;
+  failed_games: number;
+  pending_games: number;
+  progress_percent: number;
+  run_ids: string[];
+  sut_status: Record<string, SUTWorkStatus>;
+}
+
+export interface MultiSUTCampaignsResponse {
+  active: MultiSUTCampaign[];
+  history: MultiSUTCampaign[];
+}
+
+export interface CreateMultiSUTCampaignResponse {
+  status: string;
+  campaign_id: string;
+  name: string;
+  total_games: number;
+  suts: string[];
+  games: string[];
+  message: string;
+}
+
+export interface AccountLockStatus {
+  locked: boolean;
+  holder_sut: string | null;
+  holder_campaign: string | null;
+  game_running: string | null;
+  locked_at: string | null;
+}
+
+export interface AccountStatusResponse {
+  af: AccountLockStatus;
+  gz: AccountLockStatus;
+}
+
+export async function createMultiSUTCampaign(
+  suts: string[],
+  games: string[],
+  iterations: number = 1,
+  name?: string,
+  quality?: string,
+  resolution?: string
+): Promise<CreateMultiSUTCampaignResponse> {
+  return fetchJson<CreateMultiSUTCampaignResponse>(`${API_BASE}/multi-campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({
+      suts,
+      games,
+      iterations,
+      name,
+      quality,
+      resolution,
+    }),
+  });
+}
+
+export async function getMultiSUTCampaigns(): Promise<MultiSUTCampaignsResponse> {
+  return fetchJson<MultiSUTCampaignsResponse>(`${API_BASE}/multi-campaigns`);
+}
+
+export async function getMultiSUTCampaign(campaignId: string): Promise<MultiSUTCampaign> {
+  return fetchJson<MultiSUTCampaign>(`${API_BASE}/multi-campaigns/${campaignId}`);
+}
+
+export async function stopMultiSUTCampaign(campaignId: string): Promise<{ status: string; message: string }> {
+  return fetchJson<{ status: string; message: string }>(`${API_BASE}/multi-campaigns/${campaignId}/stop`, {
+    method: 'POST',
+  });
+}
+
+export async function getAccountStatus(): Promise<AccountStatusResponse> {
+  return fetchJson<AccountStatusResponse>(`${API_BASE}/multi-campaigns/account-status`);
 }
 
 export { ApiError, TimeoutError };

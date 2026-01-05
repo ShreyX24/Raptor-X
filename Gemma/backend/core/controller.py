@@ -103,10 +103,11 @@ class BackendController:
             self.queue_client = None
             self.preset_manager_client = None
 
-        # Initialize run manager, campaign manager, and automation orchestrator
+        # Initialize run manager, campaign manager, automation orchestrator, and multi-SUT scheduler
         from .run_manager import RunManager
         from .automation_orchestrator import AutomationOrchestrator
         from .campaign_manager import CampaignManager
+        from .multi_sut_scheduler import MultiSUTScheduler, get_multi_sut_scheduler
 
         self.automation_orchestrator = AutomationOrchestrator(
             self.game_manager,
@@ -129,6 +130,19 @@ class BackendController:
         self.campaign_manager = CampaignManager(self.run_manager)
         # Set campaign_manager reference on run_manager for storage
         self.run_manager.campaign_manager = self.campaign_manager
+
+        # Initialize multi-SUT scheduler for parallel automation across multiple SUTs
+        self.multi_sut_scheduler = get_multi_sut_scheduler()
+        self.multi_sut_scheduler.set_callbacks(
+            on_run_request=self._multi_sut_run_request,
+            on_run_wait=self._multi_sut_run_wait,
+        )
+        # Set up WebSocket callbacks for multi-SUT campaigns
+        self.multi_sut_scheduler.on_campaign_started = self._on_multi_sut_campaign_started
+        self.multi_sut_scheduler.on_campaign_progress = self._on_multi_sut_campaign_progress
+        self.multi_sut_scheduler.on_campaign_completed = self._on_multi_sut_campaign_completed
+        self.multi_sut_scheduler.on_sut_work_started = self._on_multi_sut_work_started
+        self.multi_sut_scheduler.on_sut_work_completed = self._on_multi_sut_work_completed
 
         # Set up run manager callbacks for WebSocket events
         self.run_manager.on_run_started = self._on_run_started
@@ -156,9 +170,10 @@ class BackendController:
         self.api_routes.queue_client = getattr(self, 'queue_client', None)
         self.api_routes.preset_manager_client = getattr(self, 'preset_manager_client', None)
 
-        # Pass run manager and campaign manager to API routes
+        # Pass run manager, campaign manager, and multi-SUT scheduler to API routes
         self.api_routes.run_manager = self.run_manager
         self.api_routes.campaign_manager = self.campaign_manager
+        self.api_routes.multi_sut_scheduler = self.multi_sut_scheduler
 
         # Register API routes with Flask app
         self.api_routes.register_routes(self.app)
@@ -444,6 +459,90 @@ class BackendController:
         self.websocket_handler.broadcast_message('step_failed', {
             'run_id': run_id,
             'step': step_data
+        })
+
+    # Multi-SUT scheduler callbacks
+    def _multi_sut_run_request(
+        self,
+        game_name: str,
+        sut_ip: str,
+        iterations: int,
+        campaign_id: Optional[str],
+        quality: Optional[str],
+        resolution: Optional[str],
+    ) -> str:
+        """Callback from MultiSUTScheduler to request a new run"""
+        # Get device ID from IP
+        device = self.device_registry.get_device_by_ip(sut_ip)
+        device_id = device.device_id if device else sut_ip
+
+        # Queue the run
+        run_id = self.run_manager.queue_run(
+            game_name=game_name,
+            sut_ip=sut_ip,
+            sut_device_id=device_id,
+            iterations=iterations,
+            campaign_id=campaign_id,
+            quality=quality,
+            resolution=resolution,
+        )
+        return run_id
+
+    def _multi_sut_run_wait(self, run_id: str) -> tuple:
+        """Callback from MultiSUTScheduler to wait for run completion"""
+        import time
+        while True:
+            run = self.run_manager.get_run(run_id)
+            if run is None:
+                return (False, "Run not found")
+
+            status = run.status.value if hasattr(run.status, 'value') else str(run.status)
+            if status == 'completed':
+                return (True, None)
+            elif status in ['failed', 'stopped']:
+                return (False, run.error_message or f"Run {status}")
+
+            time.sleep(1.0)
+
+    def _on_multi_sut_campaign_started(self, campaign):
+        """Callback when a multi-SUT campaign starts"""
+        logger.info(f"Multi-SUT campaign started: {campaign.name}")
+        self.websocket_handler.broadcast_message('multi_sut_campaign_started', {
+            'campaign_id': campaign.campaign_id,
+            'campaign': campaign.to_dict()
+        })
+
+    def _on_multi_sut_campaign_progress(self, campaign_id: str, progress_percent: float):
+        """Callback when multi-SUT campaign progress updates"""
+        self.websocket_handler.broadcast_message('multi_sut_campaign_progress', {
+            'campaign_id': campaign_id,
+            'progress_percent': progress_percent
+        })
+
+    def _on_multi_sut_campaign_completed(self, campaign):
+        """Callback when a multi-SUT campaign completes"""
+        logger.info(f"Multi-SUT campaign completed: {campaign.name} ({campaign.status.value})")
+        self.websocket_handler.broadcast_message('multi_sut_campaign_completed', {
+            'campaign_id': campaign.campaign_id,
+            'campaign': campaign.to_dict()
+        })
+
+    def _on_multi_sut_work_started(self, campaign_id: str, sut_ip: str, game_name: str, run_id: str):
+        """Callback when work starts on a SUT"""
+        self.websocket_handler.broadcast_message('multi_sut_work_started', {
+            'campaign_id': campaign_id,
+            'sut_ip': sut_ip,
+            'game_name': game_name,
+            'run_id': run_id
+        })
+
+    def _on_multi_sut_work_completed(self, campaign_id: str, sut_ip: str, game_name: str, success: bool):
+        """Callback when work completes on a SUT"""
+        self.websocket_handler.broadcast_message('multi_sut_work_completed', {
+            'campaign_id': campaign_id,
+            'sut_ip': sut_ip,
+            'game_name': game_name,
+            'success': success
         })
 
     def run_server(self, host: str = None, port: int = None, debug: bool = None):

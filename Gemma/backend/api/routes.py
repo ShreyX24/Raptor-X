@@ -1585,6 +1585,154 @@ class APIRoutes:
                 logger.error(f"Error stopping campaign {campaign_id}: {e}")
                 return jsonify({"error": str(e)}), 500
 
+        # =====================================================================
+        # Multi-SUT Campaign APIs
+        # =====================================================================
+
+        @app.route('/api/multi-campaigns', methods=['POST'])
+        def create_multi_sut_campaign():
+            """
+            Create a multi-SUT campaign that runs games across multiple SUTs in parallel.
+
+            Request body:
+            {
+                "suts": ["192.168.0.102", "192.168.0.103"],  // List of SUT IPs
+                "games": ["Cyberpunk 2077", "Hitman 3"],      // Games to run on each SUT
+                "iterations": 3,                              // Iterations per game
+                "name": "My Campaign",                        // Optional campaign name
+                "quality": "high",                            // Optional preset quality
+                "resolution": "1080p"                         // Optional resolution
+            }
+            """
+            try:
+                if not hasattr(self, 'multi_sut_scheduler') or self.multi_sut_scheduler is None:
+                    return jsonify({"error": "Multi-SUT scheduler not available"}), 500
+
+                data = request.get_json()
+                if not data:
+                    return jsonify({"error": "Request data required"}), 400
+
+                suts = data.get('suts', [])
+                games = data.get('games', [])
+                iterations = data.get('iterations', 1)
+                name = data.get('name')
+                quality = data.get('quality')
+                resolution = data.get('resolution')
+
+                if not suts:
+                    return jsonify({"error": "At least one SUT is required"}), 400
+                if not games:
+                    return jsonify({"error": "At least one game is required"}), 400
+
+                # Validate SUTs exist and are online
+                for sut_ip in suts:
+                    device = self.device_registry.get_device_by_ip(sut_ip)
+                    if not device:
+                        return jsonify({"error": f"SUT {sut_ip} not found"}), 404
+                    if not device.is_online:
+                        return jsonify({"error": f"SUT {sut_ip} is offline"}), 400
+
+                # Validate games exist
+                for game_name in games:
+                    game_config = self.game_manager.get_game(game_name)
+                    if not game_config:
+                        return jsonify({"error": f"Game '{game_name}' not found"}), 404
+
+                # Create the campaign
+                campaign = self.multi_sut_scheduler.create_campaign(
+                    suts=suts,
+                    games=games,
+                    iterations=iterations,
+                    name=name,
+                    quality=quality,
+                    resolution=resolution,
+                )
+
+                return jsonify({
+                    "status": "success",
+                    "campaign_id": campaign.campaign_id,
+                    "name": campaign.name,
+                    "total_games": campaign.total_games,
+                    "suts": campaign.suts,
+                    "games": campaign.games,
+                    "message": f"Multi-SUT campaign created: {len(suts)} SUTs x {len(games)} games"
+                }), 201
+
+            except ValueError as e:
+                return jsonify({"error": str(e)}), 400
+            except Exception as e:
+                logger.error(f"Error creating multi-SUT campaign: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/multi-campaigns', methods=['GET'])
+        def get_multi_sut_campaigns():
+            """Get all multi-SUT campaigns (active and history)"""
+            try:
+                if not hasattr(self, 'multi_sut_scheduler') or self.multi_sut_scheduler is None:
+                    return jsonify({"active": [], "history": []})
+
+                active = self.multi_sut_scheduler.get_active_campaigns()
+                history = self.multi_sut_scheduler.get_campaign_history()
+
+                return jsonify({
+                    "active": [c.to_dict() for c in active],
+                    "history": [c.to_dict() for c in history],
+                })
+
+            except Exception as e:
+                logger.error(f"Error getting multi-SUT campaigns: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/multi-campaigns/<campaign_id>', methods=['GET'])
+        def get_multi_sut_campaign(campaign_id):
+            """Get a specific multi-SUT campaign"""
+            try:
+                if not hasattr(self, 'multi_sut_scheduler') or self.multi_sut_scheduler is None:
+                    return jsonify({"error": "Multi-SUT scheduler not available"}), 500
+
+                campaign = self.multi_sut_scheduler.get_campaign(campaign_id)
+                if not campaign:
+                    return jsonify({"error": f"Campaign {campaign_id} not found"}), 404
+
+                return jsonify(campaign.to_dict())
+
+            except Exception as e:
+                logger.error(f"Error getting multi-SUT campaign {campaign_id}: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/multi-campaigns/<campaign_id>/stop', methods=['POST'])
+        def stop_multi_sut_campaign(campaign_id):
+            """Stop a multi-SUT campaign"""
+            try:
+                if not hasattr(self, 'multi_sut_scheduler') or self.multi_sut_scheduler is None:
+                    return jsonify({"error": "Multi-SUT scheduler not available"}), 500
+
+                success = self.multi_sut_scheduler.stop_campaign(campaign_id)
+                if not success:
+                    return jsonify({"error": f"Campaign {campaign_id} not found"}), 404
+
+                return jsonify({
+                    "status": "success",
+                    "message": f"Multi-SUT campaign {campaign_id} stopped"
+                })
+
+            except Exception as e:
+                logger.error(f"Error stopping multi-SUT campaign {campaign_id}: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/multi-campaigns/account-status', methods=['GET'])
+        def get_account_status():
+            """Get current Steam account lock status"""
+            try:
+                if not hasattr(self, 'multi_sut_scheduler') or self.multi_sut_scheduler is None:
+                    return jsonify({"af": {"locked": False}, "gz": {"locked": False}})
+
+                return jsonify(self.multi_sut_scheduler.get_account_status())
+
+            except Exception as e:
+                logger.error(f"Error getting account status: {e}")
+                return jsonify({"error": str(e)}), 500
+
         # SUT Pairing Management
         @app.route('/api/suts/pair', methods=['POST'])
         def pair_sut():
