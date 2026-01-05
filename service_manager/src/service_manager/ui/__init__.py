@@ -1,7 +1,11 @@
 """UI components for Service Manager"""
 
 from .main_window import MainWindow
-from .sidebar import ServiceSidebar
-from .log_panel import LogPanel, LogPanelContainer
+from .log_panel import LogPanel, LogPanelContainer, HealthIndicator
 
-__all__ = ["MainWindow", "ServiceSidebar", "LogPanel", "LogPanelContainer"]
+__all__ = [
+    "MainWindow",
+    "LogPanel",
+    "LogPanelContainer",
+    "HealthIndicator",
+]
