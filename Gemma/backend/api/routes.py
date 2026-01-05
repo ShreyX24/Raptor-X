@@ -1400,6 +1400,35 @@ class APIRoutes:
                 logger.error(f"Error getting runs stats: {e}")
                 return jsonify({"error": str(e)}), 500
 
+        @app.route('/api/accounts/status', methods=['GET'])
+        def get_account_status():
+            """Get Steam account lock status for multi-SUT coordination
+
+            Response:
+            {
+                "af": {
+                    "locked": true,
+                    "holder_sut": "192.168.0.103",
+                    "game_running": "Assassin's Creed Mirage",
+                    "locked_at": "2024-01-06T12:00:00"
+                },
+                "gz": {
+                    "locked": false,
+                    "holder_sut": null,
+                    "game_running": null,
+                    "locked_at": null
+                }
+            }
+            """
+            try:
+                from ..core.account_scheduler import get_account_scheduler
+                scheduler = get_account_scheduler()
+                status = scheduler.get_status()
+                return jsonify(status)
+            except Exception as e:
+                logger.error(f"Error getting account status: {e}")
+                return jsonify({"error": str(e)}), 500
+
         # =====================================================================
         # Campaign Management (Multi-Game Runs)
         # =====================================================================

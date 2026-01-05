@@ -163,7 +163,7 @@ class AutomationRun:
 
 
 class RunManager:
-    """Manages automation runs across multiple SUTs"""
+    """Manages automation runs across multiple SUTs with parallel execution support"""
 
     def __init__(self, max_concurrent_runs: int = 10, orchestrator=None, sut_client=None):
         self.max_concurrent_runs = max_concurrent_runs
@@ -175,6 +175,13 @@ class RunManager:
         self.worker_threads: List[threading.Thread] = []
         self.running = False
         self._lock = threading.Lock()
+
+        # Per-SUT tracking for parallel execution
+        self._sut_current_run: Dict[str, str] = {}  # sut_ip -> run_id currently executing
+
+        # Account scheduler for Steam account coordination
+        from .account_scheduler import get_account_scheduler
+        self.account_scheduler = get_account_scheduler()
 
         # Persistent storage manager
         self.storage = RunStorageManager()
@@ -344,11 +351,14 @@ class RunManager:
         """Start the run manager worker threads"""
         if self.running:
             return
-            
+
         self.running = True
-        
-        # Start single worker thread for sequential execution (CPU performance testing)
-        for i in range(1):  # Only 1 worker for sequential execution
+
+        # Start multiple worker threads for parallel execution across SUTs
+        # Each worker can process runs on different SUTs simultaneously
+        # Account scheduler ensures no Steam account conflicts
+        num_workers = min(self.max_concurrent_runs, 4)  # Up to 4 parallel workers
+        for i in range(num_workers):
             worker = threading.Thread(
                 target=self._worker_loop,
                 name=f"RunWorker-{i}",
@@ -356,8 +366,8 @@ class RunManager:
             )
             worker.start()
             self.worker_threads.append(worker)
-            
-        logger.info(f"RunManager started with {len(self.worker_threads)} worker threads")
+
+        logger.info(f"RunManager started with {len(self.worker_threads)} worker threads (parallel execution enabled)")
     
     def stop(self):
         """Stop the run manager and all running automation"""
@@ -724,47 +734,91 @@ class RunManager:
             logger.info(f"No completion callback set for {run_id}")
     
     def _worker_loop(self):
-        """Worker thread main loop"""
-        logger.info(f"Worker thread {threading.current_thread().name} started")
-        
+        """Worker thread main loop with parallel SUT execution support"""
+        worker_name = threading.current_thread().name
+        logger.info(f"Worker thread {worker_name} started")
+
+        requeued_runs = set()  # Track runs we've requeued to avoid infinite loops
+
         while self.running:
-            logger.debug(f"Worker {threading.current_thread().name} waiting for next run...")
             try:
-                # Wait for a run to process with shorter timeout for responsiveness
+                # Wait for a run to process
                 try:
                     run_id = self.run_queue.get(timeout=0.5)
-                    logger.info(f"Worker dequeued run: {run_id}")
                 except queue.Empty:
-                    # Only log occasionally to avoid spam
+                    requeued_runs.clear()  # Clear requeue tracking on empty queue
                     continue
-                
+
                 # Double-check we're still running
                 if not self.running:
-                    logger.info(f"Worker thread {threading.current_thread().name} stopping")
+                    logger.info(f"Worker thread {worker_name} stopping")
                     break
-                
+
                 with self._lock:
                     if run_id not in self.active_runs:
                         continue
                     run = self.active_runs[run_id]
-                
-                # Process the run
-                self._execute_run(run)
-                logger.info(f"Worker completed processing run {run_id}, returning to queue loop")
-                
+
+                # Check 1: Is another run already executing on this SUT?
+                with self._lock:
+                    current_run_on_sut = self._sut_current_run.get(run.sut_ip)
+                    if current_run_on_sut and current_run_on_sut != run_id:
+                        # SUT is busy, requeue this run
+                        if run_id not in requeued_runs:
+                            logger.debug(f"SUT {run.sut_ip} busy with run {current_run_on_sut[:8]}, "
+                                       f"requeueing {run_id[:8]} ({run.game_name})")
+                            self.run_queue.put(run_id)
+                            requeued_runs.add(run_id)
+                        continue
+
+                # Check 2: Can we acquire the Steam account for this game?
+                if not self.account_scheduler.try_acquire(run.sut_ip, run.game_name):
+                    # Account is held by another SUT, requeue this run
+                    if run_id not in requeued_runs:
+                        holder = self.account_scheduler.get_holder(run.game_name)
+                        account_type = self.account_scheduler.get_account_type(run.game_name).value.upper()
+                        logger.info(f"SUT {run.sut_ip} waiting for {account_type} account "
+                                  f"(held by {holder}), requeueing '{run.game_name}'")
+                        self.run_queue.put(run_id)
+                        requeued_runs.add(run_id)
+                    time.sleep(0.5)  # Brief delay before retrying
+                    continue
+
+                # Account acquired! Mark this SUT as busy and execute
+                requeued_runs.discard(run_id)
+                with self._lock:
+                    self._sut_current_run[run.sut_ip] = run_id
+
+                account_type = self.account_scheduler.get_account_type(run.game_name).value.upper()
+                logger.info(f"Worker {worker_name} executing {run.game_name} on {run.sut_ip} "
+                          f"(account: {account_type})")
+
+                try:
+                    # Process the run
+                    self._execute_run(run)
+                    logger.info(f"Worker {worker_name} completed run {run_id[:8]}")
+                finally:
+                    # Always release account and SUT lock when done
+                    self.account_scheduler.release(run.sut_ip, run.game_name)
+                    with self._lock:
+                        if self._sut_current_run.get(run.sut_ip) == run_id:
+                            del self._sut_current_run[run.sut_ip]
+
             except Exception as e:
-                logger.error(f"Error in worker thread: {e}", exc_info=True)
-                
-                # Mark the current run as failed if we can identify it
+                logger.error(f"Error in worker thread {worker_name}: {e}", exc_info=True)
+
+                # Cleanup on error
                 try:
                     if 'run' in locals() and run:
+                        self.account_scheduler.release(run.sut_ip, run.game_name)
+                        with self._lock:
+                            if self._sut_current_run.get(run.sut_ip) == run.run_id:
+                                del self._sut_current_run[run.sut_ip]
                         self.complete_run(run.run_id, False, error_message=f"Worker thread error: {str(e)}")
                 except Exception as cleanup_error:
                     logger.error(f"Error during worker thread cleanup: {cleanup_error}")
-                
-                # Continue running even if one run fails
-        
-        logger.info(f"Worker thread {threading.current_thread().name} ended")
+
+        logger.info(f"Worker thread {worker_name} ended")
     
     def _execute_run(self, run: AutomationRun):
         """Execute a single automation run"""
