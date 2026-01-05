@@ -418,4 +418,7 @@ class MainWindow(QMainWindow):
                 return
             if reply == QMessageBox.Yes:
                 self.process_manager.stop_all()
+
+        # Clean up all resources (background threads, timers, etc.)
+        self.process_manager.cleanup()
         event.accept()

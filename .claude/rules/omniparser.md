@@ -81,6 +81,7 @@ python omniparserserver.py \
   --port 8100 \
   --device cuda \
   --use_paddleocr \
+  --no-reload \
   --BOX_TRESHOLD 0.05 \
   --IOU_THRESHOLD 0.1
 ```
@@ -91,8 +92,14 @@ python omniparserserver.py \
 | `--port` | 8000 | Service port |
 | `--device` | cpu | Device (cpu/cuda) |
 | `--use_paddleocr` | false | Use PaddleOCR |
+| `--no-reload` | false | Disable uvicorn auto-reload (required for Service Manager) |
 | `--BOX_TRESHOLD` | 0.05 | Detection confidence |
 | `--IOU_THRESHOLD` | 0.1 | NMS overlap threshold |
+
+### Important: --no-reload Flag
+When running via Service Manager, always use `--no-reload`:
+- **With reload (default)**: Uvicorn spawns a reloader process (parent) and server process (child). Request logs go to the child's stdout, which isn't captured by Service Manager.
+- **With --no-reload**: Single process handles everything, all logs visible in Service Manager.
 
 ## Model Weights
 
@@ -157,5 +164,6 @@ Instead: `uvicorn.run(app, host='0.0.0.0', port=8100)`
 
 | Date | Change |
 |------|--------|
+| 2026-01-05 | Added --no-reload CLI flag for Service Manager compatibility |
 | 2024-12-31 | Added per-request config overrides |
 | 2024-12-31 | Added Steam dialog detection support |

@@ -77,16 +77,68 @@ When making significant code changes:
 
 This ensures visibility into progress and prevents missing issues.
 
+## React Component Reuse Protocol
+
+**CRITICAL**: Never duplicate logic between components. React is component-based for reuse.
+
+### Rules
+1. **Logic lives in hooks/utilities** - Not in components
+2. **Components are for UI only** - Different layouts, same data
+3. **100% logic reuse** - Desktop and mobile use identical hooks
+4. **Extract before duplicating** - If logic exists, extract it first
+
+### Pattern for Desktop/Mobile
+```
+src/
+├── hooks/
+│   └── useInstalledGames.ts    # Shared logic (game matching, fetching)
+├── utils/
+│   └── gameMatching.ts         # Pure utility functions
+├── components/
+│   ├── GameCard.tsx            # Reusable card component
+│   └── mobile/
+│       └── MobileGameCard.tsx  # Mobile-specific UI wrapper
+└── pages/
+    └── Dashboard.tsx           # Uses hooks, renders desktop or mobile UI
+```
+
+### What Changes Between Desktop/Mobile
+- ✅ Layout (grid vs scroll)
+- ✅ Component sizes (w-48 vs w-36)
+- ✅ Navigation (sidebar vs drawer)
+- ✅ Density (compact vs spacious)
+
+### What NEVER Changes
+- ❌ Data fetching logic
+- ❌ Business logic (game matching, validation)
+- ❌ API calls
+- ❌ State management patterns
+- ❌ Algorithms (matching, sorting, filtering)
+
+### Before Writing New Code
+1. Check if hook exists in `src/hooks/`
+2. Check if utility exists in `src/utils/`
+3. If logic exists in another component, EXTRACT IT FIRST
+4. Then import and use in new component
+
 ## Current Active Work
 
 - Steam dialog detection via OmniParser
 - Timeline events with countdown display
 - Process detection with configurable timeout
+- Service Manager optimizations complete
 
 ## Recent Changes
 
 | Date | Service | Change |
 |------|---------|--------|
+| 2026-01-05 | Service Manager | Complete process_manager.py rewrite (1050+ lines) |
+| 2026-01-05 | Service Manager | ProcessState enum, ProcessWrapper class with state machine |
+| 2026-01-05 | Service Manager | QTcpSocket async health checks (non-blocking) |
+| 2026-01-05 | Service Manager | taskkill /F /T for process tree termination (port busy fix) |
+| 2026-01-05 | Service Manager | Dependency-aware startup (waits for health checks) |
+| 2026-01-05 | Service Manager | Timer consolidation, log batching, health_path config |
+| 2026-01-05 | OmniParser | Added --no-reload flag for visible request logs |
 | 2024-12-31 | Gemma Backend | Added Steam dialog detection via OmniParser |
 | 2024-12-31 | Gemma Backend | Added GAME_PROCESS_WAITING/DETECTED events |
 | 2024-12-31 | Timeline | Added countdown metadata to events |

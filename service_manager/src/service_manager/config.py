@@ -50,6 +50,7 @@ class ServiceConfig:
     startup_delay: float = 0.0
     remote: bool = False
     enabled: bool = True
+    health_path: str = "/"  # Path for health check endpoint
 
 
 def get_services() -> List[ServiceConfig]:
@@ -63,6 +64,7 @@ def get_services() -> List[ServiceConfig]:
             working_dir=base_dir / "sut_discovery_service",
             port=5001,
             group="Core Services",
+            health_path="/health",  # No /api prefix for health router
         ),
         ServiceConfig(
             name="queue-service",
@@ -71,6 +73,7 @@ def get_services() -> List[ServiceConfig]:
             working_dir=base_dir / "queue_service",
             port=9000,
             group="Core Services",
+            health_path="/health",
         ),
         ServiceConfig(
             name="gemma-backend",
@@ -80,6 +83,7 @@ def get_services() -> List[ServiceConfig]:
             port=5000,
             group="Gemma",
             depends_on=["sut-discovery"],
+            health_path="/api/status",
         ),
         ServiceConfig(
             name="gemma-frontend",
@@ -90,6 +94,7 @@ def get_services() -> List[ServiceConfig]:
             group="Gemma",
             depends_on=["gemma-backend"],
             startup_delay=3.0,  # Wait for backend to be ready
+            health_path="/",  # Vite dev server
         ),
         ServiceConfig(
             name="preset-manager",
@@ -100,6 +105,7 @@ def get_services() -> List[ServiceConfig]:
             group="Preset Manager",
             depends_on=["sut-discovery"],
             env_vars={"USE_EXTERNAL_DISCOVERY": "true"},
+            health_path="/health",  # No /api prefix
         ),
         ServiceConfig(
             name="pm-frontend",
@@ -110,6 +116,7 @@ def get_services() -> List[ServiceConfig]:
             group="Preset Manager",
             depends_on=["preset-manager"],
             startup_delay=3.0,  # Wait for backend to be ready
+            health_path="/",  # Vite dev server
         ),
         ServiceConfig(
             name="sut-client",
@@ -120,6 +127,7 @@ def get_services() -> List[ServiceConfig]:
             group="SUT",
             env_vars={"SUT_CLIENT_PORT": "8080"},
             enabled=False,  # Not needed on server, user can start manually for testing
+            health_path="/health",
         ),
     ]
 
@@ -173,9 +181,11 @@ def create_omniparser_config(instance: int) -> ServiceConfig:
     return ServiceConfig(
         name=f"omniparser-{port}",
         display_name=f"OmniParser {port}",
-        command=["python", "-m", "omniparserserver", "--use_paddleocr", "--port", str(port)],
+        # --no-reload ensures logs appear in service manager (no child process)
+        command=["python", "-m", "omniparserserver", "--use_paddleocr", "--port", str(port), "--no-reload"],
         working_dir=get_omniparser_dir(),
         port=port,
         group="OmniParser",
         enabled=True,
+        health_path="/probe/",  # OmniParser uses /probe/ for health checks
     )

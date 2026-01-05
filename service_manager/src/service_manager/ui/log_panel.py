@@ -200,16 +200,16 @@ class LogPanel(QWidget):
             self.start_stop_btn.setEnabled(True)
             self.restart_btn.setEnabled(False)
         elif status == "starting":
-            self.start_stop_btn.setText(self.ICON_WAIT)
-            self.start_stop_btn.setStyleSheet(btn_base + "QPushButton { color: #dcdcaa; }")
-            self.start_stop_btn.setToolTip("Starting...")
-            self.start_stop_btn.setEnabled(False)
+            self.start_stop_btn.setText(self.ICON_STOP)
+            self.start_stop_btn.setStyleSheet(btn_base + "QPushButton { color: #f48771; }")
+            self.start_stop_btn.setToolTip("Stop (abort startup)")
+            self.start_stop_btn.setEnabled(True)  # Allow stopping during startup
             self.restart_btn.setEnabled(False)
         elif status == "stopping":
             self.start_stop_btn.setText(self.ICON_WAIT)
             self.start_stop_btn.setStyleSheet(btn_base + "QPushButton { color: #dcdcaa; }")
             self.start_stop_btn.setToolTip("Stopping...")
-            self.start_stop_btn.setEnabled(False)
+            self.start_stop_btn.setEnabled(False)  # Can't stop while already stopping
             self.restart_btn.setEnabled(False)
 
     def set_host_port(self, host: str, port: int = None):
