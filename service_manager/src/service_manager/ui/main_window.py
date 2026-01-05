@@ -1,5 +1,5 @@
 """
-Main Window - Assembles all components
+Main Window - Assembles all components with clean fullscreen layout
 """
 
 from PySide6.QtWidgets import (
@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 
-from .sidebar import ServiceSidebar
 from .log_panel import LogPanel, LogPanelContainer
 from .setup_wizard import SetupWizard
 from .settings_dialog import SettingsDialog
@@ -26,7 +25,6 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Gemma Service Manager")
-        self.resize(1400, 900)
 
         # Initialize settings
         self._init_settings()
@@ -42,6 +40,9 @@ class MainWindow(QMainWindow):
         self.status_timer = QTimer(self)
         self.status_timer.timeout.connect(self._update_status_bar)
         self.status_timer.start(1000)
+
+        # Launch fullscreen/maximized
+        self.showMaximized()
 
     def _init_settings(self):
         """Initialize settings, show wizard if first run"""
@@ -65,23 +66,11 @@ class MainWindow(QMainWindow):
     def _setup_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        layout = QHBoxLayout(central_widget)
+        layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self.main_splitter = QSplitter(Qt.Horizontal)
-
-        # Sidebar
-        self.sidebar = ServiceSidebar()
-        self.sidebar.setMinimumWidth(180)
-        self.sidebar.setMaximumWidth(300)
-
-        # Right panel with content splitter (dashboard + logs)
-        self.right_panel = QWidget()
-        right_layout = QVBoxLayout(self.right_panel)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(0)
-
+        # Main content area
         self.content_splitter = QSplitter(Qt.Vertical)
 
         # Dashboard container (hidden by default)
@@ -107,20 +96,15 @@ class MainWindow(QMainWindow):
         dashboard_layout.addWidget(self.dashboard_splitter)
         self.dashboard_container.setVisible(False)  # Hidden by default
 
-        # Log container
+        # Log container - fills the entire space
         self.log_container = LogPanelContainer()
 
         self.content_splitter.addWidget(self.dashboard_container)
         self.content_splitter.addWidget(self.log_container)
         self.content_splitter.setSizes([350, 550])
 
-        right_layout.addWidget(self.content_splitter)
-
-        self.main_splitter.addWidget(self.sidebar)
-        self.main_splitter.addWidget(self.right_panel)
-        self.main_splitter.setSizes([200, 1200])
-
-        layout.addWidget(self.main_splitter)
+        # Add content to main layout (no tab bar)
+        layout.addWidget(self.content_splitter)
 
         # Track dashboard visibility state
         self._dashboard_visible = False
@@ -128,6 +112,26 @@ class MainWindow(QMainWindow):
     def _setup_toolbar(self):
         toolbar = QToolBar("Main Toolbar")
         toolbar.setMovable(False)
+        toolbar.setStyleSheet("""
+            QToolBar {
+                background-color: #2d2d2d;
+                border-bottom: 1px solid #3d3d3d;
+                spacing: 4px;
+                padding: 2px 4px;
+            }
+            QToolBar QToolButton {
+                background: transparent;
+                border: none;
+                padding: 4px 8px;
+                color: #cccccc;
+            }
+            QToolBar QToolButton:hover {
+                background-color: #3d3d3d;
+            }
+            QToolBar QToolButton:checked {
+                background-color: #094771;
+            }
+        """)
         self.addToolBar(toolbar)
 
         self.start_all_action = QAction("Start All", self)
@@ -167,6 +171,22 @@ class MainWindow(QMainWindow):
         self.settings_action.triggered.connect(self._show_settings)
         toolbar.addAction(self.settings_action)
 
+        # Add spacer to push SUT Client to the right
+        spacer = QWidget()
+        spacer.setSizePolicy(spacer.sizePolicy().horizontalPolicy(), spacer.sizePolicy().verticalPolicy())
+        from PySide6.QtWidgets import QSizePolicy
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        toolbar.addWidget(spacer)
+
+        # SUT Client status indicator in toolbar
+        self.sut_client_label = QLabel("SUT Client:")
+        self.sut_client_label.setStyleSheet("color: #888; margin-right: 4px;")
+        toolbar.addWidget(self.sut_client_label)
+
+        self.sut_client_status = QLabel("\u25CF Disconnected")
+        self.sut_client_status.setStyleSheet("color: #808080;")
+        toolbar.addWidget(self.sut_client_status)
+
     def _setup_statusbar(self):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -178,17 +198,19 @@ class MainWindow(QMainWindow):
         self.status_bar.addPermanentWidget(self.running_label)
 
     def _setup_connections(self):
+        # Process manager signals
         self.process_manager.output_received.connect(self._on_output_received)
         self.process_manager.error_received.connect(self._on_error_received)
         self.process_manager.status_changed.connect(self._on_status_changed)
         self.process_manager.status_changed.connect(self.flow_diagram.update_status)
-        self.sidebar.service_start_requested.connect(self._start_service)
-        self.sidebar.service_stop_requested.connect(self._stop_service)
-        self.sidebar.service_restart_requested.connect(self._restart_service)
-        self.sidebar.settings_requested.connect(self._show_settings)
+
+        # Log container signals
         self.log_container.start_requested.connect(self._start_service)
         self.log_container.stop_requested.connect(self._stop_service)
         self.log_container.restart_requested.connect(self._restart_service)
+
+        # Health check signals - blink indicators on log panels
+        self.log_container.health_check_received.connect(self._on_health_check)
 
     def _init_log_panels(self):
         for config in get_services():
@@ -201,9 +223,14 @@ class MainWindow(QMainWindow):
             config = self.process_manager.configs.get(name)
             if config:
                 self.log_container.add_panel(config.name, config.display_name)
-                self.sidebar.add_dynamic_service(config)
 
         self.log_container.arrange_panels()
+
+    def _on_health_check(self, service_name: str, success: bool):
+        """Handle health check signal - blink indicator on log panel"""
+        panel = self.log_container.get_panel(service_name)
+        if panel:
+            panel.blink_indicator(success)
 
     def _on_output_received(self, service_name: str, text: str):
         panel = self.log_container.get_panel(service_name)
@@ -216,11 +243,31 @@ class MainWindow(QMainWindow):
             panel.append_error(text)
 
     def _on_status_changed(self, service_name: str, status: str):
-        self.sidebar.update_status(service_name, status)
         panel = self.log_container.get_panel(service_name)
         if panel:
             panel.set_status(status)
+
+        # Update SUT Client status in toolbar (special handling)
+        # Note: SUT Client is remote, status comes from discovery service
+        # For now we show the SUT Discovery service status as indicator
+        if service_name == "sut-discovery":
+            self._update_sut_client_status(status)
+
         self._update_status_bar()
+
+    def _update_sut_client_status(self, status: str):
+        """Update the SUT Client indicator in toolbar"""
+        colors = {
+            "running": ("#4ec9b0", "Connected"),
+            "starting": ("#dcdcaa", "Connecting..."),
+            "stopping": ("#dcdcaa", "Disconnecting..."),
+            "stopped": ("#808080", "Disconnected"),
+            "connected": ("#4ec9b0", "Connected"),
+            "unreachable": ("#f48771", "Unreachable"),
+        }
+        color, text = colors.get(status, ("#808080", "Unknown"))
+        self.sut_client_status.setText(f"\u25CF {text}")
+        self.sut_client_status.setStyleSheet(f"color: {color};")
 
     def _start_service(self, service_name: str):
         self.status_label.setText(f"Starting {service_name}...")
@@ -235,19 +282,16 @@ class MainWindow(QMainWindow):
         self.process_manager.restart_service(service_name)
 
     def _start_selected(self):
-        service = self.sidebar.get_selected_service()
-        if service:
-            self._start_service(service)
+        # No longer used - services controlled from log panel headers
+        pass
 
     def _stop_selected(self):
-        service = self.sidebar.get_selected_service()
-        if service:
-            self._stop_service(service)
+        # No longer used - services controlled from log panel headers
+        pass
 
     def _restart_selected(self):
-        service = self.sidebar.get_selected_service()
-        if service:
-            self._restart_service(service)
+        # No longer used - services controlled from log panel headers
+        pass
 
     def _start_all_services(self):
         self.status_label.setText("Starting all services...")
@@ -307,16 +351,13 @@ class MainWindow(QMainWindow):
                 panel.setMaximumHeight(16777215)  # Qt default max
 
     def _apply_service_settings(self):
-        """Apply settings to all log panels and sidebar"""
+        """Apply settings to all log panels"""
         for config in get_services():
             # Update log panel
             panel = self.log_container.get_panel(config.name)
             if panel:
                 panel.set_host_port(config.host, config.port)
                 panel.set_remote(config.remote)
-
-            # Update sidebar
-            self.sidebar.update_host_port(config.name, config.host, config.port)
 
     def _show_settings(self):
         """Show settings dialog"""
@@ -346,23 +387,20 @@ class MainWindow(QMainWindow):
 
         new_omniparser = self.process_manager.get_omniparser_services()
 
-        # Remove log panels and sidebar items for removed OmniParser services
+        # Remove log panels for removed OmniParser services
         for name in old_omniparser:
             if name not in new_omniparser:
                 self.log_container.remove_panel(name)
-                self.sidebar.remove_dynamic_service(name)
 
-        # Add log panels and sidebar items for new OmniParser services
+        # Add log panels for new OmniParser services
         for name in new_omniparser:
             if name not in old_omniparser:
                 config = self.process_manager.configs.get(name)
                 if config:
                     self.log_container.add_panel(config.name, config.display_name)
-                    self.sidebar.add_dynamic_service(config)
 
-        # Rearrange panels and refresh sidebar
+        # Rearrange panels
         self.log_container.arrange_panels()
-        self.sidebar.refresh_all()
 
         # Check if OmniParser URLs changed - if so, restart queue-service
         new_omniparser_urls = settings.get_omniparser_urls_env()
