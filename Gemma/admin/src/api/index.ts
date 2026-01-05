@@ -191,6 +191,47 @@ export async function getRunsStats(): Promise<RunsStats> {
   return fetchJson<RunsStats>(`${API_BASE}/runs/stats`);
 }
 
+// Run Logs and Timeline APIs
+export interface LogEntry {
+  timestamp: string;
+  level: string;
+  message: string;
+}
+
+export interface RunLogsResponse {
+  logs: LogEntry[];
+  run_id: string;
+  total_count: number;
+}
+
+export interface TimelineEvent {
+  event_id: string;
+  event_type: string;
+  message: string;
+  status: string;
+  timestamp: string;
+  duration_ms: number | null;
+  metadata: Record<string, unknown>;
+  group: string;
+  replaces_event_id: string | null;
+}
+
+export interface RunTimelineResponse {
+  status: string;
+  run_id: string;
+  events: TimelineEvent[];
+}
+
+export async function getRunLogs(runId: string): Promise<RunLogsResponse> {
+  return fetchJson<RunLogsResponse>(`${API_BASE}/runs/${runId}/logs`, {
+    timeout: TIMEOUTS.default * 2, // Logs can be large, give more time
+  });
+}
+
+export async function getRunTimeline(runId: string): Promise<RunTimelineResponse> {
+  return fetchJson<RunTimelineResponse>(`${API_BASE}/runs/${runId}/timeline`);
+}
+
 // SUT Action APIs
 export async function getSutStatus(deviceId: string): Promise<unknown> {
   return fetchJson<unknown>(`${API_BASE}/sut/${deviceId}/status`);

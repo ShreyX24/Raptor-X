@@ -200,11 +200,12 @@ class StepProgressCallback:
 class AutomationOrchestrator:
     """Orchestrates automation execution using the existing engine from modules/"""
 
-    def __init__(self, game_manager, device_registry, omniparser_client, discovery_client=None):
+    def __init__(self, game_manager, device_registry, omniparser_client, discovery_client=None, websocket_handler=None):
         self.game_manager = game_manager
         self.device_registry = device_registry
         self.omniparser_client = omniparser_client
         self.discovery_client = discovery_client
+        self.websocket_handler = websocket_handler
 
         # Storage manager reference (set by RunManager)
         self.storage: Optional['RunStorageManager'] = None
@@ -218,6 +219,30 @@ class AutomationOrchestrator:
         """Set the storage manager for persistent run storage"""
         self.storage = storage
         logger.info("Storage manager attached to orchestrator")
+
+    def _create_timeline_callback(self, run_id: str):
+        """Create a callback function for timeline events that emits via WebSocket"""
+        def on_timeline_event(event: 'TimelineEvent'):
+            if self.websocket_handler:
+                try:
+                    # Serialize the event for WebSocket
+                    event_data = {
+                        'run_id': run_id,
+                        'event_id': event.event_id,
+                        'event_type': event.event_type.value if hasattr(event.event_type, 'value') else str(event.event_type),
+                        'message': event.message,
+                        'status': event.status.value if hasattr(event.status, 'value') else str(event.status),
+                        'timestamp': event.timestamp.isoformat() if event.timestamp else None,
+                        'duration_ms': event.duration_ms,
+                        'metadata': event.metadata,
+                        'group': event.group,
+                    }
+                    # Emit to general updates and run-specific room
+                    self.websocket_handler.broadcast_message('timeline_event', event_data)
+                    self.websocket_handler.broadcast_message('timeline_event', event_data, room=f'run_{run_id}')
+                except Exception as e:
+                    logger.error(f"Error emitting timeline event via WebSocket: {e}")
+        return on_timeline_event
     
     def execute_run(self, run: AutomationRun) -> tuple[bool, Optional[RunResult], Optional[str]]:
         """
@@ -237,7 +262,12 @@ class AutomationOrchestrator:
         os.makedirs(base_run_dir, exist_ok=True)
 
         # Create timeline manager for comprehensive run tracking
-        timeline = TimelineManager(run.run_id, base_run_dir)
+        # Pass WebSocket callback for real-time timeline updates
+        timeline = TimelineManager(
+            run.run_id,
+            base_run_dir,
+            on_event=self._create_timeline_callback(run.run_id)
+        )
         timeline.run_started(run.game_name, run.sut_ip, run.iterations)
 
         # Store timeline reference on run for API access AND for stop_run() to emit cancel event

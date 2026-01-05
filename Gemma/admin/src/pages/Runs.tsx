@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useRuns, useCampaigns } from '../hooks';
 import { LogViewer, RunTimeline } from '../components';
+import { getRunLogs } from '../api';
 import type { AutomationRun, LogEntry, Campaign } from '../types';
 
 // Expand icon component
@@ -662,11 +663,8 @@ export function Runs() {
 
     setLogsLoading(prev => new Set(prev).add(runId));
     try {
-      const response = await fetch(`/api/runs/${runId}/logs`);
-      if (response.ok) {
-        const data = await response.json();
-        setLogsCache(prev => ({ ...prev, [runId]: data.logs || [] }));
-      }
+      const data = await getRunLogs(runId);
+      setLogsCache(prev => ({ ...prev, [runId]: data.logs || [] }));
     } catch (error) {
       console.error('Failed to fetch logs:', error);
     } finally {
