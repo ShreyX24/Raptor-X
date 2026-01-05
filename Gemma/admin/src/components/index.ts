@@ -27,7 +27,6 @@ export type { TimelineEvent } from './RunTimeline';
 
 // Campaign components
 export { CampaignModal } from './CampaignModal';
-export { MultiSUTPanel } from './MultiSUTPanel';
 
 // Data-dense dashboard components (Unified Dashboard)
 export { RadialGauge, MiniGauge } from './RadialGauge';
