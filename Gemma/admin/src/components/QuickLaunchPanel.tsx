@@ -855,7 +855,7 @@ function HorizontalPreflightChecks({
   useEffect(() => {
     const check = async () => {
       try {
-        const response = await fetch('http://localhost:9000/probe');
+        const response = await fetch('/queue-api/probe');
         if (response.ok) {
           const data = await response.json();
           setOmniparserOnline(data.overall_omniparser_status === 'healthy' || data.stats?.worker_running);
@@ -957,7 +957,7 @@ function CompactPreflightChecks({
   useEffect(() => {
     const checkOmniparser = async () => {
       try {
-        const response = await fetch('http://localhost:9000/probe');
+        const response = await fetch('/queue-api/probe');
         if (response.ok) {
           const data = await response.json();
           const isHealthy = data.overall_omniparser_status === 'healthy' || data.stats?.worker_running;

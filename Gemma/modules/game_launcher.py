@@ -39,13 +39,15 @@ class GameLauncher:
         Raises:
             RuntimeError: If the game fails to launch
         """
+        import time
+
         try:
             # Log launch parameters at debug level
             logger.debug(f"Launch request - path: {game_path}, process_id: {process_id}, startup_wait: {startup_wait}, args: {launch_args}")
 
             # Send launch command to SUT with process tracking metadata
             response = self.network_manager.launch_game(game_path, process_id, startup_wait, launch_args)
-            
+
             # Log full response at debug level
             logger.debug(f"SUT launch response: {response}")
 
@@ -59,7 +61,7 @@ class GameLauncher:
                 launch_method = response.get("launch_method", "unknown")
                 subprocess_pid = response.get("subprocess_pid", "N/A")
                 subprocess_status = response.get("subprocess_status", "unknown")
-                
+
                 logger.info(f"Game launched successfully: {game_path}")
                 logger.debug(f"  - Subprocess PID: {subprocess_pid} ({subprocess_status})")
                 logger.info(f"  - Launch Method: {launch_method}")
@@ -67,11 +69,26 @@ class GameLauncher:
                 logger.info(f"  - Foreground Confirmed: {fg_confirmed}")
                 return True
             elif status == "warning":
-                 # Foreground is required for automation - treat warning as failure
-                 # The SUT already retries 3 times with 10s intervals
-                 warning_msg = response.get("warning", "Unknown warning")
-                 logger.error(f"Game launch failed: {warning_msg}")
-                 raise RuntimeError(f"Game launch failed: {warning_msg}")
+                # Game process is running but foreground not confirmed
+                # Try explicit focus retries before failing (BUG-003 fix)
+                warning_msg = response.get("warning", "Unknown warning")
+                logger.warning(f"Game launched with warning: {warning_msg}")
+                logger.info("Attempting explicit focus retries...")
+
+                # Try to focus the game window explicitly (3 attempts with 5s intervals)
+                for attempt in range(3):
+                    logger.info(f"Focus retry attempt {attempt + 1}/3...")
+                    time.sleep(5)  # Wait for game to settle
+
+                    if self.network_manager.focus_game(minimize_others=True):
+                        logger.info(f"Focus succeeded on attempt {attempt + 1}")
+                        return True
+                    else:
+                        logger.warning(f"Focus attempt {attempt + 1} failed")
+
+                # All focus attempts failed
+                logger.error(f"Game launch failed after focus retries: {warning_msg}")
+                raise RuntimeError(f"Game launch failed: {warning_msg}")
             else:
                 error_msg = response.get("error", "Unknown error")
                 logger.error(f"Failed to launch game: {error_msg}")

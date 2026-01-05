@@ -244,6 +244,21 @@ export async function getSutSystemInfoByIp(ip: string): Promise<SUTSystemInfo | 
   }
 }
 
+export async function getSutSystemInfoViaProxy(deviceId: string): Promise<SUTSystemInfo | null> {
+  // Go through discovery service proxy to avoid CORS
+  try {
+    const response = await fetchWithTimeout(`${DISCOVERY_API}/suts/${deviceId}/health`, {
+      timeout: TIMEOUTS.default,
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    // The health endpoint returns system info
+    return data as SUTSystemInfo;
+  } catch {
+    return null;
+  }
+}
+
 export interface InstalledGame {
   name: string;
   steam_app_id?: string | number;

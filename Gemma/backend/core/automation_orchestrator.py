@@ -844,7 +844,25 @@ class AutomationOrchestrator:
                     if "404" in error_str or "NOT FOUND" in error_str:
                         error_msg = f"SUT service error: /launch endpoint not found on {device.ip}:{device.port}. Please ensure gemma_sut_service.py is running on the SUT."
                     elif "Connection" in error_str or "timeout" in error_str.lower():
-                        error_msg = f"Connection error: Cannot reach SUT at {device.ip}:{device.port}. Please check if the SUT service is running."
+                        # BUG-004 fix: Try to recover SUT connection before failing
+                        logger.warning(f"SUT connection issue detected, attempting recovery...")
+                        if timeline:
+                            timeline.warning("SUT connection issue, attempting recovery...")
+
+                        # Wait for SUT to recover (e.g., after game crash)
+                        if self._verify_sut_connection(device, timeline, max_retries=3, retry_delay=15):
+                            # SUT recovered - fail this iteration gracefully so campaign can continue
+                            error_msg = f"Game launch failed but SUT recovered. Connection was temporarily lost."
+                            if timeline:
+                                timeline.warning(error_msg)
+                            logger.warning(error_msg)
+                            # Mark iteration as failed in storage
+                            if self.storage:
+                                self.storage.complete_iteration(run.run_id, iteration_num, success=False, error_message=error_msg)
+                            return (False, original_resolution, resolution_changed)
+                        else:
+                            # SUT still unreachable after retries
+                            error_msg = f"Connection error: Cannot reach SUT at {device.ip}:{device.port} after recovery attempts."
 
                     if timeline:
                         timeline.error(f"Game launch failed: {error_msg}")
@@ -1304,6 +1322,48 @@ class AutomationOrchestrator:
         except Exception as e:
             logger.warning(f"Error checking Steam dialogs: {e}")
             return None
+
+    def _verify_sut_connection(self, device, timeline: TimelineManager = None, max_retries: int = 3, retry_delay: int = 10) -> bool:
+        """
+        Verify SUT is reachable and wait for recovery if not.
+
+        This helps recover from BUG-004 where SUT becomes temporarily unreachable
+        after a game crash or failed launch.
+
+        Args:
+            device: Device object with ip and port
+            timeline: TimelineManager for event logging
+            max_retries: Maximum number of retry attempts
+            retry_delay: Seconds to wait between retries
+
+        Returns:
+            True if SUT is reachable, False after all retries exhausted
+        """
+        for attempt in range(max_retries + 1):
+            try:
+                response = requests.get(
+                    f"http://{device.ip}:{device.port}/status",
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    if attempt > 0:
+                        logger.info(f"SUT connection recovered after {attempt} retries")
+                        if timeline:
+                            timeline.info(f"SUT connection recovered after {attempt} retries")
+                    return True
+            except Exception as e:
+                if attempt < max_retries:
+                    wait_msg = f"SUT unreachable, waiting {retry_delay}s before retry ({attempt + 1}/{max_retries})..."
+                    logger.warning(wait_msg)
+                    if timeline:
+                        timeline.warning(wait_msg)
+                    time.sleep(retry_delay)
+                else:
+                    logger.error(f"SUT unreachable after {max_retries} retries: {e}")
+                    if timeline:
+                        timeline.error(f"SUT unreachable after {max_retries} retries")
+                    return False
+        return False
 
     def _discover_game_path(self, network, game_config) -> Optional[str]:
         """

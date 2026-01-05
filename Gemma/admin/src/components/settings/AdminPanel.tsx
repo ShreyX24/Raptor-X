@@ -12,9 +12,8 @@ import { AutomationSettings } from './AutomationSettings';
 import { SteamAccountsManager } from './SteamAccountsManager';
 import { ProfileManager } from './ProfileManager';
 import { useAdminConfig } from '../../hooks/useAdminConfig';
-import { useToast } from '../../contexts/ToastContext';
 import type { AdminTab } from '../../types/admin';
-import { RefreshCw, Save } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 
 interface AdminPanelProps {
   initialTab?: AdminTab;
@@ -23,7 +22,7 @@ interface AdminPanelProps {
 export function AdminPanel({ initialTab = 'services' }: AdminPanelProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>(initialTab);
   const [unsavedTabs, setUnsavedTabs] = useState<Set<AdminTab>>(new Set());
-  const [saving, setSaving] = useState(false);
+  const [_saving, _setSaving] = useState(false);
 
   const {
     services,
@@ -37,8 +36,6 @@ export function AdminPanel({ initialTab = 'services' }: AdminPanelProps) {
     refreshAll,
     refreshServices,
   } = useAdminConfig();
-
-  const toast = useToast();
 
   // Handle tab change with unsaved changes warning
   const handleTabChange = useCallback((tab: AdminTab) => {

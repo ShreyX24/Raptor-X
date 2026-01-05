@@ -1,11 +1,12 @@
 /**
  * Queue Service API Client
- * Connects to the Queue Service at port 9000
+ * Connects to the Queue Service via Vite proxy (/queue-api -> localhost:9000)
  */
 
 import type { QueueStats, QueueJob, QueueDepthPoint, QueueHealth } from '../types';
 
-const QUEUE_SERVICE_URL = 'http://localhost:9000';
+// Use proxy path for cross-device compatibility (mobile, desktop)
+const QUEUE_SERVICE_URL = '/queue-api';
 
 class QueueServiceError extends Error {
   constructor(public status: number, message: string) {

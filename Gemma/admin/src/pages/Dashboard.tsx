@@ -2,6 +2,8 @@
  * Dashboard - Data-Dense Operations Dashboard
  * Unified view combining Fleet Status, Quick Launch, Active Runs, Games, and Metrics
  * Grafana/Datadog-style layout with radial gauges and grid panels
+ *
+ * Mobile: Shows simplified MobileDashboard for screens < 768px
  */
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
@@ -14,15 +16,37 @@ import {
   RunMetricsPanel,
   SnakeTimeline,
 } from '../components';
-import { getSutInstalledGamesViaProxy } from '../api';
+import { MobileDashboard } from '../components/mobile';
+import { getSutInstalledGamesViaProxy, createCampaign } from '../api';
 import type { SUT, GameConfig } from '../types';
 
+// Hook to detect mobile viewport
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth < breakpoint : false
+  );
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < breakpoint);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [breakpoint]);
+
+  return isMobile;
+}
+
 export function Dashboard() {
-  // Core data hooks
+  const isMobile = useIsMobile();
+
+  // IMPORTANT: All hooks must be called BEFORE any conditional returns
+  // Core data hooks (called even on mobile to avoid hooks order violation)
   const { devices, onlineDevices } = useDevices();
   const { gamesList } = useGames();
   const { activeRunsList, history, start, stop } = useRuns();
-  const { activeCampaigns, stop: stopCampaignFn } = useCampaigns();
+  const { activeCampaigns, historyCampaigns, stop: stopCampaignFn } = useCampaigns();
 
   // Cross-panel selection state
   const [selectedSutId, setSelectedSutId] = useState<string | undefined>();
@@ -32,6 +56,9 @@ export function Dashboard() {
 
   // All runs for metrics
   const allRuns = useMemo(() => [...activeRunsList, ...history], [activeRunsList, history]);
+
+  // All campaigns for metrics (combine active and history)
+  const allCampaigns = useMemo(() => [...activeCampaigns, ...historyCampaigns], [activeCampaigns, historyCampaigns]);
 
   // Get selected SUT object
   const selectedSut = useMemo(() =>
@@ -277,6 +304,20 @@ export function Dashboard() {
     }
   }, [start]);
 
+  // Handle re-run campaign from metrics panel
+  const handleRerunCampaign = useCallback(async (games: string[], sutIp: string, quality?: string, resolution?: string) => {
+    try {
+      await createCampaign(sutIp, games, 1, undefined, quality, resolution);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start campaign re-run');
+    }
+  }, []);
+
+  // Show mobile dashboard on small screens (AFTER all hooks to avoid hooks order violation)
+  if (isMobile) {
+    return <MobileDashboard />;
+  }
+
   return (
     <div className="flex flex-col h-[calc(100vh-100px)] p-3 bg-background text-text-primary overflow-hidden">
       {/* Error Banner */}
@@ -371,6 +412,7 @@ export function Dashboard() {
               <div className="p-3">
                 <SnakeTimeline
                   runId={activeRunsList.find(r => r.status === 'running')?.run_id || null}
+                  gameName={activeRunsList.find(r => r.status === 'running')?.game_name?.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                   pollInterval={2000}
                   maxRows={4}
                 />
@@ -382,9 +424,11 @@ export function Dashboard() {
           <div className="flex-1 min-h-0">
             <RunMetricsPanel
               runs={allRuns}
+              campaigns={allCampaigns}
               className="h-full"
               expanded={activeRunsList.length === 0}
               onRerun={handleRerun}
+              onRerunCampaign={handleRerunCampaign}
             />
           </div>
         </div>

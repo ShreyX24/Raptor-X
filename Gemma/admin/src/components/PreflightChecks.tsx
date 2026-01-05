@@ -141,7 +141,7 @@ export function PreflightChecks({
     await delay(400);
     try {
       const response = await fetch(
-        `http://localhost:5002/api/sync/sut-games/${encodeURIComponent(sut.ip)}?port=${sut.port}`
+        `/preset-api/api/sync/sut-games/${encodeURIComponent(sut.ip)}?port=${sut.port}`
       );
       if (response.ok) {
         const data = await response.json();
@@ -197,7 +197,7 @@ export function PreflightChecks({
     await delay(300);
     try {
       const response = await fetch(
-        `http://localhost:5002/api/presets/${encodeURIComponent(currentGameSlug)}/${currentQuality}/${currentResolution}/metadata`
+        `/preset-api/api/presets/${encodeURIComponent(currentGameSlug)}/${currentQuality}/${currentResolution}/metadata`
       );
       if (response.ok) {
         const data = await response.json();
@@ -238,7 +238,7 @@ export function PreflightChecks({
     updateCheck('omniparser_healthy', { status: 'checking' });
     await delay(300);
     try {
-      const response = await fetch('http://localhost:9000/probe');
+      const response = await fetch('/queue-api/probe');
       if (response.ok) {
         const data = await response.json();
         // Check overall_omniparser_status or stats.worker_running
@@ -314,7 +314,7 @@ export function PreflightChecks({
     if (currentGameSlug) {
       try {
         const response = await fetch(
-          `http://localhost:5002/api/presets/${encodeURIComponent(currentGameSlug)}/${currentQuality}/${currentResolution}/metadata`
+          `/preset-api/api/presets/${encodeURIComponent(currentGameSlug)}/${currentQuality}/${currentResolution}/metadata`
         );
         if (response.ok) {
           const data = await response.json();

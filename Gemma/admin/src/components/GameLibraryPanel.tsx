@@ -21,29 +21,87 @@ interface GameLibraryPanelProps {
 type FilterType = 'all' | 'installed' | 'ppg' | 'spl' | 'ppg+spl';
 type SortType = 'alphabetical' | 'selection' | 'benchmark';
 
-// Get game image URL - checks local custom image first, then Steam CDN
-const getGameImageUrl = (game: GameConfig): string | null => {
-  // Get the game slug (used for local image filename)
-  const slug = game.preset_id || game.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+// ============================================================
+// Image Caching System - Avoid repeated 404s and network requests
+// ============================================================
 
-  // Local custom image path (uploaded via Settings > Games)
-  // This will be tried first, fallback handled by onError in the component
-  const localImagePath = `/game-images/${slug}.jpg`;
+// Global cache for resolved image URLs (persists across re-renders)
+const imageUrlCache = new Map<string, string | null>();
+let prefetchInProgress = false;
 
-  // Return local path - the component will fall back to Steam CDN on error
-  return localImagePath;
-};
-
-// Get Steam library image URL (portrait format)
+// Get Steam library image URL (portrait format) - primary source
 const getSteamLibraryUrl = (steamAppId: string | undefined): string | null => {
   if (!steamAppId) return null;
-  return `https://cdn.akamai.steamstatic.com/steam/apps/${steamAppId}/library_600x900.jpg`;
+  return `https://steamcdn-a.akamaihd.net/steam/apps/${steamAppId}/library_600x900.jpg`;
 };
 
 // Get Steam header image URL (landscape format - fallback)
 const getSteamHeaderUrl = (steamAppId: string | undefined): string | null => {
   if (!steamAppId) return null;
-  return `https://cdn.cloudflare.steamstatic.com/steam/apps/${steamAppId}/header.jpg`;
+  return `https://steamcdn-a.akamaihd.net/steam/apps/${steamAppId}/header.jpg`;
+};
+
+// Check if a URL is valid (returns a promise that resolves to true/false)
+const checkImageUrl = (url: string): Promise<boolean> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(true);
+    img.onerror = () => resolve(false);
+    // Set crossOrigin to handle CORS
+    img.crossOrigin = 'anonymous';
+    img.src = url;
+    // Timeout after 5 seconds
+    setTimeout(() => resolve(false), 5000);
+  });
+};
+
+// Get the best available image URL for a game (with caching)
+const getBestImageUrl = async (game: GameConfig): Promise<string | null> => {
+  const cacheKey = game.name;
+
+  // Return cached result if available
+  if (imageUrlCache.has(cacheKey)) {
+    return imageUrlCache.get(cacheKey) || null;
+  }
+
+  // Try Steam library image first (portrait, best for our cards)
+  const steamLibraryUrl = getSteamLibraryUrl(game.steam_app_id);
+  if (steamLibraryUrl) {
+    const isValid = await checkImageUrl(steamLibraryUrl);
+    if (isValid) {
+      imageUrlCache.set(cacheKey, steamLibraryUrl);
+      return steamLibraryUrl;
+    }
+  }
+
+  // Try Steam header image (landscape, will be cropped)
+  const steamHeaderUrl = getSteamHeaderUrl(game.steam_app_id);
+  if (steamHeaderUrl) {
+    const isValid = await checkImageUrl(steamHeaderUrl);
+    if (isValid) {
+      imageUrlCache.set(cacheKey, steamHeaderUrl);
+      return steamHeaderUrl;
+    }
+  }
+
+  // No valid image found
+  imageUrlCache.set(cacheKey, null);
+  return null;
+};
+
+// Prefetch images for a list of games (called once when component mounts)
+const prefetchGameImages = async (games: GameConfig[]) => {
+  if (prefetchInProgress) return;
+  prefetchInProgress = true;
+
+  // Process games in batches of 6 for parallel loading
+  const batchSize = 6;
+  for (let i = 0; i < games.length; i += batchSize) {
+    const batch = games.slice(i, i + batchSize);
+    await Promise.all(batch.map(game => getBestImageUrl(game)));
+  }
+
+  prefetchInProgress = false;
 };
 
 export function GameLibraryPanel({
@@ -94,6 +152,20 @@ export function GameLibraryPanel({
     'dota-2',
     'dota2',
   ]);
+
+  // Track image cache refresh
+  const [imageCacheVersion, setImageCacheVersion] = useState(0);
+
+  // Prefetch game images when games list changes
+  useEffect(() => {
+    if (games.length > 0) {
+      // Start prefetching in background
+      prefetchGameImages(games).then(() => {
+        // Trigger re-render to show loaded images
+        setImageCacheVersion(v => v + 1);
+      });
+    }
+  }, [games]);
 
   // Fetch PPG/SPL classification from preset-manager
   useEffect(() => {
@@ -335,6 +407,7 @@ export function GameLibraryPanel({
                 isSpl={splGames.has(game.preset_id || '')}
                 onClick={() => handleGameClick(game)}
                 onDoubleClick={() => isGameAvailable(game) && onQuickRun?.(game)}
+                cacheVersion={imageCacheVersion}
               />
             ))}
           </div>
@@ -359,41 +432,31 @@ interface NetflixGameCardProps {
   isSpl: boolean;
   onClick: () => void;
   onDoubleClick?: () => void;
+  cacheVersion?: number;  // Triggers re-render when cache updates
 }
 
-function NetflixGameCard({ game, isSelected, isAvailable, isPpg, isSpl, onClick, onDoubleClick }: NetflixGameCardProps) {
-  const [currentImageUrl, setCurrentImageUrl] = useState<string | null>(null);
-  const [imageLoadAttempt, setImageLoadAttempt] = useState(0);
+function NetflixGameCard({ game, isSelected, isAvailable, isPpg, isSpl, onClick, onDoubleClick, cacheVersion }: NetflixGameCardProps) {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const hasPreset = !!game.preset_id;
   const hasPath = !!(game.path && game.path.length > 0);
 
-  // Image URLs in order of preference
-  const localImageUrl = getGameImageUrl(game);
-  const steamLibraryUrl = getSteamLibraryUrl(game.steam_app_id);
-  const steamHeaderUrl = getSteamHeaderUrl(game.steam_app_id);
-
-  // Set initial image URL
+  // Get cached image URL on mount and when cache updates
   useEffect(() => {
-    setCurrentImageUrl(localImageUrl);
-    setImageLoadAttempt(0);
-  }, [localImageUrl]);
-
-  // Handle image load error - try fallbacks
-  const handleImageError = () => {
-    if (imageLoadAttempt === 0 && steamLibraryUrl) {
-      // Try Steam library image (portrait)
-      setCurrentImageUrl(steamLibraryUrl);
-      setImageLoadAttempt(1);
-    } else if (imageLoadAttempt === 1 && steamHeaderUrl) {
-      // Try Steam header image (landscape)
-      setCurrentImageUrl(steamHeaderUrl);
-      setImageLoadAttempt(2);
+    // Check if already in cache
+    const cached = imageUrlCache.get(game.name);
+    if (cached !== undefined) {
+      setImageUrl(cached);
+      setIsLoading(false);
     } else {
-      // All fallbacks failed, use placeholder
-      setCurrentImageUrl(null);
-      setImageLoadAttempt(3);
+      // Not in cache yet, load it
+      setIsLoading(true);
+      getBestImageUrl(game).then(url => {
+        setImageUrl(url);
+        setIsLoading(false);
+      });
     }
-  };
+  }, [game.name, game.steam_app_id, cacheVersion]);
 
   // Generate a color based on game name for placeholder
   const placeholderColor = useMemo(() => {
@@ -430,13 +493,26 @@ function NetflixGameCard({ game, isSelected, isAvailable, isPpg, isSpl, onClick,
           backgroundColor: placeholderColor,
         }}
       >
-        {currentImageUrl && (
+        {/* Loading shimmer effect */}
+        {isLoading && (
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-shimmer" />
+        )}
+        {/* Game image */}
+        {imageUrl && (
           <img
-            src={currentImageUrl}
+            src={imageUrl}
             alt={game.name}
+            loading="lazy"
             className="w-full h-full object-cover"
-            onError={handleImageError}
           />
+        )}
+        {/* Placeholder text when no image */}
+        {!imageUrl && !isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-2xl font-bold text-white/50">
+              {(game.display_name || game.name).charAt(0).toUpperCase()}
+            </span>
+          </div>
         )}
         {/* Gradient overlay for text readability */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />

@@ -1,11 +1,12 @@
 /**
  * Preset Manager API Client
- * Connects to the Preset Manager service at port 5002
+ * Connects to the Preset Manager service via Vite proxy (/preset-api -> localhost:5002)
  */
 
 import type { PresetGame, PresetLevel, SyncStats, SyncResult, BackupInfo } from '../types';
 
-const PRESET_MANAGER_URL = 'http://localhost:5002';
+// Use proxy path for cross-device compatibility (mobile, desktop)
+const PRESET_MANAGER_URL = '/preset-api';
 
 class PresetManagerError extends Error {
   constructor(public status: number, message: string) {

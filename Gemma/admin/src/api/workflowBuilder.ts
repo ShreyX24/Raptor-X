@@ -12,8 +12,9 @@ import type {
   Workflow,
 } from '../types';
 
-const DISCOVERY_SERVICE_URL = 'http://localhost:5001';
-const GEMMA_BACKEND_URL = '/api'; // Proxied through Vite
+// Use proxy paths for cross-device compatibility (mobile, desktop)
+const DISCOVERY_SERVICE_URL = '/discovery-api'; // Proxied to localhost:5001/api
+const GEMMA_BACKEND_URL = '/api'; // Proxied to localhost:5000
 
 class WorkflowBuilderError extends Error {
   constructor(public status: number, message: string) {
@@ -50,7 +51,7 @@ async function fetchDiscoveryJson<T>(endpoint: string, options?: RequestInit): P
  */
 export async function takeScreenshot(sutId: string): Promise<Blob> {
   const response = await fetch(
-    `${DISCOVERY_SERVICE_URL}/api/suts/${encodeURIComponent(sutId)}/screenshot`
+    `${DISCOVERY_SERVICE_URL}/suts/${encodeURIComponent(sutId)}/screenshot`
   );
 
   if (!response.ok) {
@@ -122,7 +123,7 @@ export async function sendAction(
   }
 ): Promise<ActionResult> {
   return fetchDiscoveryJson<ActionResult>(
-    `/api/suts/${encodeURIComponent(sutId)}/action`,
+    `/suts/${encodeURIComponent(sutId)}/action`,
     {
       method: 'POST',
       body: JSON.stringify(action),
@@ -142,7 +143,7 @@ export async function launchGame(
   processName?: string
 ): Promise<ActionResult> {
   return fetchDiscoveryJson<ActionResult>(
-    `/api/suts/${encodeURIComponent(sutId)}/launch`,
+    `/suts/${encodeURIComponent(sutId)}/launch`,
     {
       method: 'POST',
       body: JSON.stringify({
@@ -163,7 +164,7 @@ export async function killProcess(
   processName: string
 ): Promise<ActionResult> {
   return fetchDiscoveryJson<ActionResult>(
-    `/api/suts/${encodeURIComponent(sutId)}/kill-process`,
+    `/suts/${encodeURIComponent(sutId)}/kill-process`,
     {
       method: 'POST',
       body: JSON.stringify({ process_name: processName }),
@@ -177,7 +178,7 @@ export async function killProcess(
  */
 export async function getPerformance(sutId: string): Promise<PerformanceMetrics> {
   return fetchDiscoveryJson<PerformanceMetrics>(
-    `/api/suts/${encodeURIComponent(sutId)}/performance`
+    `/suts/${encodeURIComponent(sutId)}/performance`
   );
 }
 
@@ -191,7 +192,7 @@ export async function getScreenInfo(sutId: string): Promise<{
   dpi: number;
 }> {
   return fetchDiscoveryJson(
-    `/api/suts/${encodeURIComponent(sutId)}/screen-info`
+    `/suts/${encodeURIComponent(sutId)}/screen-info`
   );
 }
 
@@ -205,7 +206,7 @@ export async function getInstalledGames(sutId: string): Promise<Array<{
   install_path?: string;
 }>> {
   return fetchDiscoveryJson(
-    `/api/suts/${encodeURIComponent(sutId)}/games`
+    `/suts/${encodeURIComponent(sutId)}/games`
   );
 }
 

@@ -18,7 +18,7 @@ interface ProfileManagerProps {
 export function ProfileManager({
   profiles,
   loading,
-  onUnsavedChange,
+  onUnsavedChange: _onUnsavedChange,
   onSaved,
 }: ProfileManagerProps) {
   const [profileList, setProfileList] = useState<Profile[]>([]);

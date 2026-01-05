@@ -353,11 +353,13 @@ function IterationCarousel({
   iterations,
   pollInterval,
   runStatus,
+  previousGameName,
 }: {
   runId: string;
   iterations: number;
   pollInterval: number;
   runStatus: string;
+  previousGameName?: string;
 }) {
   const [currentIteration, setCurrentIteration] = useState(0); // 0 = all, 1-N = specific iteration
 
@@ -420,6 +422,7 @@ function IterationCarousel({
         pollInterval={pollInterval}
         runStatus={runStatus}
         filterIteration={currentIteration > 0 ? currentIteration : undefined}
+        previousGameName={previousGameName}
       />
     </div>
   );
@@ -509,6 +512,7 @@ export function Runs() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { activeRunsList, history, loading, stop } = useRuns();
   const { activeCampaigns, historyCampaigns, stop: stopCampaign } = useCampaigns();
+  const [isClearing, setIsClearing] = useState(false);
 
   // Expanded rows state
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
@@ -552,8 +556,8 @@ export function Runs() {
         games: campaign.games,
         sut_ip: campaign.sut_ip,
         status: campaign.status,
-        started_at: typeof campaign.created_at === 'string' ? campaign.created_at : campaign.created_at?.toISOString?.() || null,
-        completed_at: campaign.completed_at ? (typeof campaign.completed_at === 'string' ? campaign.completed_at : campaign.completed_at?.toISOString?.()) : null,
+        started_at: String(campaign.created_at || ''),
+        completed_at: campaign.completed_at ? String(campaign.completed_at) : null,
         iterations: campaign.iterations_per_game,
         quality: campaign.quality,
         resolution: campaign.resolution,
@@ -583,8 +587,8 @@ export function Runs() {
         games: campaign.games,
         sut_ip: campaign.sut_ip,
         status: campaign.status,
-        started_at: typeof campaign.created_at === 'string' ? campaign.created_at : campaign.created_at?.toISOString?.() || null,
-        completed_at: campaign.completed_at ? (typeof campaign.completed_at === 'string' ? campaign.completed_at : campaign.completed_at?.toISOString?.()) : null,
+        started_at: String(campaign.created_at || ''),
+        completed_at: campaign.completed_at ? String(campaign.completed_at) : null,
         iterations: campaign.iterations_per_game,
         quality: campaign.quality,
         resolution: campaign.resolution,
@@ -694,11 +698,30 @@ export function Runs() {
     }
   }, [searchParams, unifiedList, setSearchParams]);
 
+  // Count queued runs
+  const queuedRuns = activeRunsList.filter(r => r.status === 'queued');
+  const queuedCount = queuedRuns.length;
+
   const stats = {
-    active: activeRunsList.length + activeCampaigns.length,
+    active: activeRunsList.filter(r => r.status === 'running').length + activeCampaigns.filter(c => c.status === 'running').length,
+    queued: queuedCount,
     completed: history.filter(r => r.status === 'completed').length,
     failed: history.filter(r => r.status === 'failed').length,
     total: unifiedList.length,
+  };
+
+  // Clear all queued runs
+  const handleClearQueue = async () => {
+    if (queuedCount === 0) return;
+    if (!window.confirm(`Clear ${queuedCount} queued runs? This cannot be undone.`)) return;
+
+    setIsClearing(true);
+    try {
+      // Stop all queued runs
+      await Promise.all(queuedRuns.map(run => stop(run.run_id, false).catch(console.error)));
+    } finally {
+      setIsClearing(false);
+    }
   };
 
   const getStatusBadge = (status: string) => {
@@ -722,13 +745,29 @@ export function Runs() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
         <div className="card p-4">
-          <p className="text-sm text-text-muted">Active</p>
+          <p className="text-sm text-text-muted">Running</p>
           <p className="text-2xl font-bold text-primary">{stats.active}</p>
         </div>
+        <div className="card p-4 relative">
+          <p className="text-sm text-text-muted">Queued</p>
+          <p className={`text-2xl font-bold ${stats.queued > 0 ? 'text-warning' : 'text-text-primary'}`}>
+            {stats.queued}
+          </p>
+          {stats.queued > 0 && (
+            <button
+              onClick={handleClearQueue}
+              disabled={isClearing}
+              className="absolute top-2 right-2 text-xs px-2 py-0.5 bg-danger/20 text-danger hover:bg-danger/30 rounded transition-colors disabled:opacity-50"
+              title="Clear all queued runs"
+            >
+              {isClearing ? '...' : 'Clear'}
+            </button>
+          )}
+        </div>
         <div className="card p-4">
-          <p className="text-sm text-text-muted">Total Runs</p>
+          <p className="text-sm text-text-muted">Total</p>
           <p className="text-2xl font-bold text-text-primary">{stats.total}</p>
         </div>
         <div className="card p-4">
@@ -929,24 +968,48 @@ export function Runs() {
                                     />
                                   ) : item.campaignRuns && item.campaignRuns.length > 0 ? (
                                     <div className="space-y-4">
-                                      {item.campaignRuns.map(run => (
-                                        <div key={run.run_id} className="border border-border rounded-lg overflow-hidden">
-                                          <div className="bg-surface px-4 py-2 border-b border-border flex items-center justify-between">
-                                            <span className="font-medium text-text-primary">{run.game_name}</span>
-                                            <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${getStatusBadge(run.status)}`}>
-                                              {run.status}
-                                            </span>
+                                      {item.campaignRuns.map((run, index) => {
+                                        // Get previous game name for queued runs
+                                        const previousGameName = index > 0 ? item.campaignRuns![index - 1].game_name : undefined;
+                                        // Auto-collapse queued runs
+                                        const isCollapsed = run.status === 'queued';
+
+                                        return (
+                                          <div key={run.run_id} className="border border-border rounded-lg overflow-hidden">
+                                            <div className="bg-surface px-4 py-2 border-b border-border flex items-center justify-between">
+                                              <span className="font-medium text-text-primary">{run.game_name}</span>
+                                              <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${getStatusBadge(run.status)}`}>
+                                                {run.status}
+                                              </span>
+                                            </div>
+                                            {!isCollapsed && (
+                                              <div className="p-4">
+                                                <IterationCarousel
+                                                  runId={run.run_id}
+                                                  iterations={run.iterations || 1}
+                                                  pollInterval={run.status === 'running' ? 2000 : 0}
+                                                  runStatus={run.status}
+                                                  previousGameName={previousGameName}
+                                                />
+                                              </div>
+                                            )}
+                                            {isCollapsed && (
+                                              <div className="px-4 py-3 bg-surface-elevated/50">
+                                                <div className="flex items-center gap-2 text-warning text-sm">
+                                                  <svg className="w-4 h-4 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                  </svg>
+                                                  <span>
+                                                    {previousGameName
+                                                      ? `Awaiting ${previousGameName} completion`
+                                                      : 'Waiting in queue...'}
+                                                  </span>
+                                                </div>
+                                              </div>
+                                            )}
                                           </div>
-                                          <div className="p-4">
-                                            <IterationCarousel
-                                              runId={run.run_id}
-                                              iterations={run.iterations || 1}
-                                              pollInterval={run.status === 'running' ? 2000 : 0}
-                                              runStatus={run.status}
-                                            />
-                                          </div>
-                                        </div>
-                                      ))}
+                                        );
+                                      })}
                                     </div>
                                   ) : (
                                     <div className="text-center text-text-muted py-8">

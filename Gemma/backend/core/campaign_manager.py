@@ -94,7 +94,7 @@ class CampaignManager:
         self.run_manager = run_manager
         self.campaigns: Dict[str, Campaign] = {}
         self.campaign_history: List[Campaign] = []
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()  # Use RLock to allow nested locking
 
         # Load campaign history from storage
         self._load_history_from_storage()

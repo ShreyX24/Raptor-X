@@ -112,6 +112,7 @@ class AutomationRun:
     sut_info: Optional[Dict[str, Any]] = None  # SUT hardware metadata from manifest
     folder_name: Optional[str] = None  # Run folder name for logs/artifacts
     campaign_id: Optional[str] = None  # Links to parent campaign (if part of multi-game campaign)
+    campaign_name: Optional[str] = None  # Campaign name for display
     quality: Optional[str] = None  # 'low' | 'medium' | 'high' | 'ultra'
     resolution: Optional[str] = None  # '720p' | '1080p' | '1440p' | '2160p'
     # Runtime references (not serialized)
@@ -155,6 +156,7 @@ class AutomationRun:
             'sut_info': self.sut_info,
             'folder_name': self.folder_name,
             'campaign_id': self.campaign_id,
+            'campaign_name': self.campaign_name,
             'quality': self.quality,
             'resolution': self.resolution,
         }
@@ -298,6 +300,7 @@ class RunManager:
                 folder_name=manifest.folder_name,
                 created_at=created_at_dt,
                 campaign_id=manifest.campaign_id,  # Preserve campaign link for filtering
+                campaign_name=manifest.campaign_name,  # Preserve campaign name for display
                 quality=quality,
                 resolution=resolution,
             )
@@ -447,7 +450,7 @@ class RunManager:
             raise
     
     def stop_run(self, run_id: str) -> bool:
-        """Stop a specific run - actually interrupts the automation"""
+        """Stop a specific run - interrupts running or cancels queued runs"""
         with self._lock:
             if run_id in self.active_runs:
                 run = self.active_runs[run_id]
@@ -472,6 +475,18 @@ class RunManager:
                             logger.warning(f"Failed to emit timeline event: {e}")
 
                     logger.info(f"Stopped run {run_id}")
+                    return True
+                elif run.status == RunStatus.QUEUED:
+                    # Cancel queued run - remove from active and move to history
+                    run.status = RunStatus.STOPPED
+                    run.error_message = "Cancelled before starting"
+                    run.progress.end_time = datetime.now()
+
+                    # Move to history
+                    self.run_history.insert(0, run)
+                    del self.active_runs[run_id]
+
+                    logger.info(f"Cancelled queued run {run_id}")
                     return True
         return False
     
@@ -669,8 +684,12 @@ class RunManager:
                 run.error_message = error_message
             
             logger.info(f"Moving run {run_id} to history")
-            # Move to history
-            self.run_history.append(copy.deepcopy(run))
+            # Move to history - clear non-serializable fields before deepcopy
+            # threading.Event and TimelineManager cannot be pickled
+            run.stop_event = None
+            run.timeline = None
+            # Insert at beginning to maintain newest-first order (history loaded from disk is already sorted)
+            self.run_history.insert(0, copy.deepcopy(run))
             del self.active_runs[run_id]
             logger.info(f"Removed run {run_id} from active_runs")
             
@@ -886,8 +905,9 @@ class RunManager:
 
             self._storage_map[run.run_id] = manifest
 
-            # Also update the run object with sut_info for API responses
+            # Also update the run object with folder_name and campaign_name for API responses
             run.folder_name = manifest.folder_name
+            run.campaign_name = campaign_name
             run.sut_info = {
                 'cpu': {'brand_string': sut_info.cpu_brand or ''},
                 'gpu': {'name': sut_info.gpu_name or ''},

@@ -81,6 +81,7 @@ function WaitCounter({ event }: { event: TimelineEvent }) {
 
 interface SnakeTimelineProps {
   runId: string | null;
+  gameName?: string; // Game name to display in header
   pollInterval?: number;
   className?: string;
   maxRows?: number; // Max visible rows before scrolling (default: unlimited)
@@ -200,12 +201,25 @@ function getEventLabel(event: TimelineEvent): string {
     if (event.message) {
       // Extract key info from message
       const msg = event.message.toLowerCase();
-      if (msg.includes('game ready')) return 'Game ready';
+      if (msg.includes('game ready')) return 'Game Ready';
       if (msg.includes('benchmark')) return 'Benchmark';
       if (msg.includes('screenshot')) return 'Screenshot';
       if (msg.includes('waiting')) return 'Waiting...';
       if (msg.includes('detected')) return 'Detected';
       if (msg.includes('found')) return 'Found';
+      // Resolution changes
+      if (msg.includes('changing resolution')) return 'Change Res';
+      if (msg.includes('resolution changed')) return 'Res Changed';
+      if (msg.includes('restoring') && msg.includes('resolution')) return 'Restore Res';
+      if (msg.includes('resolution restored')) return 'Res Restored';
+      // Steam login
+      if (msg.includes('steam') && msg.includes('logging in')) return 'Steam Login';
+      if (msg.includes('steam') && msg.includes('login successful')) return 'Steam OK';
+      if (msg.includes('already logged')) return 'Steam OK';
+      if (msg.includes('need to switch')) return 'Steam: Need to...';
+      // Automation
+      if (msg.includes('starting automation')) return 'Automation';
+      if (msg.includes('automation completed')) return 'Auto Done';
       // Truncate message for display
       return event.message.length > 12 ? event.message.slice(0, 12) + '...' : event.message;
     }
@@ -260,7 +274,7 @@ function getSnakePosition(index: number, cols: number): { row: number; col: numb
   return { row, col };
 }
 
-export function SnakeTimeline({ runId, pollInterval = 2000, className = '', maxRows }: SnakeTimelineProps) {
+export function SnakeTimeline({ runId, gameName, pollInterval = 2000, className = '', maxRows }: SnakeTimelineProps) {
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -488,15 +502,61 @@ export function SnakeTimeline({ runId, pollInterval = 2000, className = '', maxR
 
   return (
     <div ref={containerRef} className={`relative ${className}`}>
-      {/* Header: Iteration indicator + Live */}
+      {/* Header: Game name + Iteration navigation + Live */}
       <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          {totalIterations > 1 && (
-            <span className="text-xs text-text-muted">
-              Iteration <span className="font-bold text-warning">{currentIteration}</span> of {totalIterations}
+        {/* Left: Game name + Iteration navigation */}
+        <div className="flex items-center gap-3">
+          {/* Game name */}
+          {gameName && (
+            <span className="text-sm font-medium text-text-primary">
+              {gameName}
             </span>
           )}
+
+          {/* Iteration navigation */}
+          <div className="flex items-center gap-1">
+            {/* Previous iteration */}
+            <button
+              onClick={goToPrevIteration}
+              disabled={!canGoPrev}
+              className={`flex items-center gap-0.5 text-xs transition-colors ${
+                canGoPrev
+                  ? 'text-text-secondary hover:text-primary cursor-pointer'
+                  : 'text-text-muted/30 cursor-not-allowed'
+              }`}
+              title={canGoPrev ? `Go to iteration ${currentIteration - 1}` : ''}
+            >
+              {canGoPrev && <span className="font-bold text-warning">#{currentIteration - 1}</span>}
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+
+            {/* Current iteration */}
+            <span className="text-xs font-medium text-text-primary px-2 py-0.5 bg-warning/20 rounded-full">
+              Iter {currentIteration}
+            </span>
+
+            {/* Next iteration */}
+            <button
+              onClick={goToNextIteration}
+              disabled={!canGoNext}
+              className={`flex items-center gap-0.5 text-xs transition-colors ${
+                canGoNext
+                  ? 'text-text-secondary hover:text-primary cursor-pointer'
+                  : 'text-text-muted/30 cursor-not-allowed'
+              }`}
+              title={canGoNext ? `Go to iteration ${currentIteration + 1}` : ''}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+              {canGoNext && <span className="font-bold text-warning">#{currentIteration + 1}</span>}
+            </button>
+          </div>
         </div>
+
+        {/* Right: Live indicator */}
         {isLive && (
           <div className="flex items-center gap-1 text-[10px] text-primary">
             <span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse" />
@@ -505,32 +565,9 @@ export function SnakeTimeline({ runId, pollInterval = 2000, className = '', maxR
         )}
       </div>
 
-      {/* Main carousel container with arrows */}
-      <div className="flex items-center gap-1">
-        {/* Left Arrow with iteration number */}
-        <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
-          <button
-            onClick={goToPrevIteration}
-            disabled={!canGoPrev}
-            className={`w-7 h-7 flex items-center justify-center rounded-full border transition-all ${
-              canGoPrev
-                ? 'border-border hover:border-primary hover:bg-primary/10 text-text-secondary hover:text-primary cursor-pointer'
-                : 'border-transparent text-text-muted/30 cursor-not-allowed'
-            }`}
-            title={canGoPrev ? `Go to iteration ${currentIteration - 1}` : ''}
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </button>
-          {canGoPrev && (
-            <span className="text-[9px] font-bold text-warning">#{currentIteration - 1}</span>
-          )}
-        </div>
-
-        {/* Scrollable Grid container - maxRows limits visible rows before scrolling */}
-        <div
-          className={`relative flex-1 ${maxRows ? 'overflow-y-auto' : ''} overflow-x-hidden`}
+      {/* Scrollable Grid container - maxRows limits visible rows before scrolling */}
+      <div
+        className={`relative ${maxRows ? 'overflow-y-auto' : ''} overflow-x-hidden`}
           style={maxRows ? {
             maxHeight: `${maxRows * CELL_HEIGHT + (maxRows - 1) * GAP_Y + 4}px`, // +4px buffer
           } : undefined}
@@ -691,28 +728,6 @@ export function SnakeTimeline({ runId, pollInterval = 2000, className = '', maxR
         })}
           </div>
         </div>
-
-        {/* Right Arrow with iteration number */}
-        <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
-          <button
-            onClick={goToNextIteration}
-            disabled={!canGoNext}
-            className={`w-7 h-7 flex items-center justify-center rounded-full border transition-all ${
-              canGoNext
-                ? 'border-border hover:border-primary hover:bg-primary/10 text-text-secondary hover:text-primary cursor-pointer'
-                : 'border-transparent text-text-muted/30 cursor-not-allowed'
-            }`}
-            title={canGoNext ? `Go to iteration ${currentIteration + 1}` : ''}
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
-          {canGoNext && (
-            <span className="text-[9px] font-bold text-warning">#{currentIteration + 1}</span>
-          )}
-        </div>
-      </div>
     </div>
   );
 }

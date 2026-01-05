@@ -903,6 +903,73 @@ class RunStorageManager:
 
         return campaign_folder
 
+    def update_campaign_manifest(
+        self,
+        campaign_id: str,
+        run_ids: List[str] = None,
+        status: str = None,
+        completed_at: str = None
+    ) -> bool:
+        """
+        Update campaign manifest with run information.
+
+        Args:
+            campaign_id: Campaign ID
+            run_ids: List of run IDs in this campaign
+            status: Campaign status (running, completed, failed, etc.)
+            completed_at: Completion timestamp
+
+        Returns:
+            True if updated successfully
+        """
+        # Find campaign folder
+        campaign_folder = None
+        if hasattr(self, '_campaign_folders') and campaign_id in self._campaign_folders:
+            campaign_folder = self._campaign_folders[campaign_id]
+        else:
+            # Search for campaign folder
+            for folder in self.base_dir.iterdir():
+                if folder.is_dir():
+                    manifest_path = folder / 'campaign_manifest.json'
+                    if manifest_path.exists():
+                        try:
+                            with open(manifest_path, 'r', encoding='utf-8') as f:
+                                data = json.load(f)
+                            if data.get('campaign_id') == campaign_id:
+                                campaign_folder = folder
+                                break
+                        except Exception:
+                            continue
+
+        if not campaign_folder:
+            logger.warning(f"Campaign folder not found for {campaign_id}")
+            return False
+
+        manifest_path = campaign_folder / 'campaign_manifest.json'
+        try:
+            # Read existing manifest
+            with open(manifest_path, 'r', encoding='utf-8') as f:
+                manifest = json.load(f)
+
+            # Update fields
+            if run_ids is not None:
+                manifest['runs'] = run_ids
+            if status is not None:
+                manifest['status'] = status
+            if completed_at is not None:
+                manifest['completed_at'] = completed_at
+
+            # Write back
+            with open(manifest_path, 'w', encoding='utf-8') as f:
+                json.dump(manifest, f, indent=2)
+
+            logger.debug(f"Updated campaign manifest for {campaign_id[:8]}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to update campaign manifest: {e}")
+            return False
+
     # =========================================================================
     # Timeline Persistence
     # =========================================================================

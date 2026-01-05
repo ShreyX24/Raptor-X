@@ -1,23 +1,36 @@
 /**
  * RunMetricsPanel - Statistics display with gauges and sparklines
  * Shows success rate, utilization, and run trends
+ * Groups campaign runs together with rerun capability
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { RadialGauge } from './RadialGauge';
 import { SparklineChart } from './SparklineChart';
-import type { AutomationRun, RunsStats } from '../types';
+import type { AutomationRun, RunsStats, Campaign } from '../types';
 
 // Games to exclude from metrics (reference configs, not real games)
 const EXCLUDED_GAMES = ['ui_flow', 'UI_Flow', 'uiflow'];
 
+// Grouped run structure for campaigns
+interface RunGroup {
+  type: 'campaign' | 'single';
+  campaignId?: string;
+  campaignName?: string;
+  runs: AutomationRun[];
+  latestTime: number;
+  sutIp?: string;
+}
+
 interface RunMetricsPanelProps {
   runs: AutomationRun[];
+  campaigns?: Campaign[];  // Optional campaign data for better grouping
   stats?: RunsStats;
   className?: string;
   expanded?: boolean; // Show more recent runs when expanded
   onRerun?: (gameName: string, sutIp: string) => void;
+  onRerunCampaign?: (games: string[], sutIp: string, quality?: string, resolution?: string) => void;
 }
 
 // Filter out excluded games
@@ -53,25 +66,141 @@ function getRunsPerDay(runs: AutomationRun[], days: number = 7): number[] {
   return dayBuckets;
 }
 
-// Get recent completed runs (sorted by date descending)
-function getRecentRuns(runs: AutomationRun[], limit: number = 5): AutomationRun[] {
-  return filterRuns(runs)
+// Group runs by campaign, keeping single runs separate
+// Uses campaign data when available for more accurate grouping
+function getGroupedRuns(runs: AutomationRun[], campaigns: Campaign[] = [], limit: number = 10): RunGroup[] {
+  const filtered = filterRuns(runs)
     .filter(r => r.status === 'completed' || r.status === 'failed')
     .sort((a, b) => {
-      // Sort by started_at descending (most recent first)
       const aTime = a.started_at ? new Date(a.started_at).getTime() : 0;
       const bTime = b.started_at ? new Date(b.started_at).getTime() : 0;
       return bTime - aTime;
-    })
-    .slice(0, limit);
+    });
+
+  const groups: RunGroup[] = [];
+  const campaignMap = new Map<string, RunGroup>();
+
+  // Build a map of all runs by ID for quick lookup
+  const allRunsMap = new Map<string, AutomationRun>();
+  runs.forEach(r => allRunsMap.set(r.run_id, r));
+
+  // Track which run IDs are used by campaigns
+  const campaignRunIds = new Set<string>();
+
+  // First, process campaigns if available to get accurate run groupings
+  for (const campaign of campaigns) {
+    if (campaign.status !== 'completed' && campaign.status !== 'failed' && campaign.status !== 'partially_completed') {
+      continue; // Skip active campaigns in metrics (they're shown in active runs panel)
+    }
+
+    const campaignRuns: AutomationRun[] = [];
+
+    // Use run_ids from campaign to find associated runs
+    (campaign.run_ids || []).forEach(runId => {
+      campaignRunIds.add(runId);
+      const run = allRunsMap.get(runId);
+      if (run && (run.status === 'completed' || run.status === 'failed')) {
+        campaignRuns.push(run);
+      }
+    });
+
+    if (campaignRuns.length > 0) {
+      // Sort by started_at (oldest first for display order)
+      campaignRuns.sort((a, b) => {
+        const aTime = a.started_at ? new Date(a.started_at).getTime() : 0;
+        const bTime = b.started_at ? new Date(b.started_at).getTime() : 0;
+        return aTime - bTime;
+      });
+
+      const latestRun = campaignRuns[campaignRuns.length - 1];
+      const group: RunGroup = {
+        type: 'campaign',
+        campaignId: campaign.campaign_id,
+        campaignName: campaign.name || `Campaign ${campaign.campaign_id.slice(0, 8)}`,
+        runs: campaignRuns,
+        latestTime: latestRun.started_at ? new Date(latestRun.started_at).getTime() : 0,
+        sutIp: campaign.sut_ip,
+      };
+      campaignMap.set(campaign.campaign_id, group);
+    }
+  }
+
+  // Process runs that aren't part of campaigns (from campaign data)
+  for (const run of filtered) {
+    if (campaignRunIds.has(run.run_id)) {
+      continue; // Already processed via campaign
+    }
+
+    if (run.campaign_id) {
+      // Campaign run but we don't have campaign data - group by campaign_id
+      if (!campaignMap.has(run.campaign_id)) {
+        const group: RunGroup = {
+          type: 'campaign',
+          campaignId: run.campaign_id,
+          campaignName: run.campaign_name || `Campaign ${run.campaign_id.slice(0, 8)}`,
+          runs: [],
+          latestTime: run.started_at ? new Date(run.started_at).getTime() : 0,
+          sutIp: run.sut_ip,
+        };
+        campaignMap.set(run.campaign_id, group);
+      }
+      const group = campaignMap.get(run.campaign_id)!;
+      group.runs.push(run);
+      // Update latest time if this run is newer
+      const runTime = run.started_at ? new Date(run.started_at).getTime() : 0;
+      if (runTime > group.latestTime) {
+        group.latestTime = runTime;
+      }
+    } else {
+      // Single run - add as individual group
+      groups.push({
+        type: 'single',
+        runs: [run],
+        latestTime: run.started_at ? new Date(run.started_at).getTime() : 0,
+        sutIp: run.sut_ip,
+      });
+    }
+  }
+
+  // Add campaign groups
+  for (const group of campaignMap.values()) {
+    // Sort campaign runs by started_at (oldest first for display order)
+    group.runs.sort((a, b) => {
+      const aTime = a.started_at ? new Date(a.started_at).getTime() : 0;
+      const bTime = b.started_at ? new Date(b.started_at).getTime() : 0;
+      return aTime - bTime;
+    });
+    groups.push(group);
+  }
+
+  // Sort all groups by latest time (most recent first)
+  groups.sort((a, b) => b.latestTime - a.latestTime);
+
+  // Limit total groups
+  return groups.slice(0, limit);
 }
 
-export function RunMetricsPanel({ runs, stats, className = '', expanded = false, onRerun }: RunMetricsPanelProps) {
+export function RunMetricsPanel({ runs, campaigns = [], stats, className = '', expanded = false, onRerun, onRerunCampaign }: RunMetricsPanelProps) {
   const successRate = useMemo(() => calculateSuccessRate(runs), [runs]);
   const runsPerDay = useMemo(() => getRunsPerDay(runs, 7), [runs]);
   // Show more recent runs when expanded (no active runs, panel takes full height)
-  const recentRunsLimit = expanded ? 15 : 5;
-  const recentRuns = useMemo(() => getRecentRuns(runs, recentRunsLimit), [runs, recentRunsLimit]);
+  const groupLimit = expanded ? 10 : 5;
+  const groupedRuns = useMemo(() => getGroupedRuns(runs, campaigns, groupLimit), [runs, campaigns, groupLimit]);
+
+  // Track expanded campaigns
+  const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set());
+
+  const toggleCampaign = (campaignId: string) => {
+    setExpandedCampaigns(prev => {
+      const next = new Set(prev);
+      if (next.has(campaignId)) {
+        next.delete(campaignId);
+      } else {
+        next.add(campaignId);
+      }
+      return next;
+    });
+  };
 
   const activeCount = stats?.active_runs ?? runs.filter(r => r.status === 'running').length;
   const queuedCount = stats?.queued_runs ?? runs.filter(r => r.status === 'queued').length;
@@ -138,8 +267,8 @@ export function RunMetricsPanel({ runs, stats, className = '', expanded = false,
           />
         </div>
 
-        {/* Recent Runs Mini-List */}
-        {recentRuns.length > 0 && (
+        {/* Recent Runs Mini-List (Grouped by Campaign) */}
+        {groupedRuns.length > 0 && (
           <div className={expanded ? 'flex-1 flex flex-col min-h-0' : ''}>
             <div className="text-xs text-text-muted uppercase mb-1.5">Recent</div>
             {/* Column Headers */}
@@ -153,8 +282,19 @@ export function RunMetricsPanel({ runs, stats, className = '', expanded = false,
               <span className="w-8 text-center">Action</span>
             </div>
             <div className={`space-y-1 ${expanded ? 'flex-1 overflow-y-auto' : ''}`}>
-              {recentRuns.map((run) => (
-                <MiniRunItem key={run.run_id} run={run} onRerun={onRerun} />
+              {groupedRuns.map((group, idx) => (
+                group.type === 'campaign' ? (
+                  <CampaignGroup
+                    key={group.campaignId || idx}
+                    group={group}
+                    isExpanded={expandedCampaigns.has(group.campaignId!)}
+                    onToggle={() => toggleCampaign(group.campaignId!)}
+                    onRerun={onRerun}
+                    onRerunCampaign={onRerunCampaign}
+                  />
+                ) : (
+                  <MiniRunItem key={group.runs[0].run_id} run={group.runs[0]} onRerun={onRerun} />
+                )
               ))}
             </div>
           </div>
@@ -192,9 +332,131 @@ function StatBox({ label, value, color }: StatBoxProps) {
 }
 
 /**
+ * CampaignGroup - Collapsible campaign with runs indented underneath
+ */
+interface CampaignGroupProps {
+  group: RunGroup;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onRerun?: (gameName: string, sutIp: string) => void;
+  onRerunCampaign?: (games: string[], sutIp: string, quality?: string, resolution?: string) => void;
+}
+
+function CampaignGroup({ group, isExpanded, onToggle, onRerun, onRerunCampaign }: CampaignGroupProps) {
+  const latestRun = group.runs[group.runs.length - 1];
+  const timeAgo = latestRun?.started_at ? getTimeAgo(new Date(latestRun.started_at)) : '';
+  const ipShort = group.sutIp ? group.sutIp.split('.').slice(-1)[0] : '';
+
+  // Count successes/failures
+  const successCount = group.runs.filter(r => r.status === 'completed').length;
+  const failCount = group.runs.filter(r => r.status === 'failed').length;
+  const allSuccess = failCount === 0 && successCount > 0;
+
+  // Get preset from first run (campaigns use same preset for all)
+  const presetShort = latestRun?.quality && latestRun?.resolution
+    ? `${latestRun.quality[0]}@${latestRun.resolution.replace('p', '')}`
+    : null;
+
+  // Handler for rerunning campaign
+  const handleRerunCampaign = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onRerunCampaign && group.sutIp) {
+      const games = group.runs.map(r => r.game_name);
+      onRerunCampaign(games, group.sutIp, latestRun?.quality ?? undefined, latestRun?.resolution ?? undefined);
+    }
+  };
+
+  return (
+    <div className="space-y-0.5">
+      {/* Campaign Header Row */}
+      <div
+        className="flex items-center gap-2 py-1.5 px-2 rounded bg-surface-elevated/70 cursor-pointer hover:bg-surface-elevated transition-colors"
+        onClick={onToggle}
+      >
+        {/* Expand/Collapse indicator */}
+        <span className="w-2 flex-shrink-0 text-text-muted">
+          <svg
+            className={`w-2 h-2 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+            fill="currentColor"
+            viewBox="0 0 8 8"
+          >
+            <path d="M2 1l4 3-4 3V1z" />
+          </svg>
+        </span>
+
+        {/* Status indicator (aggregate) */}
+        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${allSuccess ? 'bg-success' : 'bg-warning'}`} />
+
+        {/* Campaign name */}
+        <span className="text-xs text-text-primary font-medium truncate flex-1 min-w-0">
+          📦 {group.campaignName}
+          <span className="text-text-muted font-normal ml-1">
+            ({successCount}/{group.runs.length})
+          </span>
+        </span>
+
+        {/* Preset badge */}
+        <span className="w-14 text-center flex-shrink-0">
+          {presetShort ? (
+            <span className="text-[9px] px-1 py-0.5 bg-surface-elevated text-text-muted rounded font-mono">
+              {presetShort}
+            </span>
+          ) : (
+            <span className="text-[9px] text-text-muted">-</span>
+          )}
+        </span>
+
+        {/* Games count instead of iterations */}
+        <span className="w-8 text-center flex-shrink-0 text-[10px] text-text-muted font-mono">
+          ×{group.runs.length}
+        </span>
+
+        {/* SUT IP */}
+        <span className="w-10 text-center flex-shrink-0">
+          {ipShort ? (
+            <span className="text-[10px] text-text-muted font-mono">.{ipShort}</span>
+          ) : (
+            <span className="text-[9px] text-text-muted">-</span>
+          )}
+        </span>
+
+        {/* Time ago */}
+        <span className="text-xs text-text-muted font-numbers flex-shrink-0 w-8 text-right">
+          {timeAgo}
+        </span>
+
+        {/* Actions: Rerun Campaign */}
+        <div className="w-8 flex items-center justify-center gap-0.5 flex-shrink-0">
+          {onRerunCampaign && group.sutIp && (
+            <button
+              onClick={handleRerunCampaign}
+              className="p-0.5 text-text-muted hover:text-success transition-colors"
+              title="Re-run this campaign"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Expanded: Individual runs indented */}
+      {isExpanded && (
+        <div className="ml-4 pl-2 border-l border-border/50 space-y-0.5">
+          {group.runs.map(run => (
+            <MiniRunItem key={run.run_id} run={run} onRerun={onRerun} compact />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * MiniRunItem - Compact run entry with game, preset, IP, and re-run button
  */
-function MiniRunItem({ run, onRerun }: { run: AutomationRun; onRerun?: (gameName: string, sutIp: string) => void }) {
+function MiniRunItem({ run, onRerun, compact = false }: { run: AutomationRun; onRerun?: (gameName: string, sutIp: string) => void; compact?: boolean }) {
   const isSuccess = run.status === 'completed';
   const timeAgo = run.started_at ? getTimeAgo(new Date(run.started_at)) : '';
   const ipShort = run.sut_ip ? run.sut_ip.split('.').slice(-1)[0] : '';
@@ -205,50 +467,56 @@ function MiniRunItem({ run, onRerun }: { run: AutomationRun; onRerun?: (gameName
     : null;
 
   return (
-    <div className="flex items-center gap-2 py-1.5 px-2 rounded bg-surface-elevated/50 group">
+    <div className={`flex items-center gap-2 py-1.5 px-2 rounded group ${compact ? 'bg-transparent' : 'bg-surface-elevated/50'}`}>
       {/* Status dot */}
       <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isSuccess ? 'bg-success' : 'bg-danger'}`} />
 
       {/* Game name */}
-      <span className="text-xs text-text-secondary truncate flex-1 min-w-0">
+      <span className={`text-xs truncate flex-1 min-w-0 ${compact ? 'text-text-muted' : 'text-text-secondary'}`}>
         {run.game_name}
       </span>
 
-      {/* Preset badge */}
-      <span className="w-14 text-center flex-shrink-0">
-        {presetShort ? (
-          <span
-            className="text-[9px] px-1 py-0.5 bg-surface-elevated text-text-muted rounded font-mono"
-            title={`${run.quality} @ ${run.resolution}`}
-          >
-            {presetShort}
-          </span>
-        ) : (
-          <span className="text-[9px] text-text-muted">-</span>
-        )}
-      </span>
+      {/* Preset badge - hide in compact mode (already shown in campaign header) */}
+      {!compact && (
+        <span className="w-14 text-center flex-shrink-0">
+          {presetShort ? (
+            <span
+              className="text-[9px] px-1 py-0.5 bg-surface-elevated text-text-muted rounded font-mono"
+              title={`${run.quality} @ ${run.resolution}`}
+            >
+              {presetShort}
+            </span>
+          ) : (
+            <span className="text-[9px] text-text-muted">-</span>
+          )}
+        </span>
+      )}
 
-      {/* Iterations */}
-      <span className="w-8 text-center flex-shrink-0 text-[10px] text-text-muted font-mono">
-        {run.iterations > 1 ? `×${run.iterations}` : '-'}
-      </span>
+      {/* Iterations - hide in compact mode */}
+      {!compact && (
+        <span className="w-8 text-center flex-shrink-0 text-[10px] text-text-muted font-mono">
+          {run.iterations > 1 ? `×${run.iterations}` : '-'}
+        </span>
+      )}
 
-      {/* SUT IP */}
-      <span className="w-10 text-center flex-shrink-0">
-        {ipShort ? (
-          <span className="text-[10px] text-text-muted font-mono">.{ipShort}</span>
-        ) : (
-          <span className="text-[9px] text-text-muted">-</span>
-        )}
-      </span>
+      {/* SUT IP - hide in compact mode (already shown in campaign header) */}
+      {!compact && (
+        <span className="w-10 text-center flex-shrink-0">
+          {ipShort ? (
+            <span className="text-[10px] text-text-muted font-mono">.{ipShort}</span>
+          ) : (
+            <span className="text-[9px] text-text-muted">-</span>
+          )}
+        </span>
+      )}
 
-      {/* Time ago */}
-      <span className="text-xs text-text-muted font-numbers flex-shrink-0 w-8 text-right">
+      {/* Time ago - smaller in compact mode */}
+      <span className={`text-text-muted font-numbers flex-shrink-0 text-right ${compact ? 'text-[10px] w-6' : 'text-xs w-8'}`}>
         {timeAgo}
       </span>
 
       {/* Actions: View + Re-run */}
-      <div className="w-8 flex items-center justify-center gap-0.5 flex-shrink-0">
+      <div className={`flex items-center justify-center gap-0.5 flex-shrink-0 ${compact ? 'w-6' : 'w-8'}`}>
         <Link
           to={`/runs?run=${run.run_id}`}
           className="p-0.5 text-text-muted hover:text-primary transition-colors"
@@ -259,7 +527,7 @@ function MiniRunItem({ run, onRerun }: { run: AutomationRun; onRerun?: (gameName
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
           </svg>
         </Link>
-        {onRerun && run.sut_ip && (
+        {!compact && onRerun && run.sut_ip && (
           <button
             onClick={() => onRerun(run.game_name, run.sut_ip)}
             className="p-0.5 text-text-muted hover:text-success transition-colors"

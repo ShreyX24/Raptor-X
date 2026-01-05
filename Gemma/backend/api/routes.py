@@ -219,6 +219,14 @@ class APIRoutes:
         def force_discovery_scan():
             """Force an immediate discovery scan"""
             try:
+                if self.use_external_discovery:
+                    # External mode - scan is handled by external SUT Discovery Service
+                    # SUTs register via WebSocket, no manual scan needed
+                    return jsonify({
+                        "status": "success",
+                        "mode": "external",
+                        "message": "Using external SUT Discovery Service - SUTs auto-register via WebSocket"
+                    })
                 scan_result = self.discovery_service.force_discovery_scan()
                 return jsonify({
                     "status": "success",
@@ -1255,6 +1263,11 @@ class APIRoutes:
                 # Fall back to timeline.json file in run directory
                 manifest = self.run_manager.storage.get_manifest(run_id)
                 if not manifest:
+                    # Try reloading history - run might have just completed
+                    self.run_manager.storage.load_run_history()
+                    manifest = self.run_manager.storage.get_manifest(run_id)
+
+                if not manifest:
                     return jsonify({"error": f"Run {run_id} not found"}), 404
 
                 run_dir = self.run_manager.storage.get_run_dir(run_id)
@@ -1279,6 +1292,92 @@ class APIRoutes:
 
             except Exception as e:
                 logger.error(f"Error getting timeline for run {run_id}: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/runs/<run_id>/screenshots/<path:filename>', methods=['GET'])
+        def get_run_screenshot(run_id, filename):
+            """Get a screenshot file from a run's screenshots directory"""
+            try:
+                from pathlib import Path
+
+                if not hasattr(self, 'run_manager') or self.run_manager is None:
+                    return jsonify({"error": "Run manager not initialized"}), 500
+
+                storage = self.run_manager.storage
+                if not storage:
+                    return jsonify({"error": "Storage manager not initialized"}), 500
+
+                # Get the run directory
+                run_dir = storage.get_run_dir(run_id)
+                if not run_dir:
+                    # Try loading from history if not in cache
+                    storage.load_run_history()
+                    run_dir = storage.get_run_dir(run_id)
+
+                if not run_dir:
+                    return jsonify({"error": f"Run {run_id} not found"}), 404
+
+                if not run_dir.exists():
+                    return jsonify({"error": f"Run directory not found: {run_dir}"}), 404
+
+                # Screenshots can be in iteration subdirectories (perf-run-1, perf-run-2, etc.)
+                # First, try to find the file directly in the requested path
+                # Expected format: step_{N}.png -> look for screenshot_{N}.png
+
+                # Map URL filename to actual filename
+                # URL: step_1.png -> File: screenshot_1.png
+                actual_filename = filename
+                if filename.startswith('step_'):
+                    # Convert step_N.png to screenshot_N.png
+                    step_num = filename.replace('step_', '').replace('.png', '')
+                    actual_filename = f"screenshot_{step_num}.png"
+
+                # Search in iteration directories for the screenshot
+                screenshot_path = None
+
+                # Check each perf-run-N directory
+                for iter_dir in sorted(run_dir.glob('perf-run-*')):
+                    candidate = iter_dir / 'screenshots' / actual_filename
+                    if candidate.exists():
+                        screenshot_path = candidate
+                        break
+                    # Also check with original filename in case it matches
+                    candidate2 = iter_dir / 'screenshots' / filename
+                    if candidate2.exists():
+                        screenshot_path = candidate2
+                        break
+
+                # Also check trace-run if exists
+                if not screenshot_path:
+                    trace_dir = run_dir / 'trace-run' / 'screenshots'
+                    if trace_dir.exists():
+                        candidate = trace_dir / actual_filename
+                        if candidate.exists():
+                            screenshot_path = candidate
+                        candidate2 = trace_dir / filename
+                        if candidate2.exists():
+                            screenshot_path = candidate2
+
+                # Fallback: check root screenshots directory (old structure)
+                if not screenshot_path:
+                    root_screenshots = run_dir / 'screenshots'
+                    if root_screenshots.exists():
+                        candidate = root_screenshots / actual_filename
+                        if candidate.exists():
+                            screenshot_path = candidate
+                        candidate2 = root_screenshots / filename
+                        if candidate2.exists():
+                            screenshot_path = candidate2
+
+                if not screenshot_path or not screenshot_path.exists():
+                    logger.warning(f"Screenshot not found: {filename} (tried {actual_filename}) in run {run_id}")
+                    return jsonify({"error": f"Screenshot {filename} not found"}), 404
+
+                logger.debug(f"Serving screenshot: {screenshot_path}")
+                return send_file(str(screenshot_path), mimetype='image/png')
+
+            except Exception as e:
+                logger.error(f"Error getting screenshot {filename} for run {run_id}: {e}")
                 return jsonify({"error": str(e)}), 500
 
         @app.route('/api/runs/stats', methods=['GET'])

@@ -2,7 +2,7 @@
  * OmniParserSettings - OmniParser configuration tab
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { adminApi } from '../../api/adminApi';
 import { useToast } from '../../contexts/ToastContext';
 import type { OmniParserSettings as OmniParserSettingsType, OmniParserServer } from '../../types/admin';

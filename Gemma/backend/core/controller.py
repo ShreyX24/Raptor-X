@@ -331,10 +331,13 @@ class BackendController:
             'run_id': run_id,
             'run': run_data
         })
-        
+
         # Emit updated runs data
         runs_data = self.run_manager.get_all_runs()
         self.websocket_handler.broadcast_message('runs_update', runs_data)
+
+        # Check if this run is part of a campaign and update campaign status
+        self._check_campaign_completion(run_id, run_data)
     
     def _on_run_failed(self, run_id: str, run_data: Dict[str, Any]):
         """Callback when a run fails"""
@@ -373,6 +376,50 @@ class BackendController:
         # Emit updated runs data
         runs_data = self.run_manager.get_all_runs()
         self.websocket_handler.broadcast_message('runs_update', runs_data)
+
+        # Check if this run is part of a campaign and update campaign status
+        self._check_campaign_completion(run_id, run_data)
+
+    def _check_campaign_completion(self, run_id: str, run_data: Dict[str, Any]):
+        """Check if a campaign is completed after a run finishes"""
+        try:
+            campaign_id = run_data.get('campaign_id')
+            if not campaign_id:
+                return
+
+            if not hasattr(self, 'campaign_manager') or not self.campaign_manager:
+                return
+
+            campaign = self.campaign_manager.get_campaign(campaign_id)
+            if not campaign:
+                # Campaign might already be in history
+                return
+
+            # Update campaign manifest on disk with run_ids
+            if hasattr(self.run_manager, 'storage') and self.run_manager.storage:
+                self.run_manager.storage.update_campaign_manifest(
+                    campaign_id,
+                    run_ids=campaign.run_ids,
+                    status=campaign.status.value,
+                    completed_at=campaign.completed_at.isoformat() if campaign.completed_at else None
+                )
+
+            # Broadcast campaign update
+            self.websocket_handler.broadcast_message('campaign_updated', {
+                'campaign_id': campaign_id,
+                'campaign': campaign.to_dict()
+            })
+
+            # If campaign is done, broadcast completion
+            if campaign.status.value in ['completed', 'failed', 'partially_completed']:
+                logger.info(f"Campaign {campaign_id[:8]} finished with status: {campaign.status.value}")
+                self.websocket_handler.broadcast_message('campaign_completed', {
+                    'campaign_id': campaign_id,
+                    'campaign': campaign.to_dict()
+                })
+
+        except Exception as e:
+            logger.error(f"Error checking campaign completion: {e}")
 
     def _on_step_started(self, run_id: str, step_data: Dict[str, Any]):
         """Callback when an automation step starts"""

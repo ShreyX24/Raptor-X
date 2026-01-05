@@ -218,38 +218,52 @@ class NetworkManager:
             logger.error(f"Failed to get screenshot: {str(e)}")
             raise
 
-    def focus_game(self, minimize_others: bool = False) -> bool:
+    def focus_game(self, minimize_others: bool = False, retries: int = 2) -> bool:
         """
         Focus the game window on the SUT to ensure it's in foreground.
         Should be called before each automation step to prevent focus loss.
 
         Args:
             minimize_others: If True, also minimize other windows on SUT
+            retries: Number of retry attempts on timeout (default: 2)
 
         Returns:
             True if focus was successful, False otherwise
         """
-        try:
-            response = self.session.post(
-                f"{self.base_url}/focus",
-                json={"minimize_others": minimize_others},
-                timeout=5
-            )
-            result = response.json()
-            status = result.get("status", "error")
+        import time
 
-            if status == "success":
-                logger.debug(f"Game window focused: {result.get('message')}")
-                return True
-            elif status == "warning":
-                logger.warning(f"Focus warning: {result.get('message')}")
-                return True  # Proceed anyway
-            else:
-                logger.warning(f"Could not focus game: {result.get('message')}")
+        for attempt in range(retries + 1):
+            try:
+                # Increased timeout from 5s to 15s for heavy games like RDR2, BMW
+                response = self.session.post(
+                    f"{self.base_url}/focus",
+                    json={"minimize_others": minimize_others},
+                    timeout=15
+                )
+                result = response.json()
+                status = result.get("status", "error")
+
+                if status == "success":
+                    logger.debug(f"Game window focused: {result.get('message')}")
+                    return True
+                elif status == "warning":
+                    logger.warning(f"Focus warning: {result.get('message')}")
+                    return True  # Proceed anyway
+                else:
+                    logger.warning(f"Could not focus game: {result.get('message')}")
+                    return False
+            except requests.exceptions.Timeout as e:
+                if attempt < retries:
+                    logger.warning(f"Focus request timed out (attempt {attempt + 1}/{retries + 1}), retrying...")
+                    time.sleep(2)
+                else:
+                    logger.warning(f"Focus request timed out after {retries + 1} attempts")
+                    return False
+            except requests.RequestException as e:
+                logger.warning(f"Focus request failed (game may not be running): {e}")
                 return False
-        except requests.RequestException as e:
-            logger.warning(f"Focus request failed (game may not be running): {e}")
-            return False
+
+        return False
 
     def launch_game(self, game_path: str, process_id: str = '', startup_wait: int = 15, launch_args: str = None) -> Dict[str, Any]:
         """

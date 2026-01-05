@@ -8,7 +8,6 @@ import { useToast } from '../../contexts/ToastContext';
 import type { ServiceWithStatus, ServiceSettings } from '../../types/admin';
 import {
   RefreshCw,
-  Play,
   Settings2,
   CheckCircle,
   XCircle,
@@ -245,11 +244,9 @@ export function ServiceConfigTab({
   services,
   loading,
   onRefresh,
-  onUnsavedChange,
+  onUnsavedChange: _onUnsavedChange,
   onSaved,
 }: ServiceConfigTabProps) {
-  const toast = useToast();
-
   const handleUpdate = useCallback(async (name: string, settings: Partial<ServiceSettings>) => {
     await adminApi.updateService(name, settings);
     onSaved();

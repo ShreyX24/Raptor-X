@@ -11,9 +11,10 @@ interface UseServiceHealthResult {
   refetch: () => Promise<void>;
 }
 
-const DISCOVERY_SERVICE_URL = 'http://localhost:5001';
-const QUEUE_SERVICE_URL = 'http://localhost:9000';
-const PRESET_MANAGER_URL = 'http://localhost:5002';
+// Use proxy paths for cross-device compatibility (mobile, desktop)
+const DISCOVERY_SERVICE_URL = '/discovery-health';
+const QUEUE_SERVICE_URL = '/queue-api';
+const PRESET_MANAGER_URL = '/preset-api';
 
 async function checkServiceHealth(
   name: string,

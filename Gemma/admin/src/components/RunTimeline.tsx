@@ -87,6 +87,7 @@ interface RunTimelineProps {
   compact?: boolean;
   runStatus?: string;  // Overall run status - used to adjust event display for completed/failed runs
   filterIteration?: number;  // Filter to show only events from a specific iteration (1-indexed)
+  previousGameName?: string;  // For queued runs in campaigns - shows "Awaiting X completion"
 }
 
 // Status colors
@@ -363,12 +364,30 @@ function getEventIteration(event: TimelineEvent): number | null {
   return null;
 }
 
-export function RunTimeline({ runId, pollInterval = 2000, compact = false, runStatus, filterIteration }: RunTimelineProps) {
+export function RunTimeline({ runId, pollInterval = 2000, compact = false, runStatus, filterIteration, previousGameName }: RunTimelineProps) {
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<TimelineEvent | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // For queued runs, show "Awaiting X completion" instead of fetching timeline
+  if (runStatus === 'queued') {
+    const waitingMessage = previousGameName
+      ? `Awaiting ${previousGameName} completion`
+      : 'Waiting in queue...';
+
+    return (
+      <div className="flex items-center justify-center py-6">
+        <div className="flex items-center gap-3 text-warning">
+          <svg className="w-5 h-5 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span className="text-sm font-medium">{waitingMessage}</span>
+        </div>
+      </div>
+    );
+  }
 
   // Adjust event status based on overall run status
   // When a run has failed/completed, in_progress events should reflect that
