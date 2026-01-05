@@ -112,7 +112,8 @@ class BackendController:
             self.game_manager,
             self.device_registry,
             self.omniparser_client,
-            discovery_client=self.discovery_client if self.use_external_discovery else None
+            discovery_client=self.discovery_client if self.use_external_discovery else None,
+            websocket_handler=self.websocket_handler
         )
         self.run_manager = RunManager(
             max_concurrent_runs=5,
