@@ -2,8 +2,13 @@
 metadata:
   game_name: "Final Fantasy XIV: Dawntrail"
   preset_id: final-fantasy-xiv-dawntrail  # Maps to preset-manager folder name
-  # ORIGINAL: path: "C:\\Users\\Administrator\\Downloads\\ffxiv-dawntrail-bench_v11\\ffxiv-dawntrail-bench.exe"  # path may vary as its not steam game
-  path: "D:\\Games\\ffxiv-dawntrail-bench_v11\\ffxiv-dawntrail-bench.exe"  # TEMP: Updated to D: drive (non-Steam game)
+  # Standalone game - search multiple locations
+  standalone: true
+  folder_names:
+    - "ffxiv-dawntrail-bench_v11"
+    - "ffxiv-dawntrail-bench"
+    - "FFXIV Dawntrail Benchmark"
+  exe_name: "ffxiv-dawntrail-bench.exe"
   process_id: "ffxiv_dx11.exe"
   version: "1.0"
   benchmark_duration: 400

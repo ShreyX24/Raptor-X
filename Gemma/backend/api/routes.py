@@ -767,6 +767,29 @@ class APIRoutes:
                                     "match_method": "name"
                                 })
 
+                    # PRIORITY 2.5: Match standalone games by folder_names from config
+                    folder_names = []
+                    if hasattr(game_config, 'metadata') and game_config.metadata:
+                        folder_names = game_config.metadata.get('folder_names', [])
+
+                    if folder_names:
+                        for game in installed_games:
+                            installed_name = game.get("name", "").lower()
+                            install_dir = game.get("install_dir", "").lower()
+                            for folder_name in folder_names:
+                                folder_lower = folder_name.lower()
+                                if folder_lower in installed_name or folder_lower == install_dir:
+                                    if game.get("exists", True):
+                                        logger.info(f"Game '{game_name}' available on SUT {sut_ip} via folder_name match: {folder_name}")
+                                        return jsonify({
+                                            "available": True,
+                                            "game_name": game.get("name", game_name),
+                                            "steam_app_id": game.get("steam_app_id"),
+                                            "install_path": game.get("install_path"),
+                                            "sut_ip": sut_ip,
+                                            "match_method": "folder_name"
+                                        })
+
                     # PRIORITY 3: Fallback to preset-manager for abbreviation matching (e.g., ffxiv)
                     # Only do this if we have a preset_id to match against
                     import re
