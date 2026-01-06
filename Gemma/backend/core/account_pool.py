@@ -416,6 +416,37 @@ class AccountPoolManager:
         with self._allocation_lock:
             return {user: list(suts) for user, suts in self._externally_busy.items()}
 
+    def get_account_by_game_type(self, game_name: str) -> Optional[Tuple[str, str]]:
+        """
+        Get Steam account credentials based on game type (A-F or G-Z).
+
+        This method doesn't require per-SUT allocation - it's used when
+        account_scheduler has already granted access to the account TYPE.
+
+        Args:
+            game_name: Name of the game to get credentials for
+
+        Returns:
+            Tuple of (username, password) or None if no pairs configured
+        """
+        with self._allocation_lock:
+            if not self._pairs:
+                logger.warning("No Steam account pairs configured")
+                return None
+
+            # Use the first configured pair
+            pair = self._pairs[0]
+
+            # Determine which account to use based on first letter
+            first_letter = game_name[0].upper() if game_name else 'A'
+
+            if 'A' <= first_letter <= 'F':
+                logger.debug(f"Game '{game_name}' ({first_letter}) -> A-F account: {pair.af_username}")
+                return (pair.af_username, pair.af_password)
+            else:
+                logger.debug(f"Game '{game_name}' ({first_letter}) -> G-Z account: {pair.gz_username}")
+                return (pair.gz_username, pair.gz_password)
+
 
 # Convenience function
 def get_account_pool() -> AccountPoolManager:

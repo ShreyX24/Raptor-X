@@ -549,128 +549,121 @@ class AutomationOrchestrator:
             game_launcher = GameLauncher(network)
 
             # ===== Steam Account Login =====
-            # If an account pair was acquired, check if we need to switch accounts
+            # Get credentials - either from per-SUT allocation or directly by game type
+            # (for multi-SUT parallel mode where account_scheduler handles exclusivity)
             account_pool = get_account_pool()
             if account_pool.has_allocation(run.sut_ip):
                 credentials = account_pool.get_account_for_game(run.sut_ip, run.game_name)
-                if credentials:
-                    steam_username, steam_password = credentials
+            else:
+                # Fallback: get credentials by game type (A-F or G-Z)
+                # This supports multi-SUT parallel execution where account_scheduler
+                # already ensures only one SUT uses each account type at a time
+                credentials = account_pool.get_account_by_game_type(run.game_name)
 
-                    # Get configurable timeout from env var (default 180s for slow connections)
-                    steam_login_timeout = int(os.environ.get("STEAM_LOGIN_TIMEOUT", "180"))
+            if credentials:
+                steam_username, steam_password = credentials
 
-                    def attempt_steam_login(username: str, password: str) -> dict:
-                        """Attempt Steam login and return result dict"""
-                        try:
-                            return network.login_steam(username, password, timeout=steam_login_timeout)
-                        except Exception as e:
-                            logger.warning(f"Steam login request failed: {e}")
-                            return {'success': False, 'status': 'error', 'message': str(e)}
+                # Get configurable timeout from env var (default 180s for slow connections)
+                steam_login_timeout = int(os.environ.get("STEAM_LOGIN_TIMEOUT", "180"))
 
-                    def handle_steam_login_with_retry(initial_username: str, initial_password: str) -> bool:
-                        """
-                        Handle Steam login with automatic retry using alternative account if conflict detected.
+                def attempt_steam_login(username: str, password: str) -> dict:
+                    """Attempt Steam login and return result dict"""
+                    try:
+                        return network.login_steam(username, password, timeout=steam_login_timeout)
+                    except Exception as e:
+                        logger.warning(f"Steam login request failed: {e}")
+                        return {'success': False, 'status': 'error', 'message': str(e)}
 
-                        Returns True if login succeeded, False if failed (after retries).
-                        """
-                        username, password = initial_username, initial_password
+                def handle_steam_login_with_retry(initial_username: str, initial_password: str) -> bool:
+                    """
+                    Handle Steam login with automatic retry using alternative account if conflict detected.
 
-                        # First attempt
+                    Returns True if login succeeded, False if failed (after retries).
+                    """
+                    username, password = initial_username, initial_password
+
+                    # First attempt
+                    if timeline:
+                        timeline.info(f"Steam: Logging in as {username}")
+                    logger.info(f"Attempting Steam login for: {username}")
+
+                    login_result = attempt_steam_login(username, password)
+
+                    if login_result.get('success'):
                         if timeline:
-                            timeline.info(f"Steam: Logging in as {username}")
-                        logger.info(f"Attempting Steam login for: {username}")
+                            timeline.info(f"Steam login successful: {username}")
+                        logger.info(f"Steam login completed for {username}")
+                        # Clear any previous externally busy status for this account
+                        account_pool.clear_externally_busy(username)
+                        return True
 
-                        login_result = attempt_steam_login(username, password)
+                    elif login_result.get('status') == 'conflict':
+                        # Account is in use on another device - try alternative
+                        if timeline:
+                            timeline.steam_account_busy(username, run.game_name)
+                        logger.warning(f"Steam account '{username}' is in use on another device")
 
-                        if login_result.get('success'):
+                        # Mark this account as externally busy
+                        account_pool.mark_account_externally_busy(run.sut_ip, username, run.game_name)
+
+                        # Try to get an alternative account
+                        logger.info(f"Looking for alternative Steam account for SUT {run.sut_ip}")
+
+                        alternative = account_pool.try_alternative_account(run.sut_ip, run.game_name)
+
+                        if alternative:
+                            alt_username, alt_password = alternative
                             if timeline:
-                                timeline.info(f"Steam login successful: {username}")
-                            logger.info(f"Steam login completed for {username}")
-                            # Clear any previous externally busy status for this account
-                            account_pool.clear_externally_busy(username)
-                            return True
+                                timeline.steam_account_switching(username, alt_username)
+                            logger.info(f"Trying alternative Steam account: {alt_username}")
 
-                        elif login_result.get('status') == 'conflict':
-                            # Account is in use on another device - try alternative
-                            if timeline:
-                                timeline.steam_account_busy(username, run.game_name)
-                            logger.warning(f"Steam account '{username}' is in use on another device")
+                            # Retry with alternative account
+                            alt_result = attempt_steam_login(alt_username, alt_password)
 
-                            # Mark this account as externally busy
-                            account_pool.mark_account_externally_busy(run.sut_ip, username, run.game_name)
-
-                            # Try to get an alternative account
-                            logger.info(f"Looking for alternative Steam account for SUT {run.sut_ip}")
-
-                            alternative = account_pool.try_alternative_account(run.sut_ip, run.game_name)
-
-                            if alternative:
-                                alt_username, alt_password = alternative
+                            if alt_result.get('success'):
                                 if timeline:
-                                    timeline.steam_account_switching(username, alt_username)
-                                logger.info(f"Trying alternative Steam account: {alt_username}")
-
-                                # Retry with alternative account
-                                alt_result = attempt_steam_login(alt_username, alt_password)
-
-                                if alt_result.get('success'):
-                                    if timeline:
-                                        timeline.info(f"Steam login successful with alternative: {alt_username}")
-                                    logger.info(f"Steam login completed with alternative account: {alt_username}")
-                                    account_pool.clear_externally_busy(alt_username)
-                                    return True
-                                elif alt_result.get('status') == 'conflict':
-                                    # Alternative also in use - fail
-                                    if timeline:
-                                        timeline.error(f"Alternative account '{alt_username}' also in use on another device!")
-                                    logger.error(f"Alternative account '{alt_username}' also in use elsewhere")
-                                    account_pool.mark_account_externally_busy(run.sut_ip, alt_username, run.game_name)
-                                    return False
-                                else:
-                                    if timeline:
-                                        timeline.warning(f"Alternative account login failed: {alt_result.get('message', 'unknown')}")
-                                    logger.warning(f"Alternative Steam login failed: {alt_result.get('message')}")
-                                    return False
+                                    timeline.info(f"Steam login successful with alternative: {alt_username}")
+                                logger.info(f"Steam login completed with alternative account: {alt_username}")
+                                account_pool.clear_externally_busy(alt_username)
+                                return True
+                            elif alt_result.get('status') == 'conflict':
+                                # Alternative also in use - fail
+                                if timeline:
+                                    timeline.error(f"Alternative account '{alt_username}' also in use on another device!")
+                                logger.error(f"Alternative account '{alt_username}' also in use elsewhere")
+                                account_pool.mark_account_externally_busy(run.sut_ip, alt_username, run.game_name)
+                                return False
                             else:
-                                # No alternative accounts available
                                 if timeline:
-                                    timeline.steam_no_accounts(run.game_name)
-                                logger.error("No alternative Steam account pairs available")
+                                    timeline.warning(f"Alternative account login failed: {alt_result.get('message', 'unknown')}")
+                                logger.warning(f"Alternative Steam login failed: {alt_result.get('message')}")
                                 return False
                         else:
-                            # Other login failure (timeout, etc.)
+                            # No alternative accounts available
                             if timeline:
-                                timeline.warning(f"Steam login failed: {login_result.get('message', 'unknown')}")
-                            logger.warning(f"Steam login failed for {username}: {login_result.get('message')}")
+                                timeline.steam_no_accounts(run.game_name)
+                            logger.error("No alternative Steam account pairs available")
                             return False
-
-                    # Check current logged-in Steam user before attempting login
-                    current_steam = network.get_current_steam_user()
-                    if current_steam and current_steam.get("logged_in"):
-                        current_user = current_steam.get("username", "").lower()
-                        if current_user == steam_username.lower():
-                            if timeline:
-                                timeline.info(f"Steam: Already logged in as {steam_username}")
-                            logger.info(f"Steam already logged in as {steam_username}, skipping login")
-                        else:
-                            # Different user logged in - need to switch
-                            if timeline:
-                                timeline.info(f"Steam: Need to switch from {current_user} to {steam_username}")
-                            logger.info(f"Switching Steam account from {current_user} to {steam_username}")
-
-                            login_success = handle_steam_login_with_retry(steam_username, steam_password)
-                            if not login_success:
-                                # Steam login failed and no alternatives - fail the iteration
-                                error_msg = f"Steam login failed: All accounts in use or unavailable"
-                                if timeline:
-                                    timeline.error(error_msg)
-                                logger.error(error_msg)
-                                if self.storage:
-                                    self.storage.complete_iteration(run.run_id, iteration_num, success=False, error_message=error_msg)
-                                return False
                     else:
-                        # No user logged in or Steam not running - login
-                        logger.info(f"Steam not logged in, initiating login for: {steam_username}")
+                        # Other login failure (timeout, etc.)
+                        if timeline:
+                            timeline.warning(f"Steam login failed: {login_result.get('message', 'unknown')}")
+                        logger.warning(f"Steam login failed for {username}: {login_result.get('message')}")
+                        return False
+
+                # Check current logged-in Steam user before attempting login
+                current_steam = network.get_current_steam_user()
+                if current_steam and current_steam.get("logged_in"):
+                    current_user = current_steam.get("username", "").lower()
+                    if current_user == steam_username.lower():
+                        if timeline:
+                            timeline.info(f"Steam: Already logged in as {steam_username}")
+                        logger.info(f"Steam already logged in as {steam_username}, skipping login")
+                    else:
+                        # Different user logged in - need to switch
+                        if timeline:
+                            timeline.info(f"Steam: Need to switch from {current_user} to {steam_username}")
+                        logger.info(f"Switching Steam account from {current_user} to {steam_username}")
 
                         login_success = handle_steam_login_with_retry(steam_username, steam_password)
                         if not login_success:
@@ -681,9 +674,23 @@ class AutomationOrchestrator:
                             logger.error(error_msg)
                             if self.storage:
                                 self.storage.complete_iteration(run.run_id, iteration_num, success=False, error_message=error_msg)
-                            return False
+                            return False, None, False
                 else:
-                    logger.debug(f"No credentials returned for SUT {run.sut_ip}, using existing Steam session")
+                    # No user logged in or Steam not running - login
+                    logger.info(f"Steam not logged in, initiating login for: {steam_username}")
+
+                    login_success = handle_steam_login_with_retry(steam_username, steam_password)
+                    if not login_success:
+                        # Steam login failed and no alternatives - fail the iteration
+                        error_msg = f"Steam login failed: All accounts in use or unavailable"
+                        if timeline:
+                            timeline.error(error_msg)
+                        logger.error(error_msg)
+                        if self.storage:
+                            self.storage.complete_iteration(run.run_id, iteration_num, success=False, error_message=error_msg)
+                        return False, None, False
+            else:
+                logger.debug(f"No credentials returned for SUT {run.sut_ip}, using existing Steam session")
 
             # Use the run's stop_event (created in execute_run) so stop_run() can interrupt us
             # This is critical - if we create a new one here, stop_run() can't cancel us!

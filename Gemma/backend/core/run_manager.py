@@ -476,6 +476,15 @@ class RunManager:
                         run.stop_event.set()
                         logger.info(f"Set stop_event for run {run_id}")
 
+                    # Release the Steam account lock so other runs can use it
+                    self.account_scheduler.release(run.sut_ip, run.game_name)
+                    logger.info(f"Released account for stopped run {run_id}")
+
+                    # Release the SUT lock so other runs can use this SUT
+                    if self._sut_current_run.get(run.sut_ip) == run_id:
+                        del self._sut_current_run[run.sut_ip]
+                        logger.info(f"Released SUT {run.sut_ip} lock for stopped run")
+
                     # Emit timeline event so frontend shows "User cancelled"
                     if run.timeline:
                         try:
@@ -491,6 +500,9 @@ class RunManager:
                     run.status = RunStatus.STOPPED
                     run.error_message = "Cancelled before starting"
                     run.progress.end_time = datetime.now()
+
+                    # Release account lock if somehow acquired while queued
+                    self.account_scheduler.release(run.sut_ip, run.game_name)
 
                     # Move to history
                     self.run_history.insert(0, run)
@@ -754,41 +766,41 @@ class RunManager:
                     logger.info(f"Worker thread {worker_name} stopping")
                     break
 
+                # ATOMIC CHECK: Both SUT-busy and account checks must be atomic
+                # to prevent race conditions where two workers grab the same SUT
                 with self._lock:
                     if run_id not in self.active_runs:
                         continue
                     run = self.active_runs[run_id]
 
-                # Check 1: Is another run already executing on this SUT?
-                with self._lock:
+                    # Check 1: Is another run already executing on this SUT?
                     current_run_on_sut = self._sut_current_run.get(run.sut_ip)
                     if current_run_on_sut and current_run_on_sut != run_id:
-                        # SUT is busy, requeue this run
+                        # SUT is busy, requeue this run (always requeue to avoid losing runs)
                         if run_id not in requeued_runs:
                             logger.debug(f"SUT {run.sut_ip} busy with run {current_run_on_sut[:8]}, "
                                        f"requeueing {run_id[:8]} ({run.game_name})")
-                            self.run_queue.put(run_id)
                             requeued_runs.add(run_id)
+                        self.run_queue.put(run_id)  # Always put back in queue
                         continue
 
-                # Check 2: Can we acquire the Steam account for this game?
-                if not self.account_scheduler.try_acquire(run.sut_ip, run.game_name):
-                    # Account is held by another SUT, requeue this run
-                    if run_id not in requeued_runs:
-                        holder = self.account_scheduler.get_holder(run.game_name)
-                        account_type = self.account_scheduler.get_account_type(run.game_name).value.upper()
-                        logger.info(f"SUT {run.sut_ip} waiting for {account_type} account "
-                                  f"(held by {holder}), requeueing '{run.game_name}'")
-                        self.run_queue.put(run_id)
-                        requeued_runs.add(run_id)
-                    time.sleep(0.5)  # Brief delay before retrying
-                    continue
+                    # Check 2: Can we acquire the Steam account for this game?
+                    if not self.account_scheduler.try_acquire(run.sut_ip, run.game_name):
+                        # Account is held by another SUT, requeue this run (always requeue)
+                        if run_id not in requeued_runs:
+                            holder = self.account_scheduler.get_holder(run.game_name)
+                            account_type = self.account_scheduler.get_account_type(run.game_name).value.upper()
+                            logger.info(f"SUT {run.sut_ip} waiting for {account_type} account "
+                                      f"(held by {holder}), requeueing '{run.game_name}'")
+                            requeued_runs.add(run_id)
+                        self.run_queue.put(run_id)  # Always put back in queue
+                        continue
 
-                # Account acquired! Mark this SUT as busy and execute
-                requeued_runs.discard(run_id)
-                with self._lock:
+                    # BOTH checks passed - atomically mark SUT as busy BEFORE releasing lock
                     self._sut_current_run[run.sut_ip] = run_id
+                    requeued_runs.discard(run_id)
 
+                # Now outside lock - log and execute
                 account_type = self.account_scheduler.get_account_type(run.game_name).value.upper()
                 logger.info(f"Worker {worker_name} executing {run.game_name} on {run.sut_ip} "
                           f"(account: {account_type})")
