@@ -9,7 +9,7 @@ echo.
 :: Configuration
 set REPO_URL=https://github.com/ShreyX24/RP-X-temp.git
 set REPO_NAME=RPX
-set WEIGHTS_URL=https://drive.google.com/uc?export=download^&id=1Otyc6swsZkzNyDHdPvPIXbyCky6QhNkg^&confirm=t
+set GDRIVE_FILE_ID=1Otyc6swsZkzNyDHdPvPIXbyCky6QhNkg
 set WEIGHTS_FILE=weights.zip
 
 :: Check if we're already inside RPX directory
@@ -71,22 +71,55 @@ if exist "Omniparser server\weights\icon_detect\model.pt" (
 
     cd "Omniparser server"
 
-    :: Try curl first
-    curl -L -o "%WEIGHTS_FILE%" "%WEIGHTS_URL%"
-    if errorlevel 1 (
-        echo [WARNING] curl failed, trying PowerShell...
-        powershell -Command "Invoke-WebRequest -Uri '%WEIGHTS_URL%' -OutFile '%WEIGHTS_FILE%'"
+    :: Google Drive large file download requires two steps:
+    :: 1. First request gets a warning page with UUID
+    :: 2. Second request uses UUID to download actual file
+
+    echo Step 1: Getting download token...
+    curl -s -L -c gdrive_cookies.txt "https://drive.google.com/uc?export=download&id=%GDRIVE_FILE_ID%" -o gdrive_warning.html
+
+    :: Extract UUID from the warning page
+    for /f "tokens=2 delims==" %%a in ('findstr /i "uuid" gdrive_warning.html 2^>nul') do (
+        set "UUID_RAW=%%a"
+    )
+    :: Clean up UUID (remove quotes and ampersand suffix)
+    if defined UUID_RAW (
+        for /f "tokens=1 delims=&" %%b in ("!UUID_RAW!") do set "UUID=%%~b"
     )
 
-    if exist "%WEIGHTS_FILE%" (
-        echo Extracting weights...
-        powershell -Command "Expand-Archive -Path '%WEIGHTS_FILE%' -DestinationPath '.' -Force"
-        del "%WEIGHTS_FILE%"
-        echo [OK] Weights downloaded and extracted
+    if defined UUID (
+        echo Step 2: Downloading with token...
+        curl -L -b gdrive_cookies.txt -o "%WEIGHTS_FILE%" "https://drive.usercontent.google.com/download?id=%GDRIVE_FILE_ID%&export=download&confirm=t&uuid=!UUID!"
     ) else (
+        :: Fallback: try direct download with confirm=t
+        echo Step 2: Trying direct download...
+        curl -L -b gdrive_cookies.txt -o "%WEIGHTS_FILE%" "https://drive.usercontent.google.com/download?id=%GDRIVE_FILE_ID%&export=download&confirm=t"
+    )
+
+    :: Cleanup temp files
+    del gdrive_cookies.txt 2>nul
+    del gdrive_warning.html 2>nul
+
+    if exist "%WEIGHTS_FILE%" (
+        :: Check file size (should be > 100MB for valid download)
+        for %%F in ("%WEIGHTS_FILE%") do set FILESIZE=%%~zF
+        if !FILESIZE! GTR 100000000 (
+            echo Extracting weights...
+            powershell -Command "Expand-Archive -Path '%WEIGHTS_FILE%' -DestinationPath '.' -Force"
+            del "%WEIGHTS_FILE%"
+            echo [OK] Weights downloaded and extracted
+        ) else (
+            echo [WARNING] Downloaded file too small, may be HTML error page
+            del "%WEIGHTS_FILE%"
+            goto :manual_download
+        )
+    ) else (
+        :manual_download
         echo [WARNING] Failed to download weights
         echo Please download manually from:
-        echo https://drive.google.com/file/d/1Otyc6swsZkzNyDHdPvPIXbyCky6QhNkg/view
+        echo https://drive.google.com/file/d/%GDRIVE_FILE_ID%/view
+        echo.
+        echo After downloading, extract weights.zip into "Omniparser server" folder
     )
     cd ..
 )
