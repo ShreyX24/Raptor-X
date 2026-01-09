@@ -197,6 +197,6 @@ echo ============================================
 echo   Setup Complete!
 echo ============================================
 echo.
-echo [7/7] Launching Service Manager...
+echo To start RPX, double-click: start-rpx.bat
 echo.
-gemma-manager
+pause
