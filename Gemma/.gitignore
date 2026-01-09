@@ -25,6 +25,11 @@ venv/
 env/
 ENV/
 
+# Node
+node_modules/
+.npm/
+*.tsbuildinfo
+
 # IDE
 .idea/
 .vscode/
