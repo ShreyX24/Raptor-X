@@ -555,6 +555,7 @@ class AutomationOrchestrator:
                     timeline.info("Steam login skipped (manual login mode)")
                 logger.info("Skipping Steam login - user pre-logged in manually on SUT")
                 credentials = None  # No credentials needed
+                account_pool = None  # No account pool needed for manual login
             else:
                 # Get credentials - either from per-SUT allocation or directly by game type
                 # (for multi-SUT parallel mode where account_scheduler handles exclusivity)
