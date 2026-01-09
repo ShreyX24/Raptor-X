@@ -89,6 +89,30 @@ class SimpleAutomation:
         except Exception as e:
             logger.warning(f"Could not determine SUT resolution: {e}")
 
+    def _is_game_running(self) -> bool:
+        """Check if the game process is still running on the SUT.
+
+        Returns:
+            True if game is running, False if game was closed/crashed
+        """
+        if not self.process_id:
+            # No process tracking, assume game is running
+            return True
+
+        try:
+            status = self.network.get_sut_status()
+            game_info = status.get("game", {})
+            is_running = game_info.get("running", False)
+
+            if not is_running:
+                logger.warning(f"Game process '{self.process_id}' is no longer running on SUT")
+
+            return is_running
+        except Exception as e:
+            logger.warning(f"Could not check game status: {e}")
+            # Assume game is still running if we can't check
+            return True
+
     def _save_successful_ocr_configs(self):
         """Save successful OCR configs to file for future reference."""
         if self.successful_ocr_configs:
@@ -180,6 +204,13 @@ class SimpleAutomation:
                 logger.info("Stop event detected, ending automation")
                 break
 
+            # Check if game process is still running (fail fast on game closure)
+            if not self._is_game_running():
+                logger.error(f"Game process is no longer running, failing automation")
+                if self.progress_callback and hasattr(self.progress_callback, 'on_step_complete'):
+                    self.progress_callback.on_step_complete(current_step, success=False, error_message="Game process terminated")
+                return False
+
             # Focus game window before each step to prevent focus loss
             # This is critical to prevent game from being minimized during automation
             try:
@@ -223,6 +254,12 @@ class SimpleAutomation:
                         return False
 
                     logger.info(f"Screenshot capture failed, waiting {self.retry_delay}s before retry...")
+                    # Check if game is still running before waiting
+                    if not self._is_game_running():
+                        logger.error("Game closed during retry, failing automation")
+                        if self.progress_callback and hasattr(self.progress_callback, 'on_step_complete'):
+                            self.progress_callback.on_step_complete(current_step, success=False, error_message="Game process terminated")
+                        return False
                     time.sleep(self.retry_delay)
                     continue
 
@@ -282,6 +319,12 @@ class SimpleAutomation:
                         return False
 
                     logger.info(f"UI element detection failed, waiting {self.retry_delay}s before retry...")
+                    # Check if game is still running before waiting
+                    if not self._is_game_running():
+                        logger.error("Game closed during retry, failing automation")
+                        if self.progress_callback and hasattr(self.progress_callback, 'on_step_complete'):
+                            self.progress_callback.on_step_complete(current_step, success=False, error_message="Game process terminated")
+                        return False
                     time.sleep(self.retry_delay)
                     continue
 
@@ -333,6 +376,12 @@ class SimpleAutomation:
                     
                     if not is_optional_step:
                          logger.info(f"Waiting {self.retry_delay}s before retry...")
+                         # Check if game is still running before waiting
+                         if not self._is_game_running():
+                             logger.error("Game closed during retry, failing automation")
+                             if self.progress_callback and hasattr(self.progress_callback, 'on_step_complete'):
+                                 self.progress_callback.on_step_complete(current_step, success=False, error_message="Game process terminated")
+                             return False
                          time.sleep(self.retry_delay)
 
                     self._execute_fallback()

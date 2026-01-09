@@ -148,6 +148,7 @@ export function QuickLaunchPanel({
   const [selectedQuality, setSelectedQuality] = useState<QualityLevel | null>(null);
   const [selectedResolution, setSelectedResolution] = useState<Resolution | null>(null);
   const [iterations, setIterations] = useState(1);
+  const [skipSteamLogin, setSkipSteamLogin] = useState(false);  // Manual login mode
 
   // Status
   const [launchState, setLaunchState] = useState<LaunchState>('idle');
@@ -352,7 +353,8 @@ export function QuickLaunchPanel({
           iterations,
           undefined, // auto-generate name
           selectedQuality || undefined,
-          selectedResolution || undefined
+          selectedResolution || undefined,
+          skipSteamLogin
         );
         setLaunchState('idle');
         onCampaignStarted?.(result.campaign_id);
@@ -363,7 +365,8 @@ export function QuickLaunchPanel({
           selectedGames[0].name,
           iterations,
           selectedQuality || undefined,
-          selectedResolution || undefined
+          selectedResolution || undefined,
+          skipSteamLogin
         );
         setLaunchState('idle');
         onRunStarted?.(result.run_id);
@@ -467,6 +470,29 @@ export function QuickLaunchPanel({
               onChange={(e) => setIterations(Math.max(1, parseInt(e.target.value) || 1))}
               className="w-full px-2 py-1.5 text-sm bg-surface-elevated border border-border rounded text-center"
             />
+          </div>
+
+          {/* Skip Steam Login toggle */}
+          <div className="flex-shrink-0">
+            <div className="text-[10px] text-text-muted uppercase mb-1">Steam</div>
+            <label
+              className={`flex items-center gap-1.5 px-2 py-1.5 rounded cursor-pointer transition-colors ${
+                skipSteamLogin
+                  ? 'bg-warning/20 border border-warning/50'
+                  : 'bg-surface-elevated border border-border hover:border-border-hover'
+              }`}
+              title={skipSteamLogin ? 'Manual login: Steam account switching disabled' : 'Auto login: Will switch Steam accounts as needed'}
+            >
+              <input
+                type="checkbox"
+                checked={skipSteamLogin}
+                onChange={(e) => setSkipSteamLogin(e.target.checked)}
+                className="sr-only"
+              />
+              <span className={`text-xs font-medium ${skipSteamLogin ? 'text-warning' : 'text-text-secondary'}`}>
+                {skipSteamLogin ? 'Manual' : 'Auto'}
+              </span>
+            </label>
           </div>
 
           {/* Launch button */}
@@ -792,6 +818,27 @@ export function QuickLaunchPanel({
                 focus:outline-none focus:border-primary text-text-primary font-numbers text-center"
             />
           </div>
+
+          {/* Skip Steam Login toggle */}
+          <label
+            className={`flex items-center gap-2 px-3 py-1.5 rounded cursor-pointer transition-colors ${
+              skipSteamLogin
+                ? 'bg-warning/20 border border-warning/50'
+                : 'bg-surface-elevated border border-border hover:border-border-hover'
+            }`}
+            title={skipSteamLogin ? 'Manual login: Steam account switching disabled. Pre-login to SUT required.' : 'Auto login: Will switch Steam accounts as needed'}
+          >
+            <input
+              type="checkbox"
+              checked={skipSteamLogin}
+              onChange={(e) => setSkipSteamLogin(e.target.checked)}
+              className="sr-only"
+            />
+            <span className="text-[10px] text-text-muted uppercase">Steam</span>
+            <span className={`text-xs font-medium ${skipSteamLogin ? 'text-warning' : 'text-text-secondary'}`}>
+              {skipSteamLogin ? 'Manual' : 'Auto'}
+            </span>
+          </label>
 
           {/* Launch Button */}
           <button

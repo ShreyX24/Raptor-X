@@ -152,8 +152,12 @@ export async function checkGameAvailability(
 }
 
 // Automation Run APIs
-export async function getRuns(): Promise<RunsResponse> {
-  return fetchJson<RunsResponse>(`${API_BASE}/runs`);
+export async function getRuns(page: number = 1, perPage: number = 50): Promise<RunsResponse> {
+  const params = new URLSearchParams();
+  if (page > 1) params.set('page', page.toString());
+  if (perPage !== 50) params.set('per_page', perPage.toString());
+  const query = params.toString();
+  return fetchJson<RunsResponse>(`${API_BASE}/runs${query ? `?${query}` : ''}`);
 }
 
 export async function getRun(runId: string): Promise<AutomationRun> {
@@ -165,7 +169,8 @@ export async function startRun(
   gameName: string,
   iterations: number = 1,
   quality?: string,   // 'low' | 'medium' | 'high' | 'ultra'
-  resolution?: string // '720p' | '1080p' | '1440p' | '2160p'
+  resolution?: string, // '720p' | '1080p' | '1440p' | '2160p'
+  skipSteamLogin: boolean = false  // If true, skip Steam account management (user pre-logged in)
 ): Promise<{ status: string; run_id: string; message: string }> {
   return fetchJson<{ status: string; run_id: string; message: string }>(`${API_BASE}/runs`, {
     method: 'POST',
@@ -175,6 +180,7 @@ export async function startRun(
       iterations,
       quality,
       resolution,
+      skip_steam_login: skipSteamLogin,
     }),
   });
 }
@@ -444,7 +450,8 @@ export async function createCampaign(
   iterations: number = 1,
   name?: string,
   quality?: string,    // 'low' | 'medium' | 'high' | 'ultra'
-  resolution?: string  // '720p' | '1080p' | '1440p' | '2160p'
+  resolution?: string, // '720p' | '1080p' | '1440p' | '2160p'
+  skipSteamLogin: boolean = false  // If true, skip Steam account management (user pre-logged in)
 ): Promise<CreateCampaignResponse> {
   return fetchJson<CreateCampaignResponse>(`${API_BASE}/campaigns`, {
     method: 'POST',
@@ -455,6 +462,7 @@ export async function createCampaign(
       name,
       quality,
       resolution,
+      skip_steam_login: skipSteamLogin,
     }),
   });
 }

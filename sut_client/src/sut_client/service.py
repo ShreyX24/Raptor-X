@@ -693,10 +693,10 @@ def create_app() -> Flask:
             if launch_args:
                 logger.info(f"Launch args provided: {launch_args}")
 
-            # Map startup_wait to retry behavior
-            # startup_wait / retry_interval = retry_count
-            retry_interval = 10
-            retry_count = max(3, startup_wait // retry_interval)
+            # Foreground detection retry settings (reduced from 10s intervals)
+            # With fast path check, retries are less critical - most launches skip this
+            retry_interval = 5   # Reduced from 10 - faster retry cycle
+            retry_count = 5      # Fixed at 5 retries (was dynamic based on startup_wait)
 
             result = launch_game(
                 steam_app_id=steam_app_id,
@@ -706,7 +706,8 @@ def create_app() -> Flask:
                 settings=settings,
                 launch_args=launch_args,
                 retry_count=retry_count,
-                retry_interval=retry_interval
+                retry_interval=retry_interval,
+                process_detection_timeout=startup_wait  # Use startup_wait for process detection timeout
             )
 
             return jsonify(result)

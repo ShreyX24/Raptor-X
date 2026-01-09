@@ -511,7 +511,7 @@ function formatDuration(startedAt: string | null, completedAt: string | null | u
 
 export function Runs() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { activeRunsList, history, loading, stop } = useRuns();
+  const { activeRunsList, history, loading, stop, pagination, loadMore, loadingMore } = useRuns();
   const { activeCampaigns, historyCampaigns, stop: stopCampaign } = useCampaigns();
   const [isClearing, setIsClearing] = useState(false);
 
@@ -797,6 +797,7 @@ export function Runs() {
             No runs yet
           </div>
         ) : (
+          <>
           <div className="card overflow-hidden">
             <table className="min-w-full divide-y divide-border">
               <thead className="bg-surface-elevated">
@@ -827,7 +828,7 @@ export function Runs() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {unifiedList.slice(0, 50).map((item) => {
+                {unifiedList.map((item) => {
                   const isExpanded = expandedRows.has(item.id);
                   const currentTab = expandedTab[item.id] || 'timeline';
 
@@ -1071,6 +1072,35 @@ export function Runs() {
               </tbody>
             </table>
           </div>
+
+          {/* Load More Button */}
+          {pagination.has_more && (
+            <div className="flex justify-center py-4 border-t border-border">
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="px-6 py-2 text-sm font-medium bg-surface-elevated hover:bg-surface-hover text-text-primary rounded-lg border border-border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loadingMore ? (
+                  <span className="flex items-center gap-2">
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Loading...
+                  </span>
+                ) : (
+                  `Load More (${pagination.total - history.length} remaining)`
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* Pagination Info */}
+          <div className="text-center text-xs text-text-muted py-2">
+            Showing {unifiedList.length} of {pagination.total} runs
+          </div>
+          </>
         )}
       </div>
 

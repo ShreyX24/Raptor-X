@@ -115,6 +115,7 @@ class AutomationRun:
     campaign_name: Optional[str] = None  # Campaign name for display
     quality: Optional[str] = None  # 'low' | 'medium' | 'high' | 'ultra'
     resolution: Optional[str] = None  # '720p' | '1080p' | '1440p' | '2160p'
+    skip_steam_login: bool = False  # If True, skip Steam account management (user pre-logged in)
     # Runtime references (not serialized)
     stop_event: Optional[Any] = field(default=None, repr=False)  # threading.Event for cancellation
     timeline: Optional[Any] = field(default=None, repr=False)  # TimelineManager reference
@@ -403,7 +404,7 @@ class RunManager:
     
     def queue_run(self, game_name: str, sut_ip: str, sut_device_id: str, iterations: int = 1,
                   campaign_id: Optional[str] = None, quality: Optional[str] = None,
-                  resolution: Optional[str] = None) -> str:
+                  resolution: Optional[str] = None, skip_steam_login: bool = False) -> str:
         """Queue a new automation run
 
         Args:
@@ -414,6 +415,7 @@ class RunManager:
             campaign_id: Optional campaign ID if this run is part of a multi-game campaign
             quality: Optional quality preset ('low', 'medium', 'high', 'ultra')
             resolution: Optional resolution preset ('720p', '1080p', '1440p', '2160p')
+            skip_steam_login: If True, skip Steam account management (user pre-logged in manually)
         """
         campaign_info = f" (campaign: {campaign_id[:8]}...)" if campaign_id else ""
         preset_info = f" (preset: {quality}@{resolution})" if quality and resolution else ""
@@ -436,7 +438,8 @@ class RunManager:
                 iterations=iterations,
                 campaign_id=campaign_id,
                 quality=quality,
-                resolution=resolution
+                resolution=resolution,
+                skip_steam_login=skip_steam_login
             )
             run.progress.total_iterations = iterations
             logger.info(f"Created AutomationRun object for {run_id}")
@@ -536,18 +539,37 @@ class RunManager:
                     return run.to_dict()
         return None
     
-    def get_all_runs(self) -> Dict[str, Any]:
-        """Get all runs (active and history)"""
+    def get_all_runs(self, page: int = 1, per_page: int = 50) -> Dict[str, Any]:
+        """Get all runs (active and history) with pagination support
+
+        Args:
+            page: Page number (1-indexed)
+            per_page: Number of history items per page
+
+        Returns:
+            Dict with 'active', 'history', and 'pagination' keys
+        """
         with self._lock:
-            # Get active runs from memory
+            # Get active runs from memory (always return all active)
             active_dict = {run_id: run.to_dict() for run_id, run in self.active_runs.items()}
 
-            # Get history from memory (sorted newest first, take first 50)
-            history_list = [run.to_dict() for run in self.run_history[:50]]
+            # Paginate history
+            total_history = len(self.run_history)
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            history_page = self.run_history[start_idx:end_idx]
+            history_list = [run.to_dict() for run in history_page]
 
             return {
                 'active': active_dict,
-                'history': history_list
+                'history': history_list,
+                'pagination': {
+                    'page': page,
+                    'per_page': per_page,
+                    'total': total_history,
+                    'total_pages': (total_history + per_page - 1) // per_page if total_history > 0 else 1,
+                    'has_more': end_idx < total_history
+                }
             }
     
     def update_run_progress(self, run_id: str, current_iteration: int = None, current_step: int = None):
