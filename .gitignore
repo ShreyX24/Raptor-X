@@ -42,3 +42,20 @@ nul
 paired_devices.json
 sut_discovery.log
 queue_service.log
+
+# Local/personal files
+.claude/settings.local.json
+.claude/BUG_NOTES.md
+.claude/*.zip
+backup/
+SystemScope/
+*_SystemScope_*.html
+Animations collection.txt
+
+# Credentials - NEVER commit
+*.xlsx
+Gemma/scripts/
+
+# Startup scripts (machine-specific)
+start-all.bat
+start-all.ps1
