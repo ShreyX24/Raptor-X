@@ -358,20 +358,35 @@ class RunStorageManager:
         if timestamp is None:
             timestamp = datetime.now()
 
-        folder_name = self.generate_folder_name(
-            sut_info=sut_info,
-            run_type=config.run_type,
-            games=config.games,
-            timestamp=timestamp
-        )
-
-        # If part of campaign, nest under campaign folder
+        # If part of campaign, use game subdirectory structure
         if campaign_id:
             campaign_folder = self._get_or_create_campaign_folder(
                 campaign_id, campaign_name, sut_info, timestamp
             )
-            run_dir = campaign_folder / folder_name
+
+            # Create game subdirectory (sanitize game name for folder)
+            game_name = config.games[0] if config.games else "Unknown"
+            game_folder_name = re.sub(r'[<>:"/\\|?*]', '', game_name.replace(' ', '-'))
+            game_folder = campaign_folder / game_folder_name
+            game_folder.mkdir(parents=True, exist_ok=True)
+
+            # Count existing perf-run folders to determine next iteration number
+            existing_runs = list(game_folder.glob("perf-run-*"))
+            iteration_num = len(existing_runs) + 1
+
+            # Use simpler folder name for campaign runs: perf-run-{N}
+            folder_name = f"perf-run-{iteration_num}"
+            run_dir = game_folder / folder_name
+
+            logger.debug(f"Campaign run: {campaign_folder.name}/{game_folder_name}/{folder_name}")
         else:
+            # Single/standalone run - use traditional folder naming
+            folder_name = self.generate_folder_name(
+                sut_info=sut_info,
+                run_type=config.run_type,
+                games=config.games,
+                timestamp=timestamp
+            )
             run_dir = self.base_dir / folder_name
 
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -405,7 +420,8 @@ class RunStorageManager:
 
         # Determine full folder path for manifest
         if campaign_id:
-            full_folder_name = f"{campaign_folder.name}/{folder_name}"
+            # New structure: campaign/game/perf-run-N
+            full_folder_name = f"{campaign_folder.name}/{game_folder_name}/{folder_name}"
         else:
             full_folder_name = folder_name
 

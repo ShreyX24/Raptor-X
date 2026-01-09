@@ -1023,6 +1023,7 @@ class APIRoutes:
                 iterations = data.get('iterations', 1)
                 quality = data.get('quality')  # 'low' | 'medium' | 'high' | 'ultra'
                 resolution = data.get('resolution')  # '720p' | '1080p' | '1440p' | '2160p'
+                skip_steam_login = data.get('skip_steam_login', False)  # If true, skip Steam account management
 
                 if not sut_ip or not game_name:
                     return jsonify({"error": "sut_ip and game_name are required"}), 400
@@ -1094,9 +1095,10 @@ class APIRoutes:
                         sut_device_id=device.unique_id,
                         iterations=int(iterations),
                         quality=quality,
-                        resolution=resolution
+                        resolution=resolution,
+                        skip_steam_login=skip_steam_login
                     )
-                    logger.info(f"Successfully queued run {run_id} (quality={quality}, resolution={resolution})")
+                    logger.info(f"Successfully queued run {run_id} (quality={quality}, resolution={resolution}, skip_steam={skip_steam_login})")
                     
                     return jsonify({
                         "status": "success",
@@ -1114,14 +1116,27 @@ class APIRoutes:
 
         @app.route('/api/runs', methods=['GET'])
         def get_automation_runs():
-            """Get all automation runs (active and history)"""
+            """Get all automation runs (active and history) with pagination
+
+            Query params:
+                page: Page number (default 1)
+                per_page: Items per page (default 50, max 100)
+            """
             try:
                 if not hasattr(self, 'run_manager') or self.run_manager is None:
-                    return jsonify({"active": {}, "history": []})
-                
-                runs_data = self.run_manager.get_all_runs()
+                    return jsonify({"active": {}, "history": [], "pagination": {"page": 1, "per_page": 50, "total": 0, "total_pages": 1, "has_more": False}})
+
+                # Parse pagination params
+                page = request.args.get('page', 1, type=int)
+                per_page = request.args.get('per_page', 50, type=int)
+
+                # Validate params
+                page = max(1, page)
+                per_page = max(1, min(100, per_page))  # Cap at 100
+
+                runs_data = self.run_manager.get_all_runs(page=page, per_page=per_page)
                 return jsonify(runs_data)
-                
+
             except Exception as e:
                 logger.error(f"Error getting automation runs: {e}")
                 return jsonify({"error": str(e)}), 500
@@ -1495,6 +1510,7 @@ class APIRoutes:
                 name = data.get('name')
                 quality = data.get('quality')  # 'low' | 'medium' | 'high' | 'ultra'
                 resolution = data.get('resolution')  # '720p' | '1080p' | '1440p' | '2160p'
+                skip_steam_login = data.get('skip_steam_login', False)  # If true, skip Steam account management
 
                 if not sut_ip:
                     return jsonify({"error": "sut_ip is required"}), 400
@@ -1542,7 +1558,8 @@ class APIRoutes:
                     iterations=iterations,
                     name=name,
                     quality=quality,
-                    resolution=resolution
+                    resolution=resolution,
+                    skip_steam_login=skip_steam_login
                 )
 
                 logger.info(f"Campaign created: {campaign.campaign_id} with {len(campaign.run_ids)} runs")

@@ -187,9 +187,18 @@ export interface GamesResponse {
   games: Record<string, GameConfig>;
 }
 
+export interface PaginationInfo {
+  page: number;
+  per_page: number;
+  total: number;
+  total_pages: number;
+  has_more: boolean;
+}
+
 export interface RunsResponse {
   active: Record<string, AutomationRun>;
   history: AutomationRun[];
+  pagination?: PaginationInfo;
 }
 
 export interface RunsStats {

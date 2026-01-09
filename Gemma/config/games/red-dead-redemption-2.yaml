@@ -9,7 +9,7 @@ metadata:
   process_id: RDR2.exe
   process_name: RDR2.exe
   benchmark_duration: 320
-  startup_wait: 90
+  startup_wait: 40
   resolution: 1920x1080
   preset: High
   graphics_api: Vulkan

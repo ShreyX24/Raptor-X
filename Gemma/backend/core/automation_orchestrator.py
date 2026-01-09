@@ -549,16 +549,23 @@ class AutomationOrchestrator:
             game_launcher = GameLauncher(network)
 
             # ===== Steam Account Login =====
-            # Get credentials - either from per-SUT allocation or directly by game type
-            # (for multi-SUT parallel mode where account_scheduler handles exclusivity)
-            account_pool = get_account_pool()
-            if account_pool.has_allocation(run.sut_ip):
-                credentials = account_pool.get_account_for_game(run.sut_ip, run.game_name)
+            # Skip Steam login if user pre-logged in manually (skip_steam_login flag)
+            if run.skip_steam_login:
+                if timeline:
+                    timeline.info("Steam login skipped (manual login mode)")
+                logger.info("Skipping Steam login - user pre-logged in manually on SUT")
+                credentials = None  # No credentials needed
             else:
-                # Fallback: get credentials by game type (A-F or G-Z)
-                # This supports multi-SUT parallel execution where account_scheduler
-                # already ensures only one SUT uses each account type at a time
-                credentials = account_pool.get_account_by_game_type(run.game_name)
+                # Get credentials - either from per-SUT allocation or directly by game type
+                # (for multi-SUT parallel mode where account_scheduler handles exclusivity)
+                account_pool = get_account_pool()
+                if account_pool.has_allocation(run.sut_ip):
+                    credentials = account_pool.get_account_for_game(run.sut_ip, run.game_name)
+                else:
+                    # Fallback: get credentials by game type (A-F or G-Z)
+                    # This supports multi-SUT parallel execution where account_scheduler
+                    # already ensures only one SUT uses each account type at a time
+                    credentials = account_pool.get_account_by_game_type(run.game_name)
 
             if credentials:
                 steam_username, steam_password = credentials
@@ -818,28 +825,10 @@ class AutomationOrchestrator:
                         )
                         timeline.game_launched(game_config.name)
 
-                    # ===== Check for Steam Dialogs (Optional) =====
-                    # Steam may show popups like "account in use" or "graphics API selection"
-                    # after game launch. We detect and handle them via OmniParser.
-                    # Can be disabled per-game via steam_dialog_check: false in game YAML
-                    steam_check_enabled = game_config.metadata.get('steam_dialog_check', True) if hasattr(game_config, 'metadata') else True
-                    steam_dialog_result = self._check_steam_dialogs(
-                        network=network,
-                        device=device,
-                        run=run,
-                        game_config=game_config,
-                        account_pool=account_pool,
-                        timeline=timeline,
-                        enabled=steam_check_enabled
-                    )
-                    if steam_dialog_result == "retry_with_alt_account":
-                        # Account conflict - need to retry with different account
-                        # Timeline event already emitted by _check_steam_dialogs
-                        logger.warning("Steam account conflict - will retry with alternative account")
-                        raise RuntimeError("STEAM_ACCOUNT_CONFLICT")
-                    elif steam_dialog_result == "fail":
-                        # Dialog detected but cannot be handled
-                        raise RuntimeError("Steam dialog could not be handled")
+                    # NOTE: Steam dialog check is NOT run after successful launch.
+                    # If the game process was detected within 60s, we assume no blocking
+                    # Steam dialogs are present. Steam dialog checking only runs when
+                    # the 60s process detection times out (handled in the exception block below).
 
                 except Exception as e:
                     error_str = str(e)

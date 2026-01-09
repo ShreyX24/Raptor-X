@@ -1,0 +1,58 @@
+future plans
+
+explore openssh -> what capabilities can be used 
+And ipmessenger to implement in sut-client
+
+4 resolutions across 4 graphics presets - complete
+change windows resolution - complete 
+copy tracing packages from master to sut if unavailable 
+disable start automation until frontend receives all information from the sut - max display support, pc name, games installed , platform, sku, tracing available?, etc - complete
+schedule runs on a busy SUT to execute later
+schedule runs to execute later or on a event occurrence 
+single, batch, campaign - complete
+Add spotify's add to queue functionality
+Add change order of execution on the fly functionality
+
+Add partial FSM - for each game draw out the entire menu (each options shows what) - based on that the automation can understand where it is and where it needs to go.
+
+Temp Steam Accounts Feature (2026-01-09)
+========================================
+Allow using personal/temporary Steam accounts for automation runs.
+These accounts may require Steam Guard authentication (code or QR).
+
+Implementation requirements:
+1. Frontend acknowledgment dialog - user must confirm before each run that they will handle authentication
+2. Steam Guard code entry - if Steam asks for a code, show an input field in frontend to enter the 6-digit code
+   - SUT client needs endpoint to detect if Steam is asking for code (screenshot + OmniParser)
+   - SUT client needs endpoint to type the code into Steam
+3. Steam Guard QR code display - if Steam shows QR code for login:
+   - SUT client captures screenshot of QR code
+   - Frontend displays the QR code for user to scan with Steam mobile app
+   - Poll for successful login completion
+4. Account pool integration - add "temp" or "personal" account type to account pool
+   - Don't auto-retry with these accounts on conflict
+   - Mark as "requires_interaction" in account config
+5. Timeline events for Steam Guard states:
+   - STEAM_GUARD_CODE_REQUIRED
+   - STEAM_GUARD_QR_REQUIRED
+   - STEAM_GUARD_WAITING_USER
+   - STEAM_GUARD_COMPLETED
+
+Related: "No Steam Login" feature (skip_steam_login) was implemented as alternative for users who pre-login manually.
+
+how to pull backend logs if a service is running on a different system
+	Just have to know the ip and the port that service is running @
+	have a whereami endpoint to get the directory
+	openssh must already be enabled
+	you have the ip you have the path just pull the logs using openssh
+
+hitman 3 benchmark results are stored in %userprofile%/hitman/profiledata.txt
+
+driver installation
+
+MEINFO
+C:\OWR\CSME\External\Tools\System_Tools\MEInfo\Windows64>MEInfoWin64.exe > MEInfo.txt
+
+How to Openssh
+google.com/search?q=I%27ve+2+system+with+PC+names+X7+and+X9+both+windows+11+connected+to+same+wifi.+I+want+to+copy+a+folder+from+X9+to+X7.+How+can+I+do+it%3F+will+openssh+help+I+have+openssh+server+installed+%40+X7&sourceid=chrome&ie=UTF-8&gs_lcrp=EgZjaHJvbWUyBggAEEUYOdIBCjY0NDYzajBqMzGoAgWwAgE&oq=I%27ve+2+system+with+PC+names+X7+and+X9+both+windows+11+connected+to+same+wifi.+I+want+to+copy+a+folder+from+X9+to+X7.+How+can+I+do+it%3F+will+openssh+help+I+have+openssh+server+installed+%40+X7&udm=50&aep=42&cud=0&qsubts=1767818719853&mstk=AUtExfCkGdoGeYjpHW5nP6FMsNodVHORGASunYvF0RYdEij3fXHOpw3r1QyAprvLWOiJlcH_q1w-hJzZevzGHkWKwXgO1P9JoqybK3YYf_4zk4zXMebn3KaxqqwJmAGwRmZ4wp-qHJ_BzgeLC3r1yemVlgirSUozHx9W82iLvVTRpcBCMQgm34Ut32t516IHtHVLzboG29iVYw5Ah6HM0BjyMdYT3QjNpA942gFhR_wq_iomxQ90sDJ8yj-YKJAlQMS4XuDhPg113r5MSZIgl5rWdsUtqC-gpzDC4tb-3W19uqVCd3jA8GC0vkGjKWwHJKDbK9Utj6ZCUZiWpg&csuir=1&mtid=4MVeaZyjEvDjseMPiM_58AM
+

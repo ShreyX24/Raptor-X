@@ -154,7 +154,8 @@ class CampaignManager:
         iterations: int,
         name: Optional[str] = None,
         quality: Optional[str] = None,
-        resolution: Optional[str] = None
+        resolution: Optional[str] = None,
+        skip_steam_login: bool = False
     ) -> Campaign:
         """
         Create a new campaign and queue individual runs for each game.
@@ -212,7 +213,8 @@ class CampaignManager:
                     iterations=iterations,
                     campaign_id=campaign_id,
                     quality=quality,
-                    resolution=resolution
+                    resolution=resolution,
+                    skip_steam_login=skip_steam_login
                 )
                 run_ids.append(run_id)
                 logger.info(f"Queued run {run_id} for game '{game}' in campaign {campaign_id[:8]} (preset: {quality}@{resolution})")

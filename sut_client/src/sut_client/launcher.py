@@ -57,7 +57,7 @@ launch_cancel_flag = threading.Event()
 # Process Detection
 # =============================================================================
 
-def find_process_by_name(process_name: str, exact_only: bool = False) -> Optional[psutil.Process]:
+def find_process_by_name(process_name: str, exact_only: bool = False, debug_log_similar: bool = False) -> Optional[psutil.Process]:
     """
     Find a running process by its name.
 
@@ -65,34 +65,55 @@ def find_process_by_name(process_name: str, exact_only: bool = False) -> Optiona
         process_name: Name of process to find (e.g., "RDR2.exe" or "b1")
         exact_only: If True, only exact matches are returned.
                     If False (default), substring matches are also allowed.
+        debug_log_similar: If True, log processes with similar names when not found
 
     Returns:
         psutil.Process or None
     """
+    similar_processes = []  # For debugging
+    search_term = process_name.lower().replace('.exe', '')  # e.g., "rdr2"
+
     try:
-        for proc in psutil.process_iter(['pid', 'name', 'exe']):
+        # Use fresh PID list to avoid any caching issues
+        for pid in psutil.pids():
             try:
-                proc_name = proc.info['name']
-                proc_exe = os.path.basename(proc.info['exe']) if proc.info['exe'] else None
+                proc = psutil.Process(pid)
+                proc_name = proc.name()
+                try:
+                    proc_exe = os.path.basename(proc.exe()) if proc.exe() else None
+                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                    proc_exe = None
 
                 if exact_only:
                     # EXACT match only (case-insensitive)
                     if (proc_name and proc_name.lower() == process_name.lower()) or \
                        (proc_exe and proc_exe.lower() == process_name.lower()):
-                        logger.info(f"[EXACT] Found process: {proc_name} (PID: {proc.info['pid']})")
-                        return psutil.Process(proc.info['pid'])
+                        logger.info(f"[EXACT] Found process: {proc_name} (PID: {pid})")
+                        return proc
                 else:
                     # Partial/substring match (like old gemma_client_0.2.py)
                     if (proc_name and process_name.lower() in proc_name.lower()) or \
                        (proc_exe and process_name.lower() in proc_exe.lower()):
-                        logger.info(f"[SUBSTRING] Found process: {proc_name} (PID: {proc.info['pid']})")
-                        return psutil.Process(proc.info['pid'])
+                        logger.info(f"[SUBSTRING] Found process: {proc_name} (PID: {pid})")
+                        return proc
+
+                # Track similar processes for debugging
+                if debug_log_similar and proc_name:
+                    name_lower = proc_name.lower()
+                    # Check if any part of the search term matches
+                    if search_term[:3] in name_lower or name_lower[:3] in search_term:
+                        similar_processes.append(f"{proc_name} (PID:{pid})")
 
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
 
     except Exception as e:
         logger.error(f"Error searching for process {process_name}: {str(e)}")
+
+    # Log similar processes if debugging enabled and process not found
+    if debug_log_similar and similar_processes:
+        logger.debug(f"Similar processes to '{process_name}': {similar_processes[:10]}")
+
     return None
 
 
@@ -267,10 +288,11 @@ def launch_game(
     # Legacy parameters for backwards compatibility
     game_path: Optional[str] = None,
     process_id: str = '',
-    visible_timeout: int = 120,
-    ready_timeout: int = 30,
-    retry_count: int = 5,
-    retry_interval: int = 10
+    visible_timeout: int = 40,   # Reduced from 120 - window should be visible quickly
+    ready_timeout: int = 10,     # Reduced from 30 - window ready state is fast
+    retry_count: int = 5,        # Keep at 5 retries
+    retry_interval: int = 5,     # Reduced from 10 - faster retry cycle
+    process_detection_timeout: int = 60  # Timeout for initial process detection
 ) -> Dict[str, Any]:
     """
     Launch a game with process tracking and window detection.
@@ -290,6 +312,7 @@ def launch_game(
         ready_timeout: Timeout for window ready detection
         retry_count: Number of retries for foreground detection
         retry_interval: Seconds between retries
+        process_detection_timeout: Timeout for initial process detection (default 60s)
 
     Returns:
         dict: Launch result with status, process info, etc.
@@ -455,22 +478,35 @@ def launch_game(
             logger.info(f"Subprocess status after checks: {subprocess_status}")
 
         # Wait for actual game process
-        max_wait_time = 60
+        max_wait_time = process_detection_timeout
         actual_process = None
         foreground_confirmed = False
 
         logger.info(f"Waiting up to {max_wait_time}s for process '{current_game_process_name}' to appear...")
 
-        # Phase 1: Detect Process
+        # Phase 1: Detect Process - poll every 2s with progress logging
         start_wait = time.time()
         cancelled = False
+        check_count = 0
+        last_log_time = 0
         while time.time() - start_wait < max_wait_time:
-            actual_process = find_process_by_name(current_game_process_name)
+            check_count += 1
+            elapsed = int(time.time() - start_wait)
+
+            # Enable debug logging every 30s to see similar processes
+            debug_mode = elapsed > 0 and elapsed % 30 == 0 and elapsed != last_log_time
+
+            actual_process = find_process_by_name(current_game_process_name, debug_log_similar=debug_mode)
             if actual_process:
-                logger.info(f"Process found: {actual_process.name()} (PID: {actual_process.pid})")
+                logger.info(f"Process found after {elapsed}s (check #{check_count}): {actual_process.name()} (PID: {actual_process.pid})")
                 break
 
-            if launch_cancel_flag.wait(timeout=3):
+            # Log progress every 10s
+            if elapsed > 0 and elapsed % 10 == 0 and elapsed != last_log_time:
+                logger.info(f"Still waiting for '{current_game_process_name}'... ({elapsed}s/{max_wait_time}s, check #{check_count})")
+                last_log_time = elapsed
+
+            if launch_cancel_flag.wait(timeout=2):  # Poll every 2s (faster than 3s)
                 logger.info("Launch cancelled during process detection")
                 cancelled = True
                 break
@@ -479,51 +515,97 @@ def launch_game(
             return {"status": "cancelled", "message": "Launch cancelled by user"}
 
         if actual_process:
-            # Phase 2: Enhanced foreground detection
-            logger.info("Starting enhanced foreground detection...")
+            # Early exit check: Is window already in foreground?
+            # This avoids expensive pywinauto detection if game is already focused
+            try:
+                import win32gui
+                import win32process
+                foreground_hwnd = win32gui.GetForegroundWindow()
+                if foreground_hwnd:
+                    _, fg_pid = win32process.GetWindowThreadProcessId(foreground_hwnd)
+                    if fg_pid == actual_process.pid:
+                        logger.info(f"[FAST PATH] Game window already in foreground (PID {actual_process.pid})")
+                        foreground_confirmed = True
+                        # Skip all the expensive detection, go straight to response
+                        response_data = {
+                            "status": "success",
+                            "subprocess_pid": game_process.pid if game_process else None,
+                            "subprocess_status": subprocess_status,
+                            "resolved_path": game_path if is_steam_id else None,
+                            "launch_method": "steam" if is_steam_id else "direct_exe",
+                            "game_process_pid": actual_process.pid,
+                            "game_process_name": actual_process.name(),
+                            "game_process_status": actual_process.status(),
+                            "foreground_confirmed": True,
+                            "fast_path": True,  # Indicator that we skipped detection
+                            "pywinauto_available": is_pywinauto_available(),
+                        }
+                        logger.info(f"[OK] Launch Complete (fast path): {actual_process.name()} already in foreground.")
+                        minimized = minimize_other_windows(actual_process.pid)
+                        response_data["windows_minimized"] = minimized
+                        return response_data
+            except Exception as e:
+                logger.debug(f"Early foreground check failed (non-fatal): {e}")
 
-            window_ready, hwnd, window_title = wait_for_window_ready_pywinauto(
-                actual_process.pid,
-                process_name=current_game_process_name,
-                visible_timeout=visible_timeout,
-                ready_timeout=ready_timeout
-            )
+            # Phase 2: Wait for window, then bring to foreground
+            # Once process is detected, window should appear shortly
+            # Poll for window existence (up to 15s), then try foreground
+            logger.info("Process detected, waiting for window to appear...")
 
-            if window_ready:
-                logger.info("Window is ready, bringing to foreground...")
-                foreground_confirmed = ensure_window_foreground_v2(actual_process.pid, timeout=5)
-            else:
-                logger.warning("pywinauto window detection failed, using legacy method")
+            # Wait for window to exist (poll every 2s for up to 15s)
+            window_wait_start = time.time()
+            window_found = False
+            while time.time() - window_wait_start < 15:
+                try:
+                    import win32gui
+                    import win32process
+
+                    def find_window_for_pid(hwnd, pid_windows):
+                        try:
+                            _, found_pid = win32process.GetWindowThreadProcessId(hwnd)
+                            if found_pid == actual_process.pid and win32gui.IsWindowVisible(hwnd):
+                                pid_windows.append(hwnd)
+                        except:
+                            pass
+                        return True
+
+                    windows = []
+                    win32gui.EnumWindows(find_window_for_pid, windows)
+                    if windows:
+                        window_found = True
+                        logger.info(f"Window found for PID {actual_process.pid} after {time.time() - window_wait_start:.1f}s")
+                        break
+                except Exception as e:
+                    logger.debug(f"Window search error: {e}")
+
+                if launch_cancel_flag.wait(timeout=2):
+                    logger.info("Launch cancelled during window wait")
+                    return {"status": "cancelled", "message": "Launch cancelled by user"}
+
+            if not window_found:
+                logger.info("No window found after 15s, but process is running - continuing")
+
+            # Now try to bring to foreground
+            logger.info("Attempting to bring window to foreground...")
+
+            # Try modern method first (5s max)
+            foreground_confirmed = ensure_window_foreground_v2(actual_process.pid, timeout=5)
+
+            if not foreground_confirmed:
+                # Try legacy method once (5s max)
+                logger.info("Modern foreground failed, trying legacy method...")
                 foreground_confirmed = ensure_window_foreground(actual_process.pid, timeout=5)
 
-            # Retry with longer waits for slow-loading games
+            # If still not foreground, that's OK - process is running, startup_wait will handle it
             if not foreground_confirmed:
-                for attempt in range(1, retry_count + 1):
-                    logger.warning(f"Foreground attempt failed. Retry {attempt}/{retry_count} in {retry_interval}s...")
+                logger.info("Foreground not confirmed, but process is running - continuing (startup_wait will handle)")
 
-                    if launch_cancel_flag.wait(timeout=retry_interval):
-                        logger.info("Launch cancelled during retry wait")
-                        return {"status": "cancelled", "message": "Launch cancelled by user"}
+            # Minimize other windows to help with focus
+            minimize_other_windows(actual_process.pid)
 
-                    actual_process = find_process_by_name(current_game_process_name)
-                    if actual_process:
-                        logger.info(f"Retry {attempt}: Process found: {actual_process.name()} (PID: {actual_process.pid})")
-
-                        window_ready, hwnd, _ = wait_for_window_ready_pywinauto(
-                            actual_process.pid,
-                            visible_timeout=15,
-                            ready_timeout=10
-                        )
-
-                        foreground_confirmed = ensure_window_foreground_v2(actual_process.pid, timeout=5)
-                        if foreground_confirmed:
-                            logger.info(f"Retry {attempt}: Successfully brought to foreground!")
-                            break
-                    else:
-                        logger.warning(f"Retry {attempt}: Process '{current_game_process_name}' no longer found")
-
+            # Always return success if process is running - startup_wait handles the rest
             response_data = {
-                "status": "success" if foreground_confirmed else "warning",
+                "status": "success",
                 "subprocess_pid": game_process.pid if game_process else None,
                 "subprocess_status": subprocess_status,
                 "resolved_path": game_path if is_steam_id else None,
@@ -531,19 +613,12 @@ def launch_game(
                 "game_process_pid": actual_process.pid,
                 "game_process_name": actual_process.name(),
                 "game_process_status": actual_process.status(),
+                "window_found": window_found,
                 "foreground_confirmed": foreground_confirmed,
                 "pywinauto_available": is_pywinauto_available(),
-                "window_ready_detected": window_ready if 'window_ready' in dir() else False
             }
 
-            if foreground_confirmed:
-                logger.info(f"[OK] Launch Complete: {actual_process.name()} is running and in foreground.")
-                # Minimize other windows (Steam, etc.) to ensure clean screenshots
-                minimized = minimize_other_windows(actual_process.pid)
-                response_data["windows_minimized"] = minimized
-            else:
-                logger.warning(f"[WARN] Launch Warning: Process {actual_process.pid} exists but could not confirm foreground status.")
-                response_data["warning"] = "Process launched but window not in foreground (timeout)"
+            logger.info(f"[OK] Launch Complete: {actual_process.name()} (PID: {actual_process.pid}) is running. Window: {window_found}, Foreground: {foreground_confirmed}")
 
         else:
             logger.error(f"LAUNCH FAILED: Game process '{current_game_process_name}' not found within {max_wait_time}s")
