@@ -185,8 +185,11 @@ export function QuickLaunchPanel({
     [devices, localSutId]
   );
 
+  // Preserve selection order: map over localGameNames (selection order) instead of filtering games (alphabetical)
   const selectedGames = useMemo(() =>
-    games.filter(g => localGameNames.includes(g.name)),
+    localGameNames
+      .map(name => games.find(g => g.name === name))
+      .filter((g): g is GameConfig => g !== undefined),
     [games, localGameNames]
   );
 
