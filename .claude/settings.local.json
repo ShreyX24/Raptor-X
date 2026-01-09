@@ -30,7 +30,11 @@
       "Bash(cmd //c \"taskkill /PID 21576 /F\")",
       "Bash(timeout /t 3 /nobreak)",
       "Bash(set USE_EXTERNAL_DISCOVERY=true)",
-      "Bash(timeout 5 python:*)"
+      "Bash(timeout 5 python:*)",
+      "Bash(git show:*)",
+      "Bash(pip show:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)"
     ]
   }
 }
