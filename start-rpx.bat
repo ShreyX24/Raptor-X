@@ -1,0 +1,3 @@
+@echo off
+echo Starting Raptor X Service Manager...
+gemma-manager
