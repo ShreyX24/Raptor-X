@@ -1,0 +1,19 @@
+Detailed Manual Steps Summary
+If you prefer doing it manually without the scripts, here is the verified workflow for Windows 11 (2026):
+Install & Fix Service (Target):
+Install OpenSSH Server via Settings > Optional Features.
+If sshd fails to start, delete C:\ProgramData\ssh and reinstall.
+Firewall & Profile (Target):
+Ensure the Network Profile is set to Private.
+Add a firewall rule for Port 22.
+Generate Key (Source):
+Run ssh-keygen -t ed25519.
+Manual Authorization (For Passwordless):
+Copy the contents of id_ed25519.pub from the Source PC.
+On the Target PC, paste it into C:\ProgramData\ssh\administrators_authorized_keys.
+Crucial: Run icacls to grant Full Control to SYSTEM and Administrators, and disable inheritance. Windows will ignore the key if any other user has access to this file.
+Transfer:
+Run scp -r "SourcePath" username@IP:"DestinationPath".
+Final Transfer Command for your current setup:
+To move the folder now that keys are set:
+scp -r "C:\Users\shrey\OneDrive\Documents\Code\Gemma\RPX\sut_client" zel-x4@192.168.0.103:"C:\Code"

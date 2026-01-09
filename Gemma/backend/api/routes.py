@@ -767,6 +767,29 @@ class APIRoutes:
                                     "match_method": "name"
                                 })
 
+                    # PRIORITY 2.5: Match standalone games by folder_names from config
+                    folder_names = []
+                    if hasattr(game_config, 'metadata') and game_config.metadata:
+                        folder_names = game_config.metadata.get('folder_names', [])
+
+                    if folder_names:
+                        for game in installed_games:
+                            installed_name = game.get("name", "").lower()
+                            install_dir = game.get("install_dir", "").lower()
+                            for folder_name in folder_names:
+                                folder_lower = folder_name.lower()
+                                if folder_lower in installed_name or folder_lower == install_dir:
+                                    if game.get("exists", True):
+                                        logger.info(f"Game '{game_name}' available on SUT {sut_ip} via folder_name match: {folder_name}")
+                                        return jsonify({
+                                            "available": True,
+                                            "game_name": game.get("name", game_name),
+                                            "steam_app_id": game.get("steam_app_id"),
+                                            "install_path": game.get("install_path"),
+                                            "sut_ip": sut_ip,
+                                            "match_method": "folder_name"
+                                        })
+
                     # PRIORITY 3: Fallback to preset-manager for abbreviation matching (e.g., ffxiv)
                     # Only do this if we have a preset_id to match against
                     import re
@@ -1398,6 +1421,35 @@ class APIRoutes:
 
             except Exception as e:
                 logger.error(f"Error getting runs stats: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/accounts/status', methods=['GET'])
+        def get_account_status():
+            """Get Steam account lock status for multi-SUT coordination
+
+            Response:
+            {
+                "af": {
+                    "locked": true,
+                    "holder_sut": "192.168.0.103",
+                    "game_running": "Assassin's Creed Mirage",
+                    "locked_at": "2024-01-06T12:00:00"
+                },
+                "gz": {
+                    "locked": false,
+                    "holder_sut": null,
+                    "game_running": null,
+                    "locked_at": null
+                }
+            }
+            """
+            try:
+                from ..core.account_scheduler import get_account_scheduler
+                scheduler = get_account_scheduler()
+                status = scheduler.get_status()
+                return jsonify(status)
+            except Exception as e:
+                logger.error(f"Error getting account status: {e}")
                 return jsonify({"error": str(e)}), 500
 
         # =====================================================================

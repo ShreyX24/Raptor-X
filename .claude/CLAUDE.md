@@ -67,6 +67,16 @@ When making significant code changes:
 3. If you discover a gotcha, add to `LEARNINGS.md`
 4. If you add a new feature, document in the service's rule file
 
+## Git Commit & PR Rules
+
+**NEVER include in commits or PRs:**
+- "Claude Code" branding or references
+- Personal email addresses
+- "Co-Authored-By" lines with any email
+- Marketing/promotional text
+
+Keep commits and PRs clean and professional.
+
 ## Task Management Protocol
 
 **IMPORTANT**: When working on multiple tasks (more than 1), ALWAYS use the TodoWrite tool to:

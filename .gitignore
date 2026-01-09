@@ -1,0 +1,44 @@
+# Node
+node_modules/
+.npm/
+*.tsbuildinfo
+dist/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+venv/
+env/
+.venv/
+
+# Logs
+*.log
+logs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Build artifacts
+*.exe
+*.dll
+
+# Temporary/generated
+*.tmp
+*.bak
+*.cache
+
+# Service-specific data files
+paired_devices.json
+sut_discovery.log
+queue_service.log
