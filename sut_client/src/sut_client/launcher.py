@@ -337,11 +337,22 @@ def launch_game(
         retry_count = getattr(settings, 'launch_retry_count', retry_count)
         retry_interval = getattr(settings, 'launch_retry_interval', retry_interval)
 
-    # Handle force relaunch
-    if force_relaunch and current_game_process_name:
-        logger.info(f"Force relaunch: terminating existing game {current_game_process_name}")
-        terminate_process_by_name(current_game_process_name)
-        time.sleep(2)
+    # Handle force relaunch - kill existing game before launching
+    # This handles both: (1) tracked game from previous launch, (2) game running from before SUT started
+    if force_relaunch:
+        # First, try to kill by tracked name (from previous launch in this session)
+        if current_game_process_name:
+            logger.info(f"Force relaunch: terminating tracked game {current_game_process_name}")
+            terminate_process_by_name(current_game_process_name)
+            time.sleep(2)
+        # Also kill by target process name (handles SUT restart case where tracking is lost)
+        if process_id and process_id != current_game_process_name:
+            # Check if target process is already running
+            existing_proc = find_process_by_name(process_id, exact_only=True)
+            if existing_proc:
+                logger.info(f"Force relaunch: terminating existing {process_id} (PID {existing_proc.pid})")
+                terminate_process_by_name(process_id)
+                time.sleep(2)
 
     # Validate game_path is provided
     if not game_path:
@@ -501,9 +512,8 @@ def launch_game(
             # Log progress every 10s with process scan
             if elapsed > 0 and elapsed % 10 == 0 and elapsed != last_log_time:
                 logger.info(f"Still waiting for '{current_game_process_name}'... ({elapsed}s/{max_wait_time}s, check #{check_count})")
-                # Log any RDR/Rockstar processes we can see
+                # Log any RDR/Rockstar processes we can see (helpful for debugging)
                 try:
-                    import psutil
                     rockstar_procs = []
                     for p in psutil.process_iter(['pid', 'name']):
                         try:
