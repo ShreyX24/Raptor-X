@@ -73,12 +73,14 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     if (!autoConnect) return;
 
     // Connect to the same origin as the page (Vite proxy will handle it)
+    // Use polling first - WebSocket through Vite proxy causes 500 errors
     const socket = io({
       path: '/socket.io/',
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
       reconnectionAttempts,
       reconnectionDelay,
       autoConnect: true,
+      upgrade: false,  // Don't upgrade from polling to websocket (avoids proxy issues)
     });
 
     socketRef.current = socket;

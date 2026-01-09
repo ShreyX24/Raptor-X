@@ -36,6 +36,11 @@ export default defineConfig({
         target: 'http://localhost:5000',
         changeOrigin: true,
         ws: true,
+        configure: (proxy) => {
+          proxy.on('error', (err) => {
+            console.log('WebSocket proxy error (ignored):', err.message);
+          });
+        },
       },
     },
   },
