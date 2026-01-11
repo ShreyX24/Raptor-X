@@ -1,18 +1,31 @@
-# ffxiv dawntrail Benchmark Configuration
+# FFXIV Dawntrail Benchmark Configuration
+# This is a STANDALONE benchmark - not launched via Steam
 metadata:
   game_name: "Final Fantasy XIV: Dawntrail"
   preset_id: final-fantasy-xiv-dawntrail  # Maps to preset-manager folder name
-  # Standalone game - search multiple locations
+
+  # Standalone game configuration - find by folder name in steamapps/common/
   standalone: true
   folder_names:
     - "ffxiv-dawntrail-bench_v11"
+    - "ffxiv-dawntrail-bench_v12"
     - "ffxiv-dawntrail-bench"
     - "FFXIV Dawntrail Benchmark"
   exe_name: "ffxiv-dawntrail-bench.exe"
-  process_id: "ffxiv_dx11.exe"
+  preset_filename: "ffxivbenchmarklauncher.ini"  # Config file to flash with preset
+
+  # Process detection - wait for launcher process after exe launch
+  # Note: ffxiv_dx11.exe (benchmark) starts after clicking Start in step 1
+  # Step 2 has a 380s wait which covers the benchmark duration
+  process_id: "ffxiv-dawntrail-bench.exe"
+
+  # Window management - minimize other windows before automation
+  minimize_others: true
+
   version: "1.0"
   benchmark_duration: 400
-  startup_wait: 10
+  startup_wait: 15
+  init_wait: 5  # Short wait after launcher detected, before clicking Start
   resolution: "1920x1080"
   preset: "High"
 
@@ -95,18 +108,3 @@ fallbacks:
     key: "Escape"
     expected_delay: 1
     max_retries: 3
-
-Click: 2
-Key: Escape, Enter
-
-1:
-  description: "Click start "
-  find:
-    type: "icon"
-    text: "Start"
-    text_match: "contains"
-  action:
-    type: "click"
-    button: "left"
-  expected_delay: 5
-  timeout: 20

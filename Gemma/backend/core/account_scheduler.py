@@ -23,11 +23,13 @@ Usage:
         ...
 """
 
+import json
 import logging
 import threading
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -96,7 +98,77 @@ class AccountScheduler:
         self.on_account_released: Optional[callable] = None
         self.on_account_waiting: Optional[callable] = None
 
+        # Persistence file path - compute from module location
+        # __file__ is Gemma/backend/core/account_scheduler.py
+        # We need Gemma/logs/runs/account_locks.json
+        self._locks_file = Path(__file__).parent.parent.parent / 'logs' / 'runs' / 'account_locks.json'
+
+        # Clear any stale locks from previous session
+        self._load_and_clear_stale_locks()
+
         logger.info("AccountScheduler initialized")
+
+    def _save_locks(self):
+        """Persist account locks to disk"""
+        try:
+            # Ensure directory exists
+            self._locks_file.parent.mkdir(parents=True, exist_ok=True)
+
+            data = {
+                'version': 1,
+                'updated_at': datetime.now().isoformat(),
+                'account_locks': {
+                    'af': {
+                        'sut_ip': self._af_lock.holder_sut,
+                        'game_name': self._af_lock.game_running,
+                        'locked_at': self._af_lock.locked_at.isoformat() if self._af_lock.locked_at else None
+                    } if self._af_lock.is_locked else None,
+                    'gz': {
+                        'sut_ip': self._gz_lock.holder_sut,
+                        'game_name': self._gz_lock.game_running,
+                        'locked_at': self._gz_lock.locked_at.isoformat() if self._gz_lock.locked_at else None
+                    } if self._gz_lock.is_locked else None
+                }
+            }
+
+            # Atomic write
+            temp_file = self._locks_file.with_suffix('.tmp')
+            with open(temp_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            temp_file.replace(self._locks_file)
+
+            logger.debug(f"Saved account locks to disk")
+
+        except Exception as e:
+            logger.error(f"Failed to save account locks: {e}")
+
+    def _load_and_clear_stale_locks(self):
+        """Load account locks from disk and clear them (they're stale from previous session)"""
+        if not self._locks_file.exists():
+            logger.debug("No account_locks.json found")
+            return
+
+        try:
+            with open(self._locks_file, 'r') as f:
+                data = json.load(f)
+
+            account_locks = data.get('account_locks', {})
+
+            # Log stale locks before clearing
+            if account_locks.get('af'):
+                af_info = account_locks['af']
+                logger.warning(f"Clearing stale AF account lock: was held by {af_info.get('sut_ip')} for '{af_info.get('game_name')}'")
+
+            if account_locks.get('gz'):
+                gz_info = account_locks['gz']
+                logger.warning(f"Clearing stale GZ account lock: was held by {gz_info.get('sut_ip')} for '{gz_info.get('game_name')}'")
+
+            # Clear the file (starting fresh)
+            self._locks_file.unlink(missing_ok=True)
+            logger.info("Cleared stale account locks")
+
+        except Exception as e:
+            logger.error(f"Failed to load account locks from storage: {e}")
 
     @classmethod
     def get_instance(cls) -> "AccountScheduler":
@@ -138,6 +210,7 @@ class AccountScheduler:
 
             if lock.acquire(sut_ip, game_name):
                 logger.info(f"SUT {sut_ip} acquired {account_type.value.upper()} account for '{game_name}'")
+                self._save_locks()  # Persist lock state
                 if self.on_account_acquired:
                     self.on_account_acquired(sut_ip, account_type.value, game_name)
                 return True
@@ -155,6 +228,7 @@ class AccountScheduler:
             lock = self._get_lock(account_type)
 
             if lock.release(sut_ip):
+                self._save_locks()  # Persist lock release
                 if self.on_account_released:
                     self.on_account_released(sut_ip, account_type.value)
 

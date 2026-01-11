@@ -7,10 +7,11 @@ metadata:
   version: '1.0'
   created_with: Raptor X Workflow Builder
   created_date: '2026-01-10 22:58:13'
-  process_id: 
+  process_id:
   benchmark_duration: 120
   startup_wait: 30
   use_ocr_fallback: true
+  hidden: true  # Utility workflow - not a real game
 
 ocr_config:
   use_paddleocr: true

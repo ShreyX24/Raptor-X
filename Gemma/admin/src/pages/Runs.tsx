@@ -956,7 +956,7 @@ export function Runs() {
                               </div>
 
                               {/* Tab Content */}
-                              <div className="p-4 max-h-[500px] overflow-auto">
+                              <div className="p-4 max-h-[500px] overflow-y-auto">
                                 {currentTab === 'timeline' ? (
                                   item.type === 'single' && item.run ? (
                                     <IterationCarousel

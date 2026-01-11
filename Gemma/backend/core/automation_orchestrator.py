@@ -25,7 +25,7 @@ from .timeline_manager import TimelineManager
 from .account_pool import get_account_pool
 
 # Steam dialogs config path
-STEAM_DIALOGS_CONFIG = Path(__file__).parent.parent.parent / "config" / "steam_dialogs.yaml"
+STEAM_DIALOGS_CONFIG = Path(__file__).parent.parent.parent / "config" / "games" / "steam_dialogs.yaml"
 
 if TYPE_CHECKING:
     from .run_storage import RunStorageManager
@@ -838,7 +838,7 @@ class AutomationOrchestrator:
 
                     # Check if this might be a Steam dialog blocking (process not detected)
                     if "not detected" in error_str.lower() or "process" in error_str.lower():
-                        # Mark process wait as timed out
+                        # Mark process wait as timed out initially
                         if timeline:
                             timeline.game_process_timeout(
                                 process_name=game_config.process_id or game_config.name,
@@ -863,13 +863,83 @@ class AutomationOrchestrator:
                         if dialog_result == "retry_with_alt_account":
                             logger.warning("Steam dialog detected (account busy) - will retry with alternative")
                             raise RuntimeError("STEAM_ACCOUNT_CONFLICT")
-                        elif dialog_result is None:
-                            # Dialog might have been dismissed - but launch already failed
-                            logger.info("No Steam dialog found or dismissed, but launch already timed out")
+                        elif dialog_result == "dismissed":
+                            # Dialog was handled (e.g., EULA accepted) - wait for game process again
+                            logger.info("Steam dialog dismissed - waiting for game process to start...")
+                            if timeline:
+                                timeline.info("Dialog dismissed, waiting for game process...")
+                                timeline.game_process_waiting(
+                                    process_name=game_config.process_id or game_config.name,
+                                    timeout_seconds=90  # Extended wait after dialog
+                                )
 
+                            # Poll for game process after dialog dismissal
+                            sut_base_url = f"http://{device.ip}:{device.port}"
+                            post_dialog_timeout = 90  # 90 seconds to wait after dialog
+                            poll_interval = 5  # Check every 5 seconds
+                            start_time = time.time()
+                            process_found = False
+
+                            while time.time() - start_time < post_dialog_timeout:
+                                try:
+                                    check_resp = network.session.post(
+                                        f"{sut_base_url}/check_process",
+                                        json={"process_name": game_config.process_id},
+                                        timeout=10
+                                    )
+                                    if check_resp.status_code == 200:
+                                        check_result = check_resp.json()
+                                        if check_result.get("running"):
+                                            process_found = True
+                                            logger.info(f"Game process detected after dialog: {game_config.process_id}")
+                                            if timeline:
+                                                timeline.game_process_detected(
+                                                    process_name=game_config.process_id or game_config.name
+                                                )
+                                                timeline.game_launched(game_config.name)
+                                            break
+                                except Exception as poll_err:
+                                    logger.warning(f"Error polling for process: {poll_err}")
+
+                                # Also check for additional dialogs while waiting
+                                additional_dialog = self._check_steam_dialogs(
+                                    network=network,
+                                    device=device,
+                                    run=run,
+                                    game_config=game_config,
+                                    account_pool=account_pool,
+                                    timeline=timeline,
+                                    enabled=True
+                                )
+                                if additional_dialog == "retry_with_alt_account":
+                                    raise RuntimeError("STEAM_ACCOUNT_CONFLICT")
+
+                                time.sleep(poll_interval)
+
+                            if process_found:
+                                # Success! Continue with automation (don't raise error)
+                                error_str = None  # Clear error to skip the error handling below
+                                error_msg = None
+                            else:
+                                logger.error(f"Game process still not detected after dialog dismissal ({post_dialog_timeout}s)")
+                                if timeline:
+                                    timeline.game_process_timeout(
+                                        process_name=game_config.process_id or game_config.name,
+                                        timeout_seconds=post_dialog_timeout
+                                    )
+                        elif dialog_result is None:
+                            # No dialog found - launch failed for another reason
+                            logger.info("No Steam dialog found, launch timed out")
+
+                    # Skip remaining error handling if dialog was handled and process found
+                    if error_str is None:
+                        pass  # Continue with automation - process was found after dialog handling
                     # Check if it's a 404 error (SUT service issue)
-                    if "404" in error_str or "NOT FOUND" in error_str:
+                    elif "404" in error_str or "NOT FOUND" in error_str:
                         error_msg = f"SUT service error: /launch endpoint not found on {device.ip}:{device.port}. Please ensure gemma_sut_service.py is running on the SUT."
+                        if timeline:
+                            timeline.error(f"Game launch failed: {error_msg}")
+                        raise RuntimeError(error_msg)
                     elif "Connection" in error_str or "timeout" in error_str.lower():
                         # BUG-004 fix: Try to recover SUT connection before failing
                         logger.warning(f"SUT connection issue detected, attempting recovery...")
@@ -890,10 +960,14 @@ class AutomationOrchestrator:
                         else:
                             # SUT still unreachable after retries
                             error_msg = f"Connection error: Cannot reach SUT at {device.ip}:{device.port} after recovery attempts."
-
-                    if timeline:
-                        timeline.error(f"Game launch failed: {error_msg}")
-                    raise RuntimeError(error_msg)
+                            if timeline:
+                                timeline.error(f"Game launch failed: {error_msg}")
+                            raise RuntimeError(error_msg)
+                    else:
+                        # Other launch error
+                        if timeline:
+                            timeline.error(f"Game launch failed: {error_msg}")
+                        raise RuntimeError(error_msg)
 
                 # ===== Wait for actual game process (if launcher is separate) =====
                 game_process_name = game_config.game_process
@@ -953,6 +1027,41 @@ class AutomationOrchestrator:
                 if self.storage:
                     self.storage.complete_iteration(run.run_id, iteration_num, success=False, error_message="Run stopped")
                 return (False, original_resolution, resolution_changed)
+
+            # ===== Focus Game Before Automation =====
+            # Focus game window and wait for it to come to foreground before starting automation
+            # This prevents issues where game was minimized during initialization
+            try:
+                focus_delay = 10  # Seconds to wait after focus for game to go fullscreen
+                minimize_others = getattr(game_config, 'minimize_others', False)
+
+                if minimize_others:
+                    logger.info(f"Focusing game window and minimizing others (waiting {focus_delay}s for fullscreen)...")
+                    if timeline:
+                        timeline.info(f"Focusing game, minimizing other windows...")
+                else:
+                    logger.info(f"Focusing game window before automation (waiting {focus_delay}s for fullscreen)...")
+                    if timeline:
+                        timeline.info(f"Focusing game window (waiting {focus_delay}s)...")
+
+                sut_base_url = f"http://{device.ip}:{device.port}"
+                focus_resp = requests.post(
+                    f"{sut_base_url}/focus",
+                    json={
+                        "process_name": game_config.process_id,
+                        "minimize_others": minimize_others
+                    },
+                    timeout=10
+                )
+                if focus_resp.status_code == 200:
+                    logger.info(f"Game window focused, waiting {focus_delay}s for fullscreen transition...")
+                    time.sleep(focus_delay)
+                else:
+                    logger.warning(f"Could not focus game: {focus_resp.status_code}")
+                    time.sleep(focus_delay)  # Still wait in case game is already focused
+            except Exception as e:
+                logger.warning(f"Focus game before automation failed: {e}")
+                time.sleep(5)  # Minimal wait even on failure
 
             # ===== Execute Automation =====
             if timeline:
@@ -1068,7 +1177,9 @@ class AutomationOrchestrator:
         else:
             # New storage structure - log file in iteration folder root
             # Name format: blackbox_perf-run{N}_{game}.log
-            safe_game_name = game_name.replace(" ", "-")
+            # Sanitize game name for Windows filename compatibility (remove illegal chars: \ / : * ? " < > |)
+            safe_game_name = game_name.replace(" ", "-").replace(":", "").replace("/", "-").replace("\\", "-")
+            safe_game_name = safe_game_name.replace("*", "").replace("?", "").replace('"', "").replace("<", "").replace(">", "").replace("|", "")
             blackbox_file = run_dir_path / f"blackbox_perf-run{iteration_num}_{safe_game_name}.log"
 
         # Ensure parent directory exists
@@ -1337,7 +1448,9 @@ class AutomationOrchestrator:
                         else:  # "continue", "retry_once", etc
                             if timeline:
                                 timeline.steam_dialog_dismissed(dialog_name)
-                            return None
+                            # Return "dismissed" to indicate dialog was handled
+                            # This allows caller to wait for game process after dialog
+                            return "dismissed"
 
                 if attempt < max_attempts - 1:
                     time.sleep(check_interval)
@@ -1406,6 +1519,10 @@ class AutomationOrchestrator:
         - Uses steam_app_id to verify game is installed on SUT
         - Returns exe path from YAML config for direct launch
 
+        When standalone=True:
+        - Queries SUT to find game folder by folder_names
+        - Returns exe path for direct launch
+
         Args:
             network: NetworkManager instance
             game_config: GameConfig object
@@ -1413,6 +1530,12 @@ class AutomationOrchestrator:
         Returns:
             Steam App ID (for Steam launch) or path to game executable (for direct launch)
         """
+        # Check if this is a standalone game (like FFXIV benchmark)
+        is_standalone = getattr(game_config, 'standalone', False)
+
+        if is_standalone:
+            return self._discover_standalone_game_path(network, game_config)
+
         # Check launch method preference
         launch_method = getattr(game_config, 'launch_method', None)
         use_direct_exe = launch_method == 'exe'
@@ -1501,6 +1624,79 @@ class AutomationOrchestrator:
 
         return None
 
+    def _discover_standalone_game_path(self, network, game_config) -> Optional[str]:
+        """
+        Discover a standalone game (like FFXIV benchmark) on the SUT.
+
+        Standalone games are not Steam games - they live in steamapps/common/
+        but have no manifest. We find them by folder name.
+
+        Args:
+            network: NetworkManager instance
+            game_config: GameConfig object with standalone fields
+
+        Returns:
+            Path to game executable for direct launch, or None if not found
+        """
+        folder_names = getattr(game_config, 'folder_names', None)
+        exe_name = getattr(game_config, 'exe_name', None)
+
+        if not folder_names:
+            logger.error(f"Standalone game {game_config.name} has no folder_names defined")
+            return None
+
+        logger.info(f"Discovering standalone game: {game_config.name}")
+        logger.info(f"  Searching for folders: {folder_names}")
+        logger.info(f"  Executable: {exe_name}")
+
+        try:
+            # Query SUT to find the standalone game
+            response = network.session.post(
+                f"{network.base_url}/find_standalone_game",
+                json={
+                    "folder_names": folder_names,
+                    "exe_name": exe_name
+                },
+                timeout=15
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+
+                if data.get("found"):
+                    folder_path = data.get("folder_path")
+                    exe_path = data.get("exe_path")
+                    exe_exists = data.get("exe_exists", False)
+
+                    logger.info(f"Found standalone game folder: {folder_path}")
+
+                    if exe_path and exe_exists:
+                        logger.info(f"Using exe path: {exe_path}")
+                        # Store the folder path for preset flashing later
+                        game_config._standalone_folder_path = folder_path
+                        return exe_path
+                    elif folder_path and exe_name:
+                        # Construct exe path from folder + exe_name
+                        import os
+                        exe_path = os.path.join(folder_path, exe_name)
+                        logger.info(f"Constructed exe path: {exe_path}")
+                        game_config._standalone_folder_path = folder_path
+                        return exe_path
+                    else:
+                        logger.warning(f"Found folder but no executable: {folder_path}")
+                        game_config._standalone_folder_path = folder_path
+                        return folder_path
+                else:
+                    error = data.get("error", "Unknown error")
+                    logger.warning(f"Standalone game not found: {error}")
+            else:
+                logger.warning(f"Failed to query SUT for standalone game (status {response.status_code})")
+
+        except Exception as e:
+            logger.error(f"Error discovering standalone game: {e}")
+
+        return None
+
     def _get_run_directory(self, run: AutomationRun) -> str:
         """Get the base run directory path"""
         return f"logs/{run.game_name.replace(' ', '_')}/run_{run.run_id}"
@@ -1509,8 +1705,8 @@ class AutomationOrchestrator:
         """
         Sync game preset to SUT before launching.
 
-        Uses the preset-manager service to push the appropriate preset level
-        to the SUT device.
+        For regular Steam games: Uses preset-manager service to push preset.
+        For standalone games: Gets preset from preset-manager and flashes directly to game folder.
 
         Args:
             game_config: GameConfig object with game metadata
@@ -1520,6 +1716,12 @@ class AutomationOrchestrator:
             True if sync successful, False otherwise (non-fatal)
         """
         import requests
+
+        # Check if this is a standalone game - needs special handling
+        is_standalone = getattr(game_config, 'standalone', False)
+
+        if is_standalone:
+            return self._sync_standalone_preset_to_sut(game_config, device, run_quality, run_resolution)
 
         # Use preset_id from YAML if available (preferred, explicit mapping)
         if game_config.preset_id:
@@ -1602,7 +1804,129 @@ class AutomationOrchestrator:
         except Exception as e:
             logger.warning(f"Error syncing preset: {e}")
             return False
-    
+
+    def _sync_standalone_preset_to_sut(self, game_config, device, run_quality: str = None, run_resolution: str = None) -> bool:
+        """
+        Sync preset for standalone games (like FFXIV benchmark).
+
+        For standalone games, the preset file lives in the game folder itself,
+        not in a user config directory. We:
+        1. Get the preset content from preset-manager
+        2. Flash it directly to the game folder via SUT's /flash_preset endpoint
+
+        Args:
+            game_config: GameConfig object with standalone fields
+            device: Device proxy
+
+        Returns:
+            True if sync successful, False otherwise
+        """
+        import requests
+
+        # Get the game folder path (discovered earlier in _discover_standalone_game_path)
+        game_folder = getattr(game_config, '_standalone_folder_path', None)
+        preset_filename = getattr(game_config, 'preset_filename', None)
+        preset_id = getattr(game_config, 'preset_id', None)
+
+        if not game_folder:
+            logger.warning(f"Standalone game folder not found for {game_config.name}, skipping preset sync")
+            return False
+
+        if not preset_filename:
+            logger.warning(f"No preset_filename defined for {game_config.name}, skipping preset sync")
+            return False
+
+        if not preset_id:
+            logger.warning(f"No preset_id defined for {game_config.name}, skipping preset sync")
+            return False
+
+        # Determine preset level
+        quality = run_quality or getattr(game_config, 'preset', 'high').lower()
+        resolution = run_resolution or getattr(game_config, 'resolution', '1920x1080')
+
+        res_map = {'1920x1080': '1080p', '2560x1440': '1440p', '3840x2160': '2160p', '1280x720': '720p'}
+        if resolution in ['720p', '1080p', '1440p', '2160p']:
+            res_short = resolution
+        else:
+            res_short = res_map.get(resolution, '1080p')
+
+        # PPG preset naming convention
+        preset_level = f"ppg-{quality}-{res_short}"
+        logger.info(f"Standalone preset level: {preset_level}")
+
+        try:
+            preset_manager_url = "http://localhost:5002"
+
+            # Step 1: Get preset content from preset-manager
+            logger.info(f"Fetching preset content from preset-manager for {preset_id}/{preset_level}")
+
+            preset_response = requests.get(
+                f"{preset_manager_url}/api/presets/{preset_id}/{preset_level}/content",
+                timeout=10
+            )
+
+            if preset_response.status_code != 200:
+                logger.warning(f"Failed to get preset content (status {preset_response.status_code})")
+                # Try without ppg- prefix
+                preset_level_alt = f"{quality}-{res_short}"
+                logger.info(f"Trying alternate preset level: {preset_level_alt}")
+                preset_response = requests.get(
+                    f"{preset_manager_url}/api/presets/{preset_id}/{preset_level_alt}/content",
+                    timeout=10
+                )
+
+                if preset_response.status_code != 200:
+                    logger.warning(f"Failed to get preset content with alternate level")
+                    return False
+
+            preset_data = preset_response.json()
+            preset_content = preset_data.get("content")
+
+            if not preset_content:
+                logger.warning(f"Preset content is empty for {preset_id}/{preset_level}")
+                return False
+
+            logger.info(f"Got preset content ({len(preset_content)} bytes)")
+
+            # Step 2: Flash preset to game folder via SUT
+            sut_url = f"http://{device.ip}:{device.port}"
+
+            logger.info(f"Flashing preset to SUT: {game_folder}/{preset_filename}")
+
+            flash_response = requests.post(
+                f"{sut_url}/flash_preset",
+                json={
+                    "game_folder": game_folder,
+                    "preset_filename": preset_filename,
+                    "preset_content": preset_content,
+                    "create_backup": True
+                },
+                timeout=30
+            )
+
+            if flash_response.status_code == 200:
+                result = flash_response.json()
+                if result.get("success"):
+                    target_path = result.get("target_path")
+                    backup_path = result.get("backup_path")
+                    logger.info(f"Preset flashed successfully: {target_path}")
+                    if backup_path:
+                        logger.info(f"  Backup created: {backup_path}")
+                    return True
+                else:
+                    logger.warning(f"Flash preset failed: {result.get('error')}")
+                    return False
+            else:
+                logger.warning(f"Flash preset failed (status {flash_response.status_code})")
+                return False
+
+        except requests.exceptions.ConnectionError as e:
+            logger.warning(f"Connection error during standalone preset sync: {e}")
+            return False
+        except Exception as e:
+            logger.warning(f"Error syncing standalone preset: {e}")
+            return False
+
     def validate_prerequisites(self, run: AutomationRun) -> tuple[bool, Optional[str]]:
         """Validate that all prerequisites are met for running automation"""
         try:

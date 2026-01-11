@@ -87,6 +87,152 @@ def _run_as_admin() -> bool:
     return ret > 32
 
 
+def _install_scheduled_task(master_override: str = None) -> bool:
+    """
+    Install SUT client as a Windows Scheduled Task with highest privileges.
+    This allows running elevated without UAC prompts after initial setup.
+
+    Args:
+        master_override: Optional master server IP:PORT to pass to the task
+
+    Returns:
+        True if task was created successfully
+    """
+    if sys.platform != "win32":
+        print("Scheduled task installation only supported on Windows")
+        return False
+
+    import subprocess
+    import shutil
+    import os
+
+    task_name = "SUT-Client"
+
+    # Find the sut-client executable
+    sut_client_exe = shutil.which('sut-client')
+    if not sut_client_exe:
+        if sys.argv[0].lower().endswith('.exe'):
+            sut_client_exe = sys.argv[0]
+        else:
+            print("Error: Could not find sut-client executable")
+            return False
+
+    # Build the command with optional master override
+    extra_args = f"--master {master_override}" if master_override else ""
+    command = f'"{sut_client_exe}" {extra_args}'.strip()
+
+    # Create the scheduled task using schtasks
+    # /RL HIGHEST = Run with highest privileges (no UAC)
+    # /SC ONLOGON = Run at user logon
+    # /IT = Interactive only (shows console window)
+    try:
+        # First, delete any existing task
+        subprocess.run(
+            ['schtasks', '/Delete', '/TN', task_name, '/F'],
+            capture_output=True,
+            check=False  # Don't fail if task doesn't exist
+        )
+
+        # Create the new task
+        result = subprocess.run([
+            'schtasks', '/Create',
+            '/TN', task_name,
+            '/TR', command,
+            '/SC', 'ONLOGON',
+            '/RL', 'HIGHEST',
+            '/IT',
+            '/F'  # Force overwrite
+        ], capture_output=True, text=True)
+
+        if result.returncode == 0:
+            print(f"SUCCESS: Scheduled task '{task_name}' created!")
+            print(f"Command: {command}")
+            print()
+            print("The SUT client will now:")
+            print("  - Start automatically at user login")
+            print("  - Run with admin privileges (no UAC prompt)")
+            print()
+            print("To start immediately without relogging:")
+            print(f"  schtasks /Run /TN {task_name}")
+            print()
+            print("To uninstall:")
+            print("  sut-client --uninstall-service")
+            return True
+        else:
+            print(f"Error creating scheduled task: {result.stderr}")
+            return False
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return False
+
+
+def _uninstall_scheduled_task() -> bool:
+    """
+    Remove the SUT client scheduled task.
+
+    Returns:
+        True if task was removed successfully
+    """
+    if sys.platform != "win32":
+        print("Scheduled task uninstallation only supported on Windows")
+        return False
+
+    import subprocess
+
+    task_name = "SUT-Client"
+
+    try:
+        result = subprocess.run(
+            ['schtasks', '/Delete', '/TN', task_name, '/F'],
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode == 0:
+            print(f"SUCCESS: Scheduled task '{task_name}' removed!")
+            return True
+        else:
+            print(f"Error removing scheduled task: {result.stderr}")
+            return False
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return False
+
+
+def _run_scheduled_task() -> bool:
+    """
+    Run the SUT client via the scheduled task (bypasses UAC).
+
+    Returns:
+        True if task was started successfully
+    """
+    if sys.platform != "win32":
+        return False
+
+    import subprocess
+
+    task_name = "SUT-Client"
+
+    try:
+        result = subprocess.run(
+            ['schtasks', '/Run', '/TN', task_name],
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode == 0:
+            print(f"Started SUT client via scheduled task (elevated, no UAC)")
+            return True
+        else:
+            # Task might not exist
+            return False
+
+    except Exception:
+        return False
+
+
 def main():
     """Main entry point for the SUT client"""
     # Parse arguments first (before admin elevation so args are passed through)
@@ -107,14 +253,58 @@ def main():
         help="Enable debug logging for verbose output"
     )
     parser.add_argument(
+        "--install-service",
+        action="store_true",
+        help="Install as a Windows Scheduled Task (runs at login with admin, no UAC prompt)"
+    )
+    parser.add_argument(
+        "--uninstall-service",
+        action="store_true",
+        help="Remove the Windows Scheduled Task"
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"sut-client {__version__}"
     )
     args = parser.parse_args()
 
+    # Handle install/uninstall service commands (requires admin)
+    if args.install_service:
+        if not _is_admin():
+            print("Installing service requires administrator privileges.")
+            print("Elevating...")
+            # Re-run with admin, keeping the --install-service flag
+            if _run_as_admin():
+                sys.exit(0)
+            else:
+                print("Error: Could not elevate to admin")
+                sys.exit(1)
+        else:
+            success = _install_scheduled_task(args.master)
+            sys.exit(0 if success else 1)
+
+    if args.uninstall_service:
+        if not _is_admin():
+            print("Uninstalling service requires administrator privileges.")
+            print("Elevating...")
+            if _run_as_admin():
+                sys.exit(0)
+            else:
+                print("Error: Could not elevate to admin")
+                sys.exit(1)
+        else:
+            success = _uninstall_scheduled_task()
+            sys.exit(0 if success else 1)
+
     # Check for admin and elevate if needed (Windows only)
     if sys.platform == "win32" and not _is_admin():
+        # First, try to run via scheduled task (no UAC)
+        if _run_scheduled_task():
+            print("SUT client started via scheduled task (elevated, no UAC)")
+            sys.exit(0)
+
+        # Fall back to UAC elevation
         print("Requesting administrator privileges...")
         if _run_as_admin():
             # Successfully launched elevated process, exit this one
@@ -122,6 +312,7 @@ def main():
         else:
             print("Warning: Could not elevate to admin. Some features (PC rename, registry) may not work.")
             print("To get full functionality, right-click and 'Run as administrator'")
+            print("Or install as service: sut-client --install-service")
             print()
 
     # Set window title

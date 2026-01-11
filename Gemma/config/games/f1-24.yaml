@@ -23,17 +23,6 @@ metadata:
 
 steps:
   1:
-    description: "Click Continue on Steam launch args dialog (optional)"
-    find:
-      type: "any"
-      text: "Continue"
-    action:
-      type: "click"
-    optional: true  # Dialog may not appear if Steam remembers choice
-    expected_delay: 5
-    timeout: 10
-
-  2:
     description: "Wait for benchmark to complete (~350s + buffer)"
     action:
       type: "wait"

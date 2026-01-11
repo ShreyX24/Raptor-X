@@ -3,6 +3,7 @@
 Run Manager for tracking and coordinating automation runs across multiple SUTs
 """
 
+import json
 import logging
 import threading
 import time
@@ -175,7 +176,7 @@ class RunManager:
         self.run_queue = queue.Queue()
         self.worker_threads: List[threading.Thread] = []
         self.running = False
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()  # Use RLock to allow nested locking (e.g., stop_run -> _save_queued_runs)
 
         # Per-SUT tracking for parallel execution
         self._sut_current_run: Dict[str, str] = {}  # sut_ip -> run_id currently executing
@@ -193,6 +194,16 @@ class RunManager:
         # Map run_id to storage manifest
         self._storage_map: Dict[str, RunManifest] = {}
 
+        # Queue persistence file and tracking list
+        self._queue_file = self.storage.base_dir / 'queued_runs.json'
+        self._queued_run_ids: List[str] = []  # Track queue order (Queue doesn't allow iteration)
+
+        # Active runs persistence file (for crash recovery)
+        self._active_runs_file = self.storage.base_dir / 'active_runs.json'
+
+        # SUT locks persistence file
+        self._sut_locks_file = self.storage.base_dir / 'sut_locks.json'
+
         # Event callbacks
         self.on_run_started = None
         self.on_run_progress = None
@@ -203,8 +214,17 @@ class RunManager:
         self.on_step_completed = None
         self.on_step_failed = None
 
+        # Recover interrupted runs first (mark as failed before loading history)
+        self._load_and_recover_active_runs()
+
+        # Clear stale SUT locks from previous session
+        self._load_and_clear_sut_locks()
+
         # Load history from disk
         self._load_history_from_storage()
+
+        # Load queued runs from disk (in case of restart)
+        self._load_queued_runs_from_storage()
 
         logger.info(f"RunManager initialized with max_concurrent_runs={max_concurrent_runs} (persistent storage mode)")
 
@@ -446,16 +466,20 @@ class RunManager:
             
             with self._lock:
                 self.active_runs[run_id] = run
+                self._queued_run_ids.append(run_id)  # Track for persistence
                 logger.info(f"Added run {run_id} to active runs. Current active runs: {len(self.active_runs)}")
-            
+
             logger.info(f"Adding run {run_id} to queue")
             self.run_queue.put(run_id)
-            
+
+            # Persist queue immediately to prevent data loss
+            self._save_queued_runs()
+
             queue_size = self.run_queue.qsize()
             worker_count = len([t for t in self.worker_threads if t.is_alive()])
             logger.info(f"Queued run {run_id}: {game_name} on {sut_ip} ({iterations} iterations)")
             logger.info(f"Queue size: {queue_size}, Active workers: {worker_count}")
-            
+
             return run_id
             
         except Exception as e:
@@ -487,6 +511,7 @@ class RunManager:
                     if self._sut_current_run.get(run.sut_ip) == run_id:
                         del self._sut_current_run[run.sut_ip]
                         logger.info(f"Released SUT {run.sut_ip} lock for stopped run")
+                        self._save_sut_locks()
 
                     # Emit timeline event so frontend shows "User cancelled"
                     if run.timeline:
@@ -507,11 +532,20 @@ class RunManager:
                     # Release account lock if somehow acquired while queued
                     self.account_scheduler.release(run.sut_ip, run.game_name)
 
+                    # Remove from queued tracking list
+                    if run_id in self._queued_run_ids:
+                        self._queued_run_ids.remove(run_id)
+
                     # Move to history
                     self.run_history.insert(0, run)
                     del self.active_runs[run_id]
 
                     logger.info(f"Cancelled queued run {run_id}")
+
+                    # Persist updated queue (outside lock to avoid nested lock issues)
+                    # Note: We're inside the lock, but _save_queued_runs also takes lock
+                    # This is safe because we use the same lock
+                    self._save_queued_runs()
                     return True
         return False
     
@@ -574,6 +608,7 @@ class RunManager:
     
     def update_run_progress(self, run_id: str, current_iteration: int = None, current_step: int = None):
         """Update progress for a running automation"""
+        iteration_changed = False
         with self._lock:
             if run_id not in self.active_runs:
                 return
@@ -581,6 +616,7 @@ class RunManager:
             run = self.active_runs[run_id]
 
             if current_iteration is not None:
+                iteration_changed = run.progress.current_iteration != current_iteration
                 run.progress.current_iteration = current_iteration
             if current_step is not None:
                 run.progress.current_step = current_step
@@ -591,6 +627,10 @@ class RunManager:
                     self.on_run_progress(run_id, run.to_dict())
                 except Exception as e:
                     logger.error(f"Error in run progress callback: {e}")
+
+        # Flush progress to disk on iteration change (significant milestone)
+        if iteration_changed:
+            self._flush_run_progress(run_id)
 
     def initialize_steps(self, run_id: str, steps: List[Dict[str, Any]]):
         """Initialize step list for a run from game config"""
@@ -753,7 +793,10 @@ class RunManager:
             
             if queue_size > 0:
                 logger.info(f"Worker should pick up next run from queue (size: {queue_size})")
-        
+
+        # Update active runs file (run no longer active)
+        self._save_active_runs()
+
         # Trigger completion callback OUTSIDE the lock to avoid deadlock
         logger.info(f"About to trigger completion callback for {run_id}")
         callback = self.on_run_completed if success else self.on_run_failed
@@ -822,6 +865,12 @@ class RunManager:
                     self._sut_current_run[run.sut_ip] = run_id
                     requeued_runs.discard(run_id)
 
+                # Run is about to execute - remove from queued list and persist
+                self._remove_from_queued_list(run_id)
+
+                # Persist SUT lock state
+                self._save_sut_locks()
+
                 # Now outside lock - log and execute
                 account_type = self.account_scheduler.get_account_type(run.game_name).value.upper()
                 logger.info(f"Worker {worker_name} executing {run.game_name} on {run.sut_ip} "
@@ -837,6 +886,8 @@ class RunManager:
                     with self._lock:
                         if self._sut_current_run.get(run.sut_ip) == run_id:
                             del self._sut_current_run[run.sut_ip]
+                    # Persist SUT lock release
+                    self._save_sut_locks()
 
             except Exception as e:
                 logger.error(f"Error in worker thread {worker_name}: {e}", exc_info=True)
@@ -865,6 +916,9 @@ class RunManager:
 
         # Create persistent storage structure
         storage_manifest = self._create_run_storage(run)
+
+        # Persist active runs state for crash recovery
+        self._save_active_runs()
 
         # Trigger started callback
         if self.on_run_started:
@@ -1101,3 +1155,297 @@ class RunManager:
                 'running': self.running,
                 'active_games': active_games  # For debugging
             }
+
+    # ==================== Queue Persistence Methods ====================
+
+    def _save_queued_runs(self):
+        """Persist queued runs to disk for recovery after restart"""
+        try:
+            # Gather data from active_runs that are still queued
+            queued_data = []
+            with self._lock:
+                for i, run_id in enumerate(self._queued_run_ids):
+                    if run_id in self.active_runs:
+                        run = self.active_runs[run_id]
+                        if run.status == RunStatus.QUEUED:
+                            queued_data.append({
+                                'run_id': run.run_id,
+                                'game_name': run.game_name,
+                                'sut_ip': run.sut_ip,
+                                'sut_device_id': run.sut_device_id,
+                                'iterations': run.iterations,
+                                'campaign_id': run.campaign_id,
+                                'quality': run.quality,
+                                'resolution': run.resolution,
+                                'skip_steam_login': run.skip_steam_login,
+                                'created_at': run.created_at.isoformat() if isinstance(run.created_at, datetime) else run.created_at,
+                                'queue_position': i
+                            })
+
+            data = {
+                'version': 1,
+                'updated_at': datetime.now().isoformat(),
+                'queued_runs': queued_data
+            }
+
+            # Atomic write: write to temp file then rename
+            temp_file = self._queue_file.with_suffix('.tmp')
+            with open(temp_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            temp_file.replace(self._queue_file)
+
+            logger.debug(f"Saved {len(queued_data)} queued runs to disk")
+
+        except Exception as e:
+            logger.error(f"Failed to save queued runs: {e}")
+
+    def _load_queued_runs_from_storage(self):
+        """Load queued runs from disk on startup"""
+        if not self._queue_file.exists():
+            logger.debug("No queued_runs.json found, starting with empty queue")
+            return
+
+        try:
+            with open(self._queue_file, 'r') as f:
+                data = json.load(f)
+
+            queued_runs = data.get('queued_runs', [])
+            if not queued_runs:
+                logger.debug("No queued runs to restore")
+                return
+
+            # Sort by queue_position to maintain order
+            queued_runs.sort(key=lambda x: x.get('queue_position', 0))
+
+            restored_count = 0
+            for run_data in queued_runs:
+                try:
+                    # Parse created_at
+                    created_at = datetime.now()
+                    if run_data.get('created_at'):
+                        try:
+                            created_at = datetime.fromisoformat(run_data['created_at'])
+                        except Exception:
+                            pass
+
+                    # Recreate the AutomationRun object
+                    run = AutomationRun(
+                        run_id=run_data['run_id'],
+                        game_name=run_data['game_name'],
+                        sut_ip=run_data['sut_ip'],
+                        sut_device_id=run_data.get('sut_device_id', ''),
+                        iterations=run_data.get('iterations', 1),
+                        campaign_id=run_data.get('campaign_id'),
+                        quality=run_data.get('quality'),
+                        resolution=run_data.get('resolution'),
+                        skip_steam_login=run_data.get('skip_steam_login', False),
+                        created_at=created_at
+                    )
+                    run.progress.total_iterations = run.iterations
+
+                    # Add to active_runs and queue
+                    self.active_runs[run.run_id] = run
+                    self._queued_run_ids.append(run.run_id)
+                    self.run_queue.put(run.run_id)
+                    restored_count += 1
+
+                    logger.info(f"Restored queued run {run.run_id[:8]}: {run.game_name} on {run.sut_ip}")
+
+                except Exception as e:
+                    logger.error(f"Failed to restore run {run_data.get('run_id', 'unknown')}: {e}")
+
+            logger.info(f"Restored {restored_count} queued runs from disk")
+
+            # Clear the file after successful restore (runs are now in memory queue)
+            # We'll re-save if any changes occur
+            self._save_queued_runs()
+
+        except Exception as e:
+            logger.error(f"Failed to load queued runs from storage: {e}")
+
+    def _remove_from_queued_list(self, run_id: str):
+        """Remove a run from the queued tracking list when it starts executing"""
+        with self._lock:
+            if run_id in self._queued_run_ids:
+                self._queued_run_ids.remove(run_id)
+                logger.debug(f"Removed {run_id[:8]} from queued list")
+        # Persist updated queue
+        self._save_queued_runs()
+
+    # ==================== Active Runs Persistence Methods ====================
+
+    def _save_active_runs(self):
+        """Persist currently executing runs to disk for crash recovery"""
+        try:
+            active_data = {}
+            with self._lock:
+                for run_id, run in self.active_runs.items():
+                    if run.status == RunStatus.RUNNING:
+                        active_data[run_id] = {
+                            'run_id': run.run_id,
+                            'game_name': run.game_name,
+                            'sut_ip': run.sut_ip,
+                            'sut_device_id': run.sut_device_id,
+                            'status': run.status.value,
+                            'started_at': run.progress.start_time.isoformat() if run.progress.start_time else None,
+                            'current_iteration': run.progress.current_iteration,
+                            'current_step': run.progress.current_step,
+                            'folder_name': run.folder_name,
+                            'campaign_id': run.campaign_id,
+                            'quality': run.quality,
+                            'resolution': run.resolution
+                        }
+
+            data = {
+                'version': 1,
+                'updated_at': datetime.now().isoformat(),
+                'active_runs': active_data
+            }
+
+            # Atomic write
+            temp_file = self._active_runs_file.with_suffix('.tmp')
+            with open(temp_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            temp_file.replace(self._active_runs_file)
+
+            logger.debug(f"Saved {len(active_data)} active runs to disk")
+
+        except Exception as e:
+            logger.error(f"Failed to save active runs: {e}")
+
+    def _load_and_recover_active_runs(self):
+        """Load active runs from disk and mark as interrupted (they crashed)"""
+        if not self._active_runs_file.exists():
+            logger.debug("No active_runs.json found")
+            return
+
+        try:
+            with open(self._active_runs_file, 'r') as f:
+                data = json.load(f)
+
+            active_runs = data.get('active_runs', {})
+            if not active_runs:
+                logger.debug("No active runs to recover")
+                return
+
+            recovered_count = 0
+            for run_id, run_data in active_runs.items():
+                try:
+                    # These runs were executing when Gemma crashed
+                    # Their manifests should exist on disk, just need status update
+                    folder_name = run_data.get('folder_name')
+                    if folder_name:
+                        # Find and update the manifest
+                        manifest_path = self.storage.base_dir / folder_name / 'manifest.json'
+                        if manifest_path.exists():
+                            with open(manifest_path, 'r') as mf:
+                                manifest_data = json.load(mf)
+
+                            if manifest_data.get('status') == 'running':
+                                manifest_data['status'] = 'failed'
+                                manifest_data['error'] = 'Run interrupted - Gemma was restarted'
+                                manifest_data['completed_at'] = datetime.now().isoformat()
+
+                                with open(manifest_path, 'w') as mf:
+                                    json.dump(manifest_data, mf, indent=2)
+
+                                logger.info(f"Marked interrupted run {run_id[:8]} ({run_data.get('game_name')}) as failed")
+                                recovered_count += 1
+
+                except Exception as e:
+                    logger.error(f"Failed to recover run {run_id}: {e}")
+
+            logger.info(f"Recovered {recovered_count} interrupted runs from active_runs.json")
+
+            # Clear the active runs file (all runs have been marked as failed)
+            self._active_runs_file.unlink(missing_ok=True)
+
+        except Exception as e:
+            logger.error(f"Failed to load active runs from storage: {e}")
+
+    # ==================== SUT Lock Persistence Methods ====================
+
+    def _save_sut_locks(self):
+        """Persist SUT lock state to disk"""
+        try:
+            locks_data = {}
+            with self._lock:
+                for sut_ip, run_id in self._sut_current_run.items():
+                    run = self.active_runs.get(run_id)
+                    locks_data[sut_ip] = {
+                        'run_id': run_id,
+                        'locked_at': datetime.now().isoformat(),
+                        'game_name': run.game_name if run else 'Unknown'
+                    }
+
+            data = {
+                'version': 1,
+                'updated_at': datetime.now().isoformat(),
+                'sut_locks': locks_data
+            }
+
+            # Atomic write
+            temp_file = self._sut_locks_file.with_suffix('.tmp')
+            with open(temp_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            temp_file.replace(self._sut_locks_file)
+
+            logger.debug(f"Saved {len(locks_data)} SUT locks to disk")
+
+        except Exception as e:
+            logger.error(f"Failed to save SUT locks: {e}")
+
+    def _load_and_clear_sut_locks(self):
+        """Load SUT locks from disk and clear stale ones on startup"""
+        if not self._sut_locks_file.exists():
+            logger.debug("No sut_locks.json found")
+            return
+
+        try:
+            with open(self._sut_locks_file, 'r') as f:
+                data = json.load(f)
+
+            sut_locks = data.get('sut_locks', {})
+            if sut_locks:
+                # Log stale locks (they'll be cleared since we're starting fresh)
+                for sut_ip, lock_info in sut_locks.items():
+                    logger.warning(f"Clearing stale SUT lock: {sut_ip} was locked by run {lock_info.get('run_id', 'unknown')[:8]} ({lock_info.get('game_name')})")
+
+            # Clear the file (we're starting fresh, no active runs)
+            self._sut_locks_file.unlink(missing_ok=True)
+            logger.info(f"Cleared {len(sut_locks)} stale SUT locks")
+
+        except Exception as e:
+            logger.error(f"Failed to load SUT locks from storage: {e}")
+
+    # ==================== Run Progress Persistence Methods ====================
+
+    def _flush_run_progress(self, run_id: str):
+        """Flush current run progress to the manifest file for durability"""
+        try:
+            with self._lock:
+                if run_id not in self.active_runs:
+                    return
+
+                run = self.active_runs[run_id]
+                manifest = self._storage_map.get(run_id)
+
+                if not manifest:
+                    return
+
+                # Update manifest with current progress
+                if not manifest.summary:
+                    manifest.summary = {}
+
+                manifest.summary['current_iteration'] = run.progress.current_iteration
+                manifest.summary['current_step'] = run.progress.current_step
+                manifest.summary['total_iterations'] = run.progress.total_iterations
+                manifest.summary['total_steps'] = run.progress.total_steps
+                manifest.summary['progress_updated_at'] = datetime.now().isoformat()
+
+            # Save manifest outside lock
+            self.storage.update_manifest(manifest)
+            logger.debug(f"Flushed progress for run {run_id[:8]}: iteration {run.progress.current_iteration}/{run.progress.total_iterations}")
+
+        except Exception as e:
+            logger.error(f"Failed to flush run progress for {run_id}: {e}")

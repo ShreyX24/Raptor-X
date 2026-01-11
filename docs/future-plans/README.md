@@ -7,8 +7,17 @@ This folder contains documentation for planned features and improvements for Rap
 | Document | Description | Priority |
 |----------|-------------|----------|
 | [automation-sequence.md](./automation-sequence.md) | Full automation pipeline walkthrough - to be displayed in About/Help page | High |
+| [self-update-system.md](./self-update-system.md) | Self-updating mechanism for all RPX components | High |
 
 ## Planned Features
+
+### Infrastructure
+- [ ] **Self-Update System** - Auto-update from GitHub for SUT client and main RPX system
+  - Periodic checks (configurable: 2-3x per day)
+  - Pull from main branch
+  - User confirmation before updating
+  - Toast notifications on Windows
+  - See [self-update-system.md](./self-update-system.md) for full design
 
 ### Frontend Enhancements
 - [ ] **About Page** - Display automation sequence with visual diagram

@@ -370,6 +370,10 @@ class RunStorageManager:
             game_folder = campaign_folder / game_folder_name
             game_folder.mkdir(parents=True, exist_ok=True)
 
+            # Touch the campaign folder to update its modification time
+            # This ensures folder appears at top when sorting by date
+            os.utime(campaign_folder, None)
+
             # For campaigns, run_dir is the game folder
             # Iteration folders (perf-run-1, perf-run-2, etc.) are created inside
             folder_name = game_folder_name
@@ -898,7 +902,7 @@ class RunStorageManager:
 
         campaign_folder.mkdir(parents=True, exist_ok=True)
 
-        # Create campaign manifest
+        # Create or update campaign manifest
         campaign_manifest = {
             'campaign_id': campaign_id,
             'campaign_name': campaign_name,
@@ -907,7 +911,24 @@ class RunStorageManager:
             'runs': []
         }
         campaign_manifest_path = campaign_folder / 'campaign_manifest.json'
+
+        should_write_manifest = False
         if not campaign_manifest_path.exists():
+            should_write_manifest = True
+        else:
+            # Check if existing manifest has a different campaign_id (folder reuse scenario)
+            try:
+                with open(campaign_manifest_path, 'r', encoding='utf-8') as f:
+                    existing_manifest = json.load(f)
+                if existing_manifest.get('campaign_id') != campaign_id:
+                    # Different campaign is reusing this folder - update the manifest
+                    logger.warning(f"Campaign folder reused: updating manifest from {existing_manifest.get('campaign_id')[:8]}... to {campaign_id[:8]}...")
+                    should_write_manifest = True
+            except Exception as e:
+                logger.error(f"Failed to read existing campaign manifest: {e}")
+                should_write_manifest = True
+
+        if should_write_manifest:
             with open(campaign_manifest_path, 'w', encoding='utf-8') as f:
                 json.dump(campaign_manifest, f, indent=2)
 
@@ -975,6 +996,10 @@ class RunStorageManager:
             # Write back
             with open(manifest_path, 'w', encoding='utf-8') as f:
                 json.dump(manifest, f, indent=2)
+
+            # Touch the campaign folder to update its modification time
+            # This ensures folder appears at top when sorting by date
+            os.utime(campaign_folder, None)
 
             logger.debug(f"Updated campaign manifest for {campaign_id[:8]}")
             return True

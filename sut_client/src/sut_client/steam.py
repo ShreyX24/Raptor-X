@@ -129,6 +129,65 @@ def find_steam_game_path(app_id: str) -> Optional[str]:
     return None
 
 
+def find_standalone_game(folder_names: List[str], exe_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Find a standalone game in Steam library folders by folder name.
+
+    Standalone games are benchmarks or tools that live in steamapps/common/
+    but don't have Steam manifests (no steam_app_id).
+
+    Args:
+        folder_names: List of possible folder names to search for (e.g., ["ffxiv-dawntrail-bench_v11", "ffxiv-dawntrail-bench"])
+        exe_name: Optional executable name to verify (e.g., "ffxiv-dawntrail-bench.exe")
+
+    Returns:
+        Dict with game info: {
+            "found": True,
+            "folder_path": "D:/SteamLibrary/steamapps/common/ffxiv-dawntrail-bench_v11",
+            "folder_name": "ffxiv-dawntrail-bench_v11",
+            "exe_path": "D:/SteamLibrary/steamapps/common/ffxiv-dawntrail-bench_v11/ffxiv-dawntrail-bench.exe",
+            "exe_exists": True
+        }
+        Or None if not found
+    """
+    libraries = get_steam_library_folders()
+    logger.info(f"Searching for standalone game in {len(libraries)} Steam libraries")
+    logger.info(f"Looking for folders: {folder_names}")
+
+    for lib in libraries:
+        common_path = os.path.join(lib, "steamapps", "common")
+        if not os.path.exists(common_path):
+            continue
+
+        for folder_name in folder_names:
+            game_folder = os.path.join(common_path, folder_name)
+            if os.path.exists(game_folder) and os.path.isdir(game_folder):
+                logger.info(f"Found standalone game folder: {game_folder}")
+
+                result = {
+                    "found": True,
+                    "folder_path": game_folder,
+                    "folder_name": folder_name,
+                    "exe_path": None,
+                    "exe_exists": False
+                }
+
+                # Check for exe if specified
+                if exe_name:
+                    exe_path = os.path.join(game_folder, exe_name)
+                    result["exe_path"] = exe_path
+                    result["exe_exists"] = os.path.exists(exe_path)
+                    if result["exe_exists"]:
+                        logger.info(f"Found executable: {exe_path}")
+                    else:
+                        logger.warning(f"Executable not found: {exe_path}")
+
+                return result
+
+    logger.warning(f"Standalone game not found. Searched folders: {folder_names}")
+    return None
+
+
 # =============================================================================
 # Steam Auto-Login
 # =============================================================================

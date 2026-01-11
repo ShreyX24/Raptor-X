@@ -6,11 +6,13 @@ executed sequentially on a single SUT. This allows users to benchmark
 multiple games in one operation.
 """
 
+import json
 import uuid
 import logging
 import threading
 from datetime import datetime
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional, Any
 from enum import Enum
 
@@ -101,6 +103,16 @@ class CampaignManager:
         # Mapping from run_id to campaign_id for quick lookup on events
         self._run_to_campaign: Dict[str, str] = {}
 
+        # Active campaigns persistence file - use run_manager's storage base_dir
+        if hasattr(run_manager, 'storage') and run_manager.storage:
+            self._active_campaigns_file = run_manager.storage.base_dir / 'active_campaigns.json'
+        else:
+            # Fallback: compute from this module's location
+            self._active_campaigns_file = Path(__file__).parent.parent.parent / 'logs' / 'runs' / 'active_campaigns.json'
+
+        # Load active campaigns from disk (for restart recovery)
+        self._load_active_campaigns()
+
         # Load campaign history from storage
         self._load_history_from_storage()
 
@@ -114,6 +126,124 @@ class CampaignManager:
         event_bus.subscribe(EventType.AUTOMATION_STARTED, self._on_run_event)
         event_bus.subscribe(EventType.AUTOMATION_COMPLETED, self._on_run_event)
         event_bus.subscribe(EventType.AUTOMATION_FAILED, self._on_run_event)
+
+    def _save_active_campaigns(self):
+        """Persist active campaigns to disk"""
+        try:
+            # Ensure directory exists
+            self._active_campaigns_file.parent.mkdir(parents=True, exist_ok=True)
+
+            campaigns_data = {}
+            with self._lock:
+                for campaign_id, campaign in self.campaigns.items():
+                    campaigns_data[campaign_id] = {
+                        'campaign_id': campaign.campaign_id,
+                        'name': campaign.name,
+                        'sut_ip': campaign.sut_ip,
+                        'sut_device_id': campaign.sut_device_id,
+                        'games': campaign.games,
+                        'iterations_per_game': campaign.iterations_per_game,
+                        'status': campaign.status.value,
+                        'run_ids': campaign.run_ids,
+                        'progress': {
+                            'total_games': campaign.progress.total_games,
+                            'completed_games': campaign.progress.completed_games,
+                            'failed_games': campaign.progress.failed_games,
+                            'current_game': campaign.progress.current_game,
+                            'current_game_index': campaign.progress.current_game_index,
+                        },
+                        'created_at': campaign.created_at.isoformat() if isinstance(campaign.created_at, datetime) else campaign.created_at,
+                        'quality': campaign.quality,
+                        'resolution': campaign.resolution
+                    }
+
+            data = {
+                'version': 1,
+                'updated_at': datetime.now().isoformat(),
+                'active_campaigns': campaigns_data
+            }
+
+            # Atomic write
+            temp_file = self._active_campaigns_file.with_suffix('.tmp')
+            with open(temp_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            temp_file.replace(self._active_campaigns_file)
+
+            logger.debug(f"Saved {len(campaigns_data)} active campaigns to disk")
+
+        except Exception as e:
+            logger.error(f"Failed to save active campaigns: {e}")
+
+    def _load_active_campaigns(self):
+        """Load active campaigns from disk on startup"""
+        if not self._active_campaigns_file.exists():
+            logger.debug("No active_campaigns.json found")
+            return
+
+        try:
+            with open(self._active_campaigns_file, 'r') as f:
+                data = json.load(f)
+
+            campaigns_data = data.get('active_campaigns', {})
+            if not campaigns_data:
+                logger.debug("No active campaigns to restore")
+                return
+
+            restored_count = 0
+            for campaign_id, campaign_data in campaigns_data.items():
+                try:
+                    # Parse created_at
+                    created_at = datetime.now()
+                    if campaign_data.get('created_at'):
+                        try:
+                            created_at = datetime.fromisoformat(campaign_data['created_at'])
+                        except Exception:
+                            pass
+
+                    # Recreate the Campaign object
+                    campaign = Campaign(
+                        campaign_id=campaign_data['campaign_id'],
+                        name=campaign_data['name'],
+                        sut_ip=campaign_data['sut_ip'],
+                        sut_device_id=campaign_data.get('sut_device_id', ''),
+                        games=campaign_data['games'],
+                        iterations_per_game=campaign_data.get('iterations_per_game', 1),
+                        status=CampaignStatus(campaign_data.get('status', 'queued')),
+                        run_ids=campaign_data.get('run_ids', []),
+                        quality=campaign_data.get('quality'),
+                        resolution=campaign_data.get('resolution'),
+                        created_at=created_at
+                    )
+
+                    # Restore progress
+                    progress_data = campaign_data.get('progress', {})
+                    campaign.progress = CampaignProgress(
+                        total_games=progress_data.get('total_games', len(campaign.games)),
+                        completed_games=progress_data.get('completed_games', 0),
+                        failed_games=progress_data.get('failed_games', 0),
+                        current_game=progress_data.get('current_game'),
+                        current_game_index=progress_data.get('current_game_index', 0)
+                    )
+
+                    # Add to active campaigns
+                    self.campaigns[campaign.campaign_id] = campaign
+
+                    # Rebuild run_to_campaign mapping
+                    for run_id in campaign.run_ids:
+                        self._run_to_campaign[run_id] = campaign.campaign_id
+
+                    restored_count += 1
+                    logger.info(f"Restored active campaign {campaign.campaign_id[:8]}: {campaign.name} ({len(campaign.run_ids)} runs)")
+
+                except Exception as e:
+                    logger.error(f"Failed to restore campaign {campaign_id}: {e}")
+
+            logger.info(f"Restored {restored_count} active campaigns from disk")
+
+            # Don't clear the file - we'll update it as state changes
+
+        except Exception as e:
+            logger.error(f"Failed to load active campaigns from storage: {e}")
 
     def _on_run_event(self, event):
         """Handle run events to update campaign progress"""
@@ -264,6 +394,9 @@ class CampaignManager:
 
         logger.info(f"Campaign {campaign_id[:8]} created with {len(run_ids)} runs queued")
 
+        # Persist active campaigns immediately
+        self._save_active_campaigns()
+
         # Emit campaign created event
         event_bus.emit(EventType.CAMPAIGN_CREATED, {
             'campaign_id': campaign_id,
@@ -363,6 +496,22 @@ class CampaignManager:
                     for run_id in campaign.run_ids:
                         self._run_to_campaign.pop(run_id, None)
 
+            # Save campaign manifest to disk for persistence
+            try:
+                if hasattr(self.run_manager, 'storage') and self.run_manager.storage:
+                    self.run_manager.storage.update_campaign_manifest(
+                        campaign.campaign_id,
+                        run_ids=campaign.run_ids,
+                        status=campaign.status.value,
+                        completed_at=campaign.completed_at.isoformat() if campaign.completed_at else None
+                    )
+                    logger.info(f"Campaign {campaign.campaign_id[:8]} manifest saved to disk")
+            except Exception as e:
+                logger.error(f"Failed to save campaign manifest: {e}")
+
+            # Update active campaigns file (campaign completed, remove from active)
+            self._save_active_campaigns()
+
             # Emit completion event
             event_type = EventType.CAMPAIGN_COMPLETED if failed == 0 else EventType.CAMPAIGN_FAILED
             event_bus.emit(event_type, {
@@ -375,6 +524,8 @@ class CampaignManager:
         # Emit progress event if progress changed
         progress_changed = (completed != old_completed or failed != old_failed or campaign.status != old_status)
         if progress_changed and campaign.status == CampaignStatus.RUNNING:
+            # Persist progress change
+            self._save_active_campaigns()
             event_bus.emit(EventType.CAMPAIGN_PROGRESS, {
                 'campaign_id': campaign.campaign_id,
                 'campaign': campaign.to_dict()

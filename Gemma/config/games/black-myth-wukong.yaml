@@ -131,7 +131,7 @@ steps:
     verify_success:
       - type: "any"
         text: "Confirm"
-    expected_delay: 5
+    expected_delay: 6
     timeout: 20
 
   9:

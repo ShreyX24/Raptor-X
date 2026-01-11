@@ -41,6 +41,22 @@ const getSteamHeaderUrl = (steamAppId: string | undefined): string | null => {
   return `https://steamcdn-a.akamaihd.net/steam/apps/${steamAppId}/header.jpg`;
 };
 
+// Convert game name to slug for custom image path (e.g., "Far Cry 6" -> "far-cry-6")
+const getGameSlug = (gameName: string): string => {
+  return gameName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')  // Replace non-alphanumeric with hyphens
+    .replace(/-+/g, '-')           // Collapse multiple hyphens
+    .replace(/^-+|-+$/g, '');      // Trim leading/trailing hyphens
+};
+
+// Get custom image URL - uses preset_id first if available, then falls back to name-based slug
+const getCustomImageUrl = (game: GameConfig): string => {
+  // Use preset_id if available (canonical identifier)
+  const slug = game.preset_id || getGameSlug(game.name);
+  return `/game-images/${slug}.jpg`;
+};
+
 // Check if a URL is valid (returns a promise that resolves to true/false)
 const checkImageUrl = (url: string): Promise<boolean> => {
   return new Promise((resolve) => {
@@ -64,7 +80,15 @@ const getBestImageUrl = async (game: GameConfig): Promise<string | null> => {
     return imageUrlCache.get(cacheKey) || null;
   }
 
-  // Try Steam library image first (portrait, best for our cards)
+  // Try custom image first (for games without Steam IDs or custom uploads)
+  const customImageUrl = getCustomImageUrl(game);
+  const customImageValid = await checkImageUrl(customImageUrl);
+  if (customImageValid) {
+    imageUrlCache.set(cacheKey, customImageUrl);
+    return customImageUrl;
+  }
+
+  // Try Steam library image (portrait, best for our cards)
   const steamLibraryUrl = getSteamLibraryUrl(game.steam_app_id);
   if (steamLibraryUrl) {
     const isValid = await checkImageUrl(steamLibraryUrl);

@@ -31,7 +31,7 @@ from .input_controller import InputController
 from .launcher import launch_game, cancel_launch, terminate_game, get_game_status, get_current_game_info, find_process_by_name
 from .window import ensure_window_foreground_v2, minimize_other_windows
 from .system import check_process, kill_process
-from .steam import login_steam, get_steam_library_folders, get_steam_auto_login_user, is_steam_running, verify_steam_login
+from .steam import login_steam, get_steam_library_folders, get_steam_auto_login_user, is_steam_running, verify_steam_login, find_standalone_game
 from .hardware import set_dpi_awareness, get_screen_resolution, get_cpu_model, get_gpu_model
 from .display import get_display_manager
 
@@ -570,18 +570,25 @@ def create_app() -> Flask:
     @app.route('/installed_games', methods=['GET'])
     def installed_games():
         """
-        Scan Steam library folders and return installed games.
-        Detects both Steam games (with manifests) and standalone games (folders without manifests).
+        Scan Steam library folders for installed games.
+        Detects Steam games (with manifests) and standalone games in steamapps/common/.
+        Steam library paths are discovered dynamically from libraryfolders.vdf.
         """
         try:
             libraries = get_steam_library_folders()
             installed = []
             seen_dirs = set()  # Track install dirs to avoid duplicates
 
+            logger.info(f"Scanning {len(libraries)} Steam libraries: {libraries}")
+
             for lib in libraries:
                 steamapps = os.path.join(lib, "steamapps")
                 if not os.path.exists(steamapps):
+                    logger.debug(f"Steamapps not found: {steamapps}")
                     continue
+
+                logger.debug(f"Scanning library: {lib}")
+                seen_dirs_in_lib = set()
 
                 # First pass: Get Steam games with manifests
                 for filename in os.listdir(steamapps):
@@ -600,6 +607,7 @@ def create_app() -> Flask:
                                 game_name = name_match.group(1)
                                 install_dir = installdir_match.group(1)
                                 full_path = os.path.join(steamapps, "common", install_dir)
+                                seen_dirs_in_lib.add(install_dir.lower())
                                 seen_dirs.add(install_dir.lower())
 
                                 installed.append({
@@ -616,20 +624,26 @@ def create_app() -> Flask:
                 # Second pass: Detect standalone games in common folder without manifests
                 common_path = os.path.join(steamapps, "common")
                 if os.path.exists(common_path):
+                    logger.debug(f"Scanning common folder: {common_path}")
                     for folder in os.listdir(common_path):
-                        if folder.lower() not in seen_dirs:
+                        folder_lower = folder.lower()
+                        if folder_lower not in seen_dirs_in_lib:
                             folder_path = os.path.join(common_path, folder)
                             if os.path.isdir(folder_path):
-                                # This is a standalone/benchmark folder without Steam manifest
-                                installed.append({
-                                    "steam_app_id": None,
-                                    "name": folder,  # Use folder name as game name
-                                    "install_dir": folder,
-                                    "install_path": folder_path,
-                                    "exists": True,
-                                    "source": "standalone"
-                                })
-                                logger.info(f"Found standalone game: {folder}")
+                                # Avoid duplicates across libraries
+                                if folder_lower not in seen_dirs:
+                                    seen_dirs.add(folder_lower)
+                                    installed.append({
+                                        "steam_app_id": None,
+                                        "name": folder,
+                                        "install_dir": folder,
+                                        "install_path": folder_path,
+                                        "exists": True,
+                                        "source": "standalone"
+                                    })
+                                    logger.info(f"Found standalone game: {folder} in {common_path}")
+
+            logger.info(f"Found {len(installed)} games ({len([g for g in installed if g['source'] == 'steam'])} Steam, {len([g for g in installed if g['source'] == 'standalone'])} standalone)")
 
             return jsonify({
                 "success": True,
@@ -640,6 +654,120 @@ def create_app() -> Flask:
 
         except Exception as e:
             logger.error(f"Error getting installed games: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route('/find_standalone_game', methods=['POST'])
+    def find_standalone_game_route():
+        """
+        Find a standalone game in Steam library folders by folder name.
+
+        Request body:
+        {
+            "folder_names": ["ffxiv-dawntrail-bench_v11", "ffxiv-dawntrail-bench"],
+            "exe_name": "ffxiv-dawntrail-bench.exe"  // Optional
+        }
+
+        Returns:
+        {
+            "found": true,
+            "folder_path": "D:/SteamLibrary/steamapps/common/ffxiv-dawntrail-bench_v11",
+            "folder_name": "ffxiv-dawntrail-bench_v11",
+            "exe_path": "D:/SteamLibrary/steamapps/common/.../ffxiv-dawntrail-bench.exe",
+            "exe_exists": true
+        }
+        """
+        try:
+            data = request.get_json() or {}
+            folder_names = data.get('folder_names', [])
+            exe_name = data.get('exe_name')
+
+            if not folder_names:
+                return jsonify({"found": False, "error": "folder_names is required"}), 400
+
+            result = find_standalone_game(folder_names, exe_name)
+
+            if result:
+                return jsonify(result)
+            else:
+                return jsonify({
+                    "found": False,
+                    "error": f"Standalone game not found. Searched folders: {folder_names}"
+                })
+
+        except Exception as e:
+            logger.error(f"Error finding standalone game: {e}")
+            return jsonify({"found": False, "error": str(e)}), 500
+
+    @app.route('/flash_preset', methods=['POST'])
+    def flash_preset_route():
+        """
+        Flash a preset file directly to a game folder (for standalone games).
+
+        Request body:
+        {
+            "game_folder": "D:/SteamLibrary/steamapps/common/ffxiv-dawntrail-bench_v11",
+            "preset_filename": "ffxivbenchmarklauncher.ini",
+            "preset_content": "...ini file content...",
+            "create_backup": true  // Optional, default true
+        }
+
+        Returns:
+        {
+            "success": true,
+            "message": "Preset flashed successfully",
+            "target_path": "D:/.../ffxivbenchmarklauncher.ini",
+            "backup_path": "D:/.../ffxivbenchmarklauncher.ini.backup"  // If backup was created
+        }
+        """
+        try:
+            data = request.get_json() or {}
+            game_folder = data.get('game_folder')
+            preset_filename = data.get('preset_filename')
+            preset_content = data.get('preset_content')
+            create_backup = data.get('create_backup', True)
+
+            if not game_folder:
+                return jsonify({"success": False, "error": "game_folder is required"}), 400
+            if not preset_filename:
+                return jsonify({"success": False, "error": "preset_filename is required"}), 400
+            if not preset_content:
+                return jsonify({"success": False, "error": "preset_content is required"}), 400
+
+            # Validate game folder exists
+            if not os.path.exists(game_folder):
+                return jsonify({
+                    "success": False,
+                    "error": f"Game folder not found: {game_folder}"
+                }), 404
+
+            target_path = os.path.join(game_folder, preset_filename)
+            backup_path = None
+
+            # Create backup if file exists and backup requested
+            if create_backup and os.path.exists(target_path):
+                backup_path = target_path + ".backup"
+                import shutil
+                shutil.copy2(target_path, backup_path)
+                logger.info(f"Created backup: {backup_path}")
+
+            # Write preset content
+            with open(target_path, 'w', encoding='utf-8') as f:
+                f.write(preset_content)
+
+            logger.info(f"Flashed preset to: {target_path}")
+
+            result = {
+                "success": True,
+                "message": "Preset flashed successfully",
+                "target_path": target_path
+            }
+            if backup_path:
+                result["backup_path"] = backup_path
+
+            return jsonify(result)
+
+        except Exception as e:
+            logger.error(f"Error flashing preset: {e}")
             return jsonify({"success": False, "error": str(e)}), 500
 
     # =========================================================================
