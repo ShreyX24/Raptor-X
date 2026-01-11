@@ -207,7 +207,12 @@ export interface LogEntry {
 export interface RunLogsResponse {
   logs: LogEntry[];
   run_id: string;
-  total_count: number;
+  folder_name?: string;
+  total_entries: number;
+  limit?: number;
+  offset?: number;
+  has_more?: boolean;
+  message?: string;
 }
 
 export interface TimelineEvent {
@@ -228,9 +233,17 @@ export interface RunTimelineResponse {
   events: TimelineEvent[];
 }
 
-export async function getRunLogs(runId: string): Promise<RunLogsResponse> {
-  return fetchJson<RunLogsResponse>(`${API_BASE}/runs/${runId}/logs`, {
-    timeout: TIMEOUTS.default * 2, // Logs can be large, give more time
+export async function getRunLogs(
+  runId: string,
+  options?: { limit?: number; offset?: number }
+): Promise<RunLogsResponse> {
+  const params = new URLSearchParams();
+  if (options?.limit) params.set('limit', options.limit.toString());
+  if (options?.offset) params.set('offset', options.offset.toString());
+  const queryString = params.toString();
+  const url = `${API_BASE}/runs/${runId}/logs${queryString ? `?${queryString}` : ''}`;
+  return fetchJson<RunLogsResponse>(url, {
+    timeout: TIMEOUTS.default, // With pagination, responses are smaller
   });
 }
 

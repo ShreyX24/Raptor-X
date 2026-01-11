@@ -1383,10 +1383,19 @@ class APIRoutes:
 
         @app.route('/api/runs/<run_id>/logs', methods=['GET'])
         def get_run_logs(run_id):
-            """Get logs for a specific automation run from blackbox files"""
+            """Get logs for a specific automation run from blackbox files
+
+            Query params:
+                limit: Max number of log entries to return (default 500, max 2000)
+                offset: Number of entries to skip (for pagination)
+            """
             try:
                 import re
                 from pathlib import Path
+
+                # Parse pagination params
+                limit = min(int(request.args.get('limit', 500)), 2000)
+                offset = int(request.args.get('offset', 0))
 
                 if not hasattr(self, 'run_manager') or self.run_manager is None:
                     return jsonify({"error": "Run manager not available"}), 500
@@ -1456,11 +1465,18 @@ class APIRoutes:
                     except Exception as e:
                         logger.warning(f"Error reading log file {log_file}: {e}")
 
+                # Apply pagination
+                total_entries = len(logs)
+                paginated_logs = logs[offset:offset + limit]
+
                 return jsonify({
-                    "logs": logs,
+                    "logs": paginated_logs,
                     "run_id": run_id,
                     "folder_name": manifest.folder_name,
-                    "total_entries": len(logs)
+                    "total_entries": total_entries,
+                    "limit": limit,
+                    "offset": offset,
+                    "has_more": (offset + limit) < total_entries
                 })
 
             except Exception as e:
