@@ -10,7 +10,8 @@ metadata:
   process_name: sottr.exe
   benchmark_name: Built-in Benchmark
   benchmark_duration: 120
-  startup_wait: 15
+  startup_wait: 60
+  init_wait: 10
   resolution: 1920x1080
   preset: High
   graphics_api: DirectX 11
@@ -18,7 +19,7 @@ steps:
   1:
     description: click Play button in launcher popup
     find:
-      type: text
+      type: any
       text: Play
       text_match: exact
     action:
@@ -29,20 +30,6 @@ steps:
     expected_delay: 25
     timeout: 30
   2:
-    description: click continue to enter game (optional)
-    find:
-      type: any
-      text: CONTINUE
-      text_match: contains
-    action:
-      type: click
-      button: left
-      move_duration: 0.5
-      click_delay: 0.5
-    optional: true
-    expected_delay: 5
-    timeout: 30
-  3:
     description: click options in game menu
     find:
       type: any
@@ -55,7 +42,7 @@ steps:
       click_delay: 0.5
     expected_delay: 5
     timeout: 30
-  4:
+  3:
     description: click on display and graphics
     find:
       type: any
@@ -68,7 +55,7 @@ steps:
       click_delay: 0.5
     expected_delay: 5
     timeout: 30
-  5:
+  4:
     description: click on Run Benchmark to start the benchmark
     find:
       type: any
@@ -81,14 +68,14 @@ steps:
       click_delay: 0.3
     expected_delay: 4
     timeout: 20
-  6:
+  5:
     description: wait post benchmark - 210 seconds
     action:
       type: wait
       duration: 210
     expected_delay: 4
     timeout: 20
-  7:
+  6:
     description: 'Click on Close to go back'
     find:
       type: any
@@ -101,7 +88,7 @@ steps:
       click_delay: 0.3
     expected_delay: 4
     timeout: 20
-  8:
+  7:
     description: Click on quit game
     find:
       type: any
@@ -114,7 +101,7 @@ steps:
       click_delay: 0.3
     expected_delay: 6
     timeout: 20
-  9:
+  8:
     description: confirm quit game
     find:
       type: any
@@ -123,7 +110,6 @@ steps:
     action:
       type: key
       key: enter
-    optional: true
     expected_delay: 4
     timeout: 20
 fallbacks:

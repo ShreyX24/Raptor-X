@@ -39,6 +39,11 @@ except ImportError:
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 
+# SystemParametersInfo constants for foreground lock timeout
+SPI_GETFOREGROUNDLOCKTIMEOUT = 0x2000
+SPI_SETFOREGROUNDLOCKTIMEOUT = 0x2001
+SPIF_SENDCHANGE = 0x0002
+
 
 class KEYBDINPUT(ctypes.Structure):
     _fields_ = [
@@ -292,6 +297,20 @@ def ensure_window_foreground(pid: int, timeout: int = 5) -> bool:
             target_tid, _ = win32process.GetWindowThreadProcessId(target_hwnd)
 
             try:
+                # Disable foreground lock timeout temporarily
+                # This is the most reliable way to bypass SetForegroundWindow restrictions
+                old_timeout = ctypes.c_uint(0)
+                ctypes.windll.user32.SystemParametersInfoW(
+                    SPI_GETFOREGROUNDLOCKTIMEOUT, 0, ctypes.byref(old_timeout), 0
+                )
+                logger.debug(f"Saved foreground lock timeout: {old_timeout.value}ms")
+
+                # Set timeout to 0 (disable lock)
+                ctypes.windll.user32.SystemParametersInfoW(
+                    SPI_SETFOREGROUNDLOCKTIMEOUT, 0, None, SPIF_SENDCHANGE
+                )
+                logger.debug("Disabled foreground lock timeout")
+
                 # "Alt" key trick to bypass foreground lock
                 logger.debug("Sending Alt key trick to enable foreground switch")
 
@@ -340,6 +359,15 @@ def ensure_window_foreground(pid: int, timeout: int = 5) -> bool:
                     logger.debug("Detaching thread input")
                     win32process.AttachThreadInput(current_tid, target_tid, False)
 
+                # Restore foreground lock timeout
+                if old_timeout.value > 0:
+                    ctypes.windll.user32.SystemParametersInfoW(
+                        SPI_SETFOREGROUNDLOCKTIMEOUT, 0,
+                        ctypes.cast(old_timeout.value, ctypes.c_void_p),
+                        SPIF_SENDCHANGE
+                    )
+                    logger.debug(f"Restored foreground lock timeout to {old_timeout.value}ms")
+
                 # Verify
                 foreground_hwnd = win32gui.GetForegroundWindow()
                 if foreground_hwnd == target_hwnd:
@@ -356,10 +384,16 @@ def ensure_window_foreground(pid: int, timeout: int = 5) -> bool:
 
             except Exception as e:
                 logger.warning(f"Failed to force foreground: {e}")
-                # Ensure detach happens even on error
+                # Ensure detach and timeout restore happen even on error
                 try:
                     if 'attached' in locals() and attached:
                         win32process.AttachThreadInput(current_tid, target_tid, False)
+                    if 'old_timeout' in locals() and old_timeout.value > 0:
+                        ctypes.windll.user32.SystemParametersInfoW(
+                            SPI_SETFOREGROUNDLOCKTIMEOUT, 0,
+                            ctypes.cast(old_timeout.value, ctypes.c_void_p),
+                            SPIF_SENDCHANGE
+                        )
                 except Exception:
                     pass
         else:

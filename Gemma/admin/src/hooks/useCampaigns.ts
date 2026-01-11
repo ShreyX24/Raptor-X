@@ -1,12 +1,18 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { getCampaigns, stopCampaign } from '../api';
 import type { Campaign } from '../types';
+import { useWebSocket, CampaignEvent } from './useWebSocket';
 
 export function useCampaigns(pollInterval: number = 3000) {
   const [activeCampaigns, setActiveCampaigns] = useState<Campaign[]>([]);
   const [historyCampaigns, setHistoryCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // WebSocket for real-time updates
+  const { isConnected, onCampaignEvent } = useWebSocket();
+  const wsConnectedRef = useRef(false);
+  wsConnectedRef.current = isConnected;
 
   const fetchCampaigns = useCallback(async () => {
     try {
@@ -21,9 +27,33 @@ export function useCampaigns(pollInterval: number = 3000) {
     }
   }, []);
 
+  // Handle WebSocket campaign events for real-time updates
+  useEffect(() => {
+    const unsubscribe = onCampaignEvent((event: CampaignEvent) => {
+      console.log('[useCampaigns] WebSocket event:', event.event, event.data?.campaign_id);
+
+      // Refresh campaigns on any campaign event
+      switch (event.event) {
+        case 'campaign_created':
+        case 'campaign_progress':
+        case 'campaign_completed':
+        case 'campaign_failed':
+          fetchCampaigns();
+          break;
+        default:
+          break;
+      }
+    });
+
+    return unsubscribe;
+  }, [onCampaignEvent, fetchCampaigns]);
+
+  // Polling - use longer interval when WebSocket is connected
   useEffect(() => {
     fetchCampaigns();
-    const interval = setInterval(fetchCampaigns, pollInterval);
+    // Poll every 3s normally, or every 10s when WebSocket is connected
+    const actualInterval = wsConnectedRef.current ? 10000 : pollInterval;
+    const interval = setInterval(fetchCampaigns, actualInterval);
     return () => clearInterval(interval);
   }, [fetchCampaigns, pollInterval]);
 
@@ -46,5 +76,7 @@ export function useCampaigns(pollInterval: number = 3000) {
     error,
     refetch: fetchCampaigns,
     stop,
+    // WebSocket status
+    isWebSocketConnected: isConnected,
   };
 }

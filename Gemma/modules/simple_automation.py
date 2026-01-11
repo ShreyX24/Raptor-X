@@ -989,10 +989,10 @@ class SimpleAutomation:
 
             if type_match and text_match:
                 element_text = bbox.element_text if bbox.element_text else "(no text)"
-                logger.debug(f"✅ Element found: {bbox.element_type} '{element_text}' at ({bbox.x}, {bbox.y})")
+                logger.debug(f"[OK] Element found: {bbox.element_type} '{element_text}' at ({bbox.x}, {bbox.y})")
                 return bbox
 
-        logger.debug("❌ No matching element found")
+        logger.debug("[X] No matching element found")
         return None
             
 

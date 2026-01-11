@@ -46,35 +46,63 @@ async function fetchDiscoveryJson<T>(endpoint: string, options?: RequestInit): P
 
 /**
  * Take a screenshot from a SUT
+ * Routes through SUT Discovery Service proxy (the ONLY gateway to SUTs)
  * @param sutId The unique ID of the SUT
  * @returns Blob containing the PNG image
  */
 export async function takeScreenshot(sutId: string): Promise<Blob> {
+  // Use Discovery Service proxy - the single gateway for ALL SUT communication
   const response = await fetch(
     `${DISCOVERY_SERVICE_URL}/suts/${encodeURIComponent(sutId)}/screenshot`
   );
 
   if (!response.ok) {
-    throw new WorkflowBuilderError(response.status, 'Failed to take screenshot');
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new WorkflowBuilderError(response.status, error.error || 'Failed to take screenshot');
   }
 
   return response.blob();
+}
+
+/** OCR configuration options for OmniParser */
+export interface OcrConfig {
+  use_paddleocr?: boolean;
+  text_threshold?: number;
+  box_threshold?: number;
+  iou_threshold?: number;
 }
 
 /**
  * Parse a screenshot with OmniParser (via Gemma backend)
  * @param imageBlob The screenshot image as a Blob
  * @param includeAnnotation Whether to include the annotated image
+ * @param ocrConfig Optional OCR configuration for better text detection
  * @returns Parsed elements and optional annotated image
  */
 export async function parseScreenshot(
   imageBlob: Blob,
-  includeAnnotation: boolean = true
+  includeAnnotation: boolean = true,
+  ocrConfig?: OcrConfig
 ): Promise<ParsedScreenshot> {
   const formData = new FormData();
   formData.append('screenshot', imageBlob, 'screenshot.png');
   if (includeAnnotation) {
     formData.append('include_annotation', 'true');
+  }
+  // Add OCR config parameters if provided
+  if (ocrConfig) {
+    if (ocrConfig.use_paddleocr !== undefined) {
+      formData.append('use_paddleocr', String(ocrConfig.use_paddleocr));
+    }
+    if (ocrConfig.text_threshold !== undefined) {
+      formData.append('text_threshold', String(ocrConfig.text_threshold));
+    }
+    if (ocrConfig.box_threshold !== undefined) {
+      formData.append('box_threshold', String(ocrConfig.box_threshold));
+    }
+    if (ocrConfig.iou_threshold !== undefined) {
+      formData.append('iou_threshold', String(ocrConfig.iou_threshold));
+    }
   }
 
   const response = await fetch(`${GEMMA_BACKEND_URL}/omniparser/analyze`, {
@@ -88,10 +116,33 @@ export async function parseScreenshot(
   }
 
   const data = await response.json();
+
+  // Transform backend elements to frontend BoundingBox format
+  // Backend returns: { bbox: [x1, y1, x2, y2] (normalized 0-1), type, content, ... }
+  // Frontend expects: { x, y, width, height (pixels for 1920x1080), element_type, element_text, ... }
+  const elements = (data.elements || []).map((el: {
+    bbox?: number[];
+    type?: string;
+    content?: string;
+    confidence?: number;
+  }) => {
+    const bbox = el.bbox || [0, 0, 0, 0];
+    // Convert normalized 0-1 coordinates to pixel values for 1920x1080
+    return {
+      x: bbox[0] * 1920,
+      y: bbox[1] * 1080,
+      width: (bbox[2] - bbox[0]) * 1920,
+      height: (bbox[3] - bbox[1]) * 1080,
+      element_type: (el.type === 'icon' ? 'icon' : 'text') as 'icon' | 'text',
+      element_text: el.content || '',
+      confidence: el.confidence,
+    };
+  });
+
   return {
-    elements: data.elements || [],
+    elements,
     annotated_image_base64: data.annotated_image_base64,
-    element_count: data.element_count || data.elements?.length || 0,
+    element_count: data.element_count || elements.length,
     processing_time: data.response_time || 0,
   };
 }
@@ -122,13 +173,20 @@ export async function sendAction(
     dest_y?: number;
   }
 ): Promise<ActionResult> {
-  return fetchDiscoveryJson<ActionResult>(
+  const response = await fetchDiscoveryJson<{ status?: string; success?: boolean; message?: string; error?: string }>(
     `/suts/${encodeURIComponent(sutId)}/action`,
     {
       method: 'POST',
       body: JSON.stringify(action),
     }
   );
+
+  // Normalize response: SUT returns { status: "success" } but we need { success: true }
+  return {
+    success: response.success ?? (response.status === 'success'),
+    message: response.message || '',
+    error: response.error,
+  };
 }
 
 /**
@@ -208,6 +266,26 @@ export async function getInstalledGames(sutId: string): Promise<Array<{
   return fetchDiscoveryJson(
     `/suts/${encodeURIComponent(sutId)}/games`
   );
+}
+
+/**
+ * Check if a specific process is running on a SUT
+ * @param sutId The unique ID of the SUT
+ * @param processName The process name to check (e.g., "game.exe")
+ */
+export async function isProcessRunning(sutId: string, processName: string): Promise<boolean> {
+  try {
+    const result = await fetchDiscoveryJson<{ running: boolean; pid?: number }>(
+      `/suts/${encodeURIComponent(sutId)}/check-process`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ process_name: processName }),
+      }
+    );
+    return result.running;
+  } catch {
+    return false;
+  }
 }
 
 // ============================================
@@ -344,6 +422,195 @@ export async function blobToImageElement(blob: Blob): Promise<HTMLImageElement> 
     };
     img.src = url;
   });
+}
+
+// ============================================
+// Workflow YAML CRUD API
+// ============================================
+
+/** Summary of a workflow for sidebar display */
+export interface WorkflowSummary {
+  name: string;
+  filename: string;
+  config_type: 'steps' | 'state_machine';
+  step_count: number;
+  last_modified: string | null;
+  steam_app_id: string | null;
+  preset_id: string | null;
+}
+
+/**
+ * Get list of all workflows with summaries
+ */
+export async function listWorkflows(): Promise<WorkflowSummary[]> {
+  const response = await fetch(`${GEMMA_BACKEND_URL}/workflows`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new WorkflowBuilderError(response.status, error.error || 'Failed to list workflows');
+  }
+
+  const data = await response.json();
+  return data.workflows || [];
+}
+
+/**
+ * Get raw YAML content for a workflow
+ * @param gameName The name of the game/workflow
+ */
+export async function getWorkflowYaml(gameName: string): Promise<string> {
+  const response = await fetch(
+    `${GEMMA_BACKEND_URL}/games/${encodeURIComponent(gameName)}/yaml`
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new WorkflowBuilderError(response.status, error.error || 'Failed to get workflow');
+  }
+
+  const data = await response.json();
+  return data.yaml;
+}
+
+/**
+ * Save raw YAML content for an existing workflow
+ * @param gameName The name of the game/workflow
+ * @param yaml The raw YAML content
+ */
+export async function saveWorkflowYaml(gameName: string, yaml: string): Promise<{
+  status: string;
+  message: string;
+}> {
+  const response = await fetch(
+    `${GEMMA_BACKEND_URL}/games/${encodeURIComponent(gameName)}/yaml`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ yaml }),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new WorkflowBuilderError(
+      response.status,
+      error.error || error.details?.join(', ') || 'Failed to save workflow'
+    );
+  }
+
+  return response.json();
+}
+
+/**
+ * Create a new workflow
+ * @param name The name for the new workflow
+ * @param yaml The raw YAML content
+ */
+export async function createWorkflow(name: string, yaml: string): Promise<{
+  status: string;
+  message: string;
+  filename: string;
+}> {
+  const response = await fetch(`${GEMMA_BACKEND_URL}/games`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, yaml }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new WorkflowBuilderError(
+      response.status,
+      error.error || error.details?.join(', ') || 'Failed to create workflow'
+    );
+  }
+
+  return response.json();
+}
+
+/**
+ * Delete a workflow
+ * @param gameName The name of the game/workflow to delete
+ */
+export async function deleteWorkflow(gameName: string): Promise<{
+  status: string;
+  message: string;
+}> {
+  const response = await fetch(
+    `${GEMMA_BACKEND_URL}/games/${encodeURIComponent(gameName)}`,
+    { method: 'DELETE' }
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new WorkflowBuilderError(response.status, error.error || 'Failed to delete workflow');
+  }
+
+  return response.json();
+}
+
+/**
+ * Validate YAML content without saving
+ * @param gameName Any game name (used for route, validation is content-only)
+ * @param yaml The YAML content to validate
+ */
+export async function validateWorkflowYaml(gameName: string, yaml: string): Promise<{
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}> {
+  const response = await fetch(
+    `${GEMMA_BACKEND_URL}/games/${encodeURIComponent(gameName)}/validate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ yaml }),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new WorkflowBuilderError(response.status, error.error || 'Failed to validate YAML');
+  }
+
+  return response.json();
+}
+
+/**
+ * Generate a default YAML template for a new workflow
+ */
+export function generateWorkflowTemplate(gameName: string): string {
+  return `metadata:
+  game_name: "${gameName}"
+  version: "1.0"
+  created_with: "Workflow Builder"
+  benchmark_duration: 120
+  startup_wait: 30
+  resolution: "1920x1080"
+  preset: "High"
+  # steam_app_id: ""
+  # process_id: ""
+
+steps:
+  1:
+    description: "Click Play button"
+    find:
+      type: icon
+      text: "Play"
+      text_match: contains
+    action:
+      type: click
+      button: left
+      move_duration: 0.3
+    expected_delay: 2
+    timeout: 20
+
+fallbacks:
+  general:
+    action: key
+    key: escape
+    expected_delay: 1
+`;
 }
 
 export { WorkflowBuilderError };

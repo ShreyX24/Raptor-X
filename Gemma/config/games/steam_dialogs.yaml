@@ -8,6 +8,30 @@
 # action is executed.
 
 dialogs:
+  # Remote Play - Account is playing on another computer, Steam offers to stream
+  - id: remote_play
+    name: "Steam Remote Play"
+    description: "Appears when the game is running on another computer and Steam offers to stream instead"
+    priority: 0  # Highest priority - must catch before game "launches" via streaming
+
+    detection:
+      keywords:
+        - "steam remote play"
+        - "instead of running this game here"
+        - "stream it to you from a computer"
+        - "remote play"
+      require_all: false
+
+    action:
+      type: click_button
+      button_text: "Cancel"  # Click Cancel - we want to run locally, not stream
+      fallback: press_escape
+
+    handler: fail_run
+    # fail_run: Account is busy on another machine, fail the automation
+
+    fail_message: "Steam account is busy - game is running on another computer"
+
   # Account Conflict - Another device is using this account
   - id: account_conflict
     name: "Account In Use On Another Computer"
@@ -37,6 +61,28 @@ dialogs:
     # - continue: Just dismiss and continue (not recommended for this dialog)
 
     fail_message: "Steam account is in use on another computer"
+
+  # Controller Required - Game requires a controller
+  - id: controller_required
+    name: "Controller Required"
+    description: "Appears for games that require a controller to play (like F1 24)"
+    priority: 1
+
+    detection:
+      keywords:
+        - "grab your controller"
+        - "requires a controller"
+        - "xbox or playstation controller"
+        - "haven't registered any controllers"
+      require_all: false
+
+    action:
+      type: click_button
+      button_text: "OK"
+      fallback: press_enter
+
+    handler: continue
+    # Continue with game launch - controller warning is informational
 
   # Graphics API Selection - Choose DirectX/Vulkan for new games
   - id: graphics_api_selection

@@ -36,6 +36,7 @@ class QueueServiceConfig:
     # Queue settings
     request_timeout: int = 120  # Timeout for OmniParser requests in seconds
     max_queue_size: int = 100   # Maximum number of requests in queue
+    num_workers: int = 0        # Number of parallel workers (0 = auto: one per OmniParser URL)
 
     # Dashboard settings
     stats_history_size: int = 100  # Number of historical stats to keep
@@ -54,6 +55,7 @@ class QueueServiceConfig:
             omniparser_urls=_parse_omniparser_urls(),
             request_timeout=int(os.getenv("QUEUE_REQUEST_TIMEOUT", "120")),
             max_queue_size=int(os.getenv("QUEUE_MAX_SIZE", "100")),
+            num_workers=int(os.getenv("QUEUE_NUM_WORKERS", "0")),  # 0 = auto
             stats_history_size=int(os.getenv("QUEUE_STATS_HISTORY", "100")),
             job_history_size=int(os.getenv("QUEUE_JOB_HISTORY", "50")),
             log_level=os.getenv("QUEUE_LOG_LEVEL", "INFO"),

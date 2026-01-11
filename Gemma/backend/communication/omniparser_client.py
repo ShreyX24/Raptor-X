@@ -49,23 +49,47 @@ class OmniparserClient:
         except:
             return False
             
-    def analyze_screenshot(self, image_path: str) -> OmniparserResult:
-        """Analyze a screenshot with Omniparser"""
+    def analyze_screenshot(
+        self,
+        image_path: str,
+        ocr_config: Optional[Dict[str, Any]] = None
+    ) -> OmniparserResult:
+        """
+        Analyze a screenshot with Omniparser.
+
+        Args:
+            image_path: Path to the screenshot image
+            ocr_config: Optional OCR configuration dict with keys:
+                - use_paddleocr: bool (True=PaddleOCR, False=EasyOCR)
+                - text_threshold: float (0.0-1.0, lower = more lenient)
+                - box_threshold: float (0.0-1.0, lower = detect more elements)
+        """
         try:
             if not os.path.exists(image_path):
                 return OmniparserResult(
                     success=False,
                     error=f"Image file not found: {image_path}"
                 )
-                
+
             # Encode image to base64
             with open(image_path, "rb") as image_file:
                 image_data = base64.b64encode(image_file.read()).decode('utf-8')
-                
-            # Prepare payload
+
+            # Prepare payload with OCR config
             payload = {
                 "base64_image": image_data
             }
+
+            # Add OCR config parameters if provided
+            if ocr_config:
+                if 'use_paddleocr' in ocr_config:
+                    payload['use_paddleocr'] = ocr_config['use_paddleocr']
+                if 'text_threshold' in ocr_config:
+                    payload['text_threshold'] = ocr_config['text_threshold']
+                if 'box_threshold' in ocr_config:
+                    payload['box_threshold'] = ocr_config['box_threshold']
+                if 'iou_threshold' in ocr_config:
+                    payload['iou_threshold'] = ocr_config['iou_threshold']
             
             # Send request
             response = self.session.post(

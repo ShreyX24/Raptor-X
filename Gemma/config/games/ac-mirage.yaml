@@ -27,22 +27,9 @@ steps:
       button: left
       move_duration: 0.3
       click_delay: 0.2
-    optional: true
     expected_delay: 10
     timeout: 20
   2:
-    description: '[OPTIONAL] SERVER DISCONNECTION'
-    find:
-      type: any
-      text: Reconnect
-      text_match: contains
-    action:
-      type: key
-      key: space
-    optional: true
-    expected_delay: 2
-    timeout: 20
-  3:
     description: Click benchmark
     find:
       type: any
@@ -55,7 +42,7 @@ steps:
       click_delay: 0.2
     expected_delay: 2
     timeout: 20
-  4:
+  3:
     description: confirm step to start benchmark - KB HIT SPACE BAR
     find:
       type: icon
@@ -66,14 +53,14 @@ steps:
       key: space
     expected_delay: 2
     timeout: 20
-  5:
+  4:
     description: WAIT FOR BENCHMARK TO COMPLETE
     action:
       type: wait
       duration: 150
     expected_delay: 2
     timeout: 20
-  6:
+  5:
     description: CLOSE ON RESULT PAGE
     find:
       type: any
@@ -86,7 +73,7 @@ steps:
       click_delay: 0.2
     expected_delay: 20
     timeout: 20
-  7:
+  6:
     description: PRESS ANY KEY ON START SCREEN
     find:
       type: any
@@ -99,7 +86,7 @@ steps:
       click_delay: 0.2
     expected_delay: 5
     timeout: 20
-  8:
+  7:
     description: CLICK QUIT TO DESKTOP
     find:
       type: any
@@ -112,7 +99,7 @@ steps:
       click_delay: 0.2
     expected_delay: 2
     timeout: 20
-  9:
+  8:
     description: CONFIRM QUIT TO DESKTOP
     find:
       type: icon

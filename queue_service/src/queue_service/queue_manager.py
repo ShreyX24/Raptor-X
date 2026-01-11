@@ -80,6 +80,7 @@ class QueueStats:
     timeout_requests: int = 0
     current_queue_size: int = 0
     worker_running: bool = False
+    num_workers: int = 1
     avg_processing_time: float = 0.0
     avg_queue_wait_time: float = 0.0
     requests_per_minute: float = 0.0
@@ -93,6 +94,7 @@ class QueueStats:
             "timeout_requests": self.timeout_requests,
             "current_queue_size": self.current_queue_size,
             "worker_running": self.worker_running,
+            "num_workers": self.num_workers,
             "avg_processing_time": round(self.avg_processing_time, 3),
             "avg_queue_wait_time": round(self.avg_queue_wait_time, 3),
             "requests_per_minute": round(self.requests_per_minute, 2),
@@ -103,25 +105,33 @@ class QueueStats:
 class QueueManager:
     """Manages the request queue and forwards requests to OmniParser servers.
 
-    Supports multiple OmniParser servers with round-robin load balancing
-    and automatic failover for unhealthy servers.
+    Supports multiple OmniParser servers with round-robin load balancing,
+    automatic failover for unhealthy servers, and parallel workers.
     """
 
-    def __init__(self, target_urls: List[str] = None, timeout: int = None):
+    def __init__(self, target_urls: List[str] = None, timeout: int = None, num_workers: int = None):
         config = get_config()
         self.target_urls = target_urls or config.omniparser_urls
         self.timeout = timeout or config.request_timeout
         self.max_queue_size = config.max_queue_size
 
-        self.request_queue: asyncio.Queue = None
-        self.worker_task: Optional[asyncio.Task] = None
+        # Number of workers: 0 = auto (one per OmniParser URL, min 2)
+        configured_workers = num_workers if num_workers is not None else config.num_workers
+        if configured_workers <= 0:
+            self.num_workers = max(len(self.target_urls), 2)
+        else:
+            self.num_workers = configured_workers
 
-        # Round-robin state
+        self.request_queue: asyncio.Queue = None
+        self.worker_tasks: List[asyncio.Task] = []  # Multiple workers
+
+        # Round-robin state with lock for thread safety
         self._current_server_index = 0
+        self._server_index_lock = asyncio.Lock()
         self._server_health: Dict[str, bool] = {url: True for url in self.target_urls}
 
         # Statistics tracking
-        self._stats = QueueStats()
+        self._stats = QueueStats(num_workers=self.num_workers)
         self._start_time = datetime.now()
         self._processing_times: deque = deque(maxlen=100)
         self._queue_wait_times: deque = deque(maxlen=100)
@@ -133,47 +143,57 @@ class QueueManager:
         # Queue depth history for graphing
         self._queue_depth_history: deque = deque(maxlen=config.stats_history_size)
 
-        logger.info(f"QueueManager initialized with {len(self.target_urls)} server(s): {self.target_urls}")
+        logger.info(f"QueueManager initialized with {len(self.target_urls)} server(s), {self.num_workers} workers: {self.target_urls}")
 
-    def _get_next_server(self) -> str:
-        """Round-robin server selection, skipping unhealthy servers."""
-        attempts = 0
-        while attempts < len(self.target_urls):
-            url = self.target_urls[self._current_server_index]
-            self._current_server_index = (self._current_server_index + 1) % len(self.target_urls)
+    async def _get_next_server(self) -> str:
+        """Round-robin server selection, skipping unhealthy servers. Thread-safe."""
+        async with self._server_index_lock:
+            attempts = 0
+            while attempts < len(self.target_urls):
+                url = self.target_urls[self._current_server_index]
+                self._current_server_index = (self._current_server_index + 1) % len(self.target_urls)
 
-            if self._server_health.get(url, True):
-                return url
-            attempts += 1
+                if self._server_health.get(url, True):
+                    return url
+                attempts += 1
 
-        # All unhealthy - try first server anyway
-        logger.warning("All OmniParser servers unhealthy, trying first server")
-        return self.target_urls[0]
+            # All unhealthy - try first server anyway
+            logger.warning("All OmniParser servers unhealthy, trying first server")
+            return self.target_urls[0]
 
     async def start(self):
-        """Start the queue manager and worker."""
+        """Start the queue manager and parallel workers."""
         if self.request_queue is None:
             self.request_queue = asyncio.Queue(maxsize=self.max_queue_size)
 
-        if self.worker_task is None or self.worker_task.done():
-            self.worker_task = asyncio.create_task(self._worker())
+        # Start multiple workers
+        if not self.worker_tasks or all(t.done() for t in self.worker_tasks):
+            self.worker_tasks = []
+            for i in range(self.num_workers):
+                task = asyncio.create_task(self._worker(worker_id=i))
+                self.worker_tasks.append(task)
             self._stats.worker_running = True
-            logger.info("Queue worker started")
+            logger.info(f"Started {self.num_workers} parallel queue workers")
 
     async def stop(self):
-        """Stop the queue manager and worker."""
-        if self.worker_task and not self.worker_task.done():
-            self.worker_task.cancel()
-            try:
-                await self.worker_task
-            except asyncio.CancelledError:
-                pass
+        """Stop the queue manager and all workers."""
+        if self.worker_tasks:
+            for task in self.worker_tasks:
+                if not task.done():
+                    task.cancel()
+            # Wait for all to finish
+            for task in self.worker_tasks:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            self.worker_tasks = []
             self._stats.worker_running = False
-            logger.info("Queue worker stopped")
+            logger.info("All queue workers stopped")
 
-    async def _worker(self):
-        """Background worker that processes requests from the queue one at a time."""
-        logger.info("Worker thread started, processing requests sequentially")
+    async def _worker(self, worker_id: int = 0):
+        """Background worker that processes requests from the queue."""
+        logger.info(f"Worker {worker_id} started")
 
         while True:
             try:
@@ -185,7 +205,7 @@ class QueueManager:
                 self._queue_wait_times.append(queue_wait_time)
 
                 logger.info(
-                    f"Processing request {queued_request.request_id} "
+                    f"[W{worker_id}] Processing request {queued_request.request_id} "
                     f"(waited {queue_wait_time:.2f}s, queue size: {self.request_queue.qsize()})"
                 )
 
@@ -212,7 +232,7 @@ class QueueManager:
                     job_record.status = "success"
                     job_record.processing_time = processing_time
 
-                    logger.info(f"Request {queued_request.request_id} completed in {processing_time:.2f}s")
+                    logger.info(f"[W{worker_id}] Request {queued_request.request_id} completed in {processing_time:.2f}s")
 
                 except asyncio.TimeoutError:
                     processing_time = time.time() - start_time
@@ -223,7 +243,7 @@ class QueueManager:
 
                     error = Exception(f"Request timed out after {self.timeout}s")
                     queued_request.response_future.set_exception(error)
-                    logger.error(f"Request {queued_request.request_id} timed out")
+                    logger.error(f"[W{worker_id}] Request {queued_request.request_id} timed out")
 
                 except Exception as e:
                     processing_time = time.time() - start_time
@@ -233,7 +253,7 @@ class QueueManager:
                     job_record.error = str(e)
 
                     queued_request.response_future.set_exception(e)
-                    logger.error(f"Request {queued_request.request_id} failed: {e}")
+                    logger.error(f"[W{worker_id}] Request {queued_request.request_id} failed: {e}")
 
                 finally:
                     self._job_history.appendleft(job_record)
@@ -241,16 +261,15 @@ class QueueManager:
                     self._update_stats()
 
             except asyncio.CancelledError:
-                logger.info("Worker cancelled, shutting down")
-                self._stats.worker_running = False
+                logger.info(f"[W{worker_id}] Worker cancelled, shutting down")
                 break
             except Exception as e:
-                logger.error(f"Worker error: {e}")
+                logger.error(f"[W{worker_id}] Worker error: {e}")
                 await asyncio.sleep(1)  # Avoid tight loop on errors
 
     async def _forward_to_omniparser(self, queued_request: QueuedRequest) -> Dict[str, Any]:
         """Forward a request to the next available OmniParser server."""
-        target_url = self._get_next_server()
+        target_url = await self._get_next_server()
         logger.debug(f"Forwarding request {queued_request.request_id} to {target_url}")
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:

@@ -48,13 +48,23 @@ class QueueServiceClient:
         self.retry_delay = retry_delay
         self._available = None
 
-    async def parse_screenshot(self, image_path: str, priority: int = 5) -> ParseResult:
+    async def parse_screenshot(
+        self,
+        image_path: str,
+        priority: int = 5,
+        ocr_config: Optional[Dict[str, Any]] = None
+    ) -> ParseResult:
         """
         Submit screenshot for parsing via Queue Service.
 
         Args:
             image_path: Path to the screenshot image
             priority: Queue priority (1-10, lower = higher priority)
+            ocr_config: Optional OCR configuration dict with keys:
+                - use_paddleocr: bool (True=PaddleOCR, False=EasyOCR)
+                - text_threshold: float (0.0-1.0, lower = more lenient)
+                - box_threshold: float (0.0-1.0, lower = detect more elements)
+                - iou_threshold: float (0.0-1.0, higher = less overlap removal)
 
         Returns:
             ParseResult with elements and annotated image
@@ -70,15 +80,26 @@ class QueueServiceClient:
             with open(image_path, "rb") as image_file:
                 image_data = base64.b64encode(image_file.read()).decode('utf-8')
 
-            # Submit to queue
+            # Submit to queue with OCR config
             payload = {
                 "base64_image": image_data,
                 "priority": priority
             }
 
+            # Add OCR config parameters if provided
+            if ocr_config:
+                if 'use_paddleocr' in ocr_config:
+                    payload['use_paddleocr'] = ocr_config['use_paddleocr']
+                if 'text_threshold' in ocr_config:
+                    payload['text_threshold'] = ocr_config['text_threshold']
+                if 'box_threshold' in ocr_config:
+                    payload['box_threshold'] = ocr_config['box_threshold']
+                if 'iou_threshold' in ocr_config:
+                    payload['iou_threshold'] = ocr_config['iou_threshold']
+
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
-                    f"{self.queue_url}/parse",
+                    f"{self.queue_url}/parse/",
                     json=payload
                 )
 
@@ -132,7 +153,7 @@ class QueueServiceClient:
 
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
-                    f"{self.queue_url}/parse",
+                    f"{self.queue_url}/parse/",
                     json=payload
                 )
 
@@ -274,9 +295,20 @@ class QueueServiceClient:
         except Exception as e:
             return {"status": "offline", "error": str(e)}
 
-    def analyze_screenshot(self, image_path: str) -> 'OmniparserResult':
+    def analyze_screenshot(
+        self,
+        image_path: str,
+        ocr_config: Optional[Dict[str, Any]] = None
+    ) -> 'OmniparserResult':
         """
         Sync wrapper for parse_screenshot (compatibility with existing OmniparserClient).
+
+        Args:
+            image_path: Path to the screenshot image
+            ocr_config: Optional OCR configuration dict with keys:
+                - use_paddleocr: bool (True=PaddleOCR, False=EasyOCR)
+                - text_threshold: float (0.0-1.0, lower = more lenient)
+                - box_threshold: float (0.0-1.0, lower = detect more elements)
 
         Note: This blocks the thread. For async code, use parse_screenshot directly.
         """
@@ -290,7 +322,9 @@ class QueueServiceClient:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                result = loop.run_until_complete(self.parse_screenshot(image_path))
+                result = loop.run_until_complete(
+                    self.parse_screenshot(image_path, ocr_config=ocr_config)
+                )
             finally:
                 loop.close()
 

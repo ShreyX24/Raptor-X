@@ -275,9 +275,9 @@ export function GameLibraryPanel({
     onSelectGames([]);
   };
 
-  // Select all visible
+  // Select all visible (only available/installed games)
   const handleSelectAll = () => {
-    onSelectGames(filteredGames.map(g => g.name));
+    onSelectGames(filteredGames.filter(g => isGameAvailable(g)).map(g => g.name));
   };
 
   return (

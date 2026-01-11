@@ -37,3 +37,6 @@ export { QuickLaunchPanel } from './QuickLaunchPanel';
 export { ActiveRunsPanel, MiniRunIndicator } from './ActiveRunsPanel';
 export { RunMetricsPanel, CompactMetricsRow } from './RunMetricsPanel';
 export { SnakeTimeline } from './SnakeTimeline';
+
+// Workflow Builder components
+export { WorkflowLibrary } from './WorkflowLibrary';

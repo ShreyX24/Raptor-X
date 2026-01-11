@@ -628,22 +628,45 @@ def launch_game(
             # Minimize other windows to help with focus (but not the game process itself)
             minimize_other_windows(actual_process.pid, exclude_process_name=current_game_process_name)
 
-            # Always return success if process is running - startup_wait handles the rest
+            # Build response - handle case where original process exited (launcher spawned real game)
+            # This is common with Ubisoft/launcher-based games where launcher exits after spawning game
+            try:
+                process_name = actual_process.name()
+                process_status = actual_process.status()
+                process_pid = actual_process.pid
+            except psutil.NoSuchProcess:
+                # Original process exited (likely a launcher) - try to find the game again
+                logger.info(f"Original process {actual_process.pid} exited, re-detecting by name...")
+                new_process = find_process_by_name(current_game_process_name)
+                if new_process:
+                    logger.info(f"Found game process with new PID: {new_process.name()} (PID: {new_process.pid})")
+                    actual_process = new_process
+                    process_name = new_process.name()
+                    process_status = new_process.status()
+                    process_pid = new_process.pid
+                else:
+                    # Process really is gone - but still return success since we detected it
+                    logger.warning(f"Process '{current_game_process_name}' no longer running, but was detected earlier")
+                    process_name = current_game_process_name
+                    process_status = "exited"
+                    process_pid = None
+
+            # Always return success if process was running - startup_wait handles the rest
             response_data = {
                 "status": "success",
                 "subprocess_pid": game_process.pid if game_process else None,
                 "subprocess_status": subprocess_status,
                 "resolved_path": game_path if is_steam_id else None,
                 "launch_method": "steam" if is_steam_id else "direct_exe",
-                "game_process_pid": actual_process.pid,
-                "game_process_name": actual_process.name(),
-                "game_process_status": actual_process.status(),
+                "game_process_pid": process_pid,
+                "game_process_name": process_name,
+                "game_process_status": process_status,
                 "window_found": window_found,
                 "foreground_confirmed": foreground_confirmed,
                 "pywinauto_available": is_pywinauto_available(),
             }
 
-            logger.info(f"[OK] Launch Complete: {actual_process.name()} (PID: {actual_process.pid}) is running. Window: {window_found}, Foreground: {foreground_confirmed}")
+            logger.info(f"[OK] Launch Complete: {process_name} (PID: {process_pid}) is running. Window: {window_found}, Foreground: {foreground_confirmed}")
 
         else:
             logger.error(f"LAUNCH FAILED: Game process '{current_game_process_name}' not found within {max_wait_time}s")

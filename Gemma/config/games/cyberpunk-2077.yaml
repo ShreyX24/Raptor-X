@@ -2,6 +2,7 @@ metadata:
   game_name: Cyberpunk 2077
   preset_id: cyberpunk-2077  # Maps to preset-manager folder name
   steam_app_id: '1091500'
+  launch_method: exe  # 'steam' (default) or 'exe' (direct executable launch)
   version: '1.0'
   created_with: Katana Workflow Builder
   created_date: '2025-12-09 02:53:56'
@@ -25,7 +26,7 @@ steps:
     action:
       type: key
       key: space
-    expected_delay: 3
+    expected_delay: 10
     timeout: 20
   2:
     description: CLICK ON SETTINGS

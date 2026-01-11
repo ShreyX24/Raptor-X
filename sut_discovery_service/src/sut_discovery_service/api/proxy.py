@@ -101,8 +101,10 @@ async def get_screenshot(unique_id: str):
     """
     Get screenshot from SUT.
     Proxies to SUT /screenshot endpoint.
+    Returns raw PNG image bytes.
     """
-    return await proxy_to_sut(unique_id, "/screenshot", "GET")
+    raw_bytes = await proxy_to_sut(unique_id, "/screenshot", "GET", return_raw=True)
+    return Response(content=raw_bytes, media_type="image/png")
 
 
 # ============== Input Actions ==============

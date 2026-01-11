@@ -51,6 +51,11 @@ class WebSocketHandler:
         event_bus.subscribe(EventType.AUTOMATION_STEP_COMPLETED, self._on_step_completed)
         event_bus.subscribe(EventType.AUTOMATION_STEP_FAILED, self._on_step_failed)
         event_bus.subscribe(EventType.AUTOMATION_PROGRESS, self._on_automation_progress)
+        # Campaign events
+        event_bus.subscribe(EventType.CAMPAIGN_CREATED, self._on_campaign_event)
+        event_bus.subscribe(EventType.CAMPAIGN_PROGRESS, self._on_campaign_event)
+        event_bus.subscribe(EventType.CAMPAIGN_COMPLETED, self._on_campaign_event)
+        event_bus.subscribe(EventType.CAMPAIGN_FAILED, self._on_campaign_event)
         
     def _register_handlers(self):
         """Register WebSocket event handlers"""
@@ -413,6 +418,17 @@ class WebSocketHandler:
         data['pairing_age_seconds'] = device.pairing_age_seconds
 
         return data
+
+    def _on_campaign_event(self, event: Event):
+        """Handle campaign events (created, progress, completed, failed)"""
+        campaign_data = {
+            'event': event.event_type.value,
+            'data': event.data,
+            'timestamp': event.timestamp.isoformat()
+        }
+
+        self.socketio.emit('campaign_event', campaign_data, room='general_updates')
+        logger.debug(f"Sent campaign event: {event.event_type.value}")
 
     def broadcast_message(self, event_name: str, data: Dict[str, Any], room: str = 'general_updates'):
         """Broadcast a message to specified room"""

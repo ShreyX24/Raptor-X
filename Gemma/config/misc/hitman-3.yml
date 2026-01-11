@@ -24,13 +24,13 @@ steps:
       type: "click"
       button: "left"
       clickType: "ctypes"
-      move_duration: 0.5
-      click_delay: 0.5
+      move_duration: 0.2
+      click_delay: 0.7
     verify_success:
       - type: "any"
         text: "Monitor"
         text_match: "contains"
-    expected_delay: 20
+    expected_delay: 5
     timeout: 10
 
   2:
@@ -47,7 +47,7 @@ steps:
       - type: "any"
         text: "Start Benchmark"
         text_match: "contains"
-    expected_delay: 1
+    expected_delay: 2
 
   3:
     description: "Click on Start Benchmark Button"
@@ -59,20 +59,20 @@ steps:
       type: "click"
       button: "left"
       clickType: "ctypes"
-      move_duration: 0.5
-      click_delay: 0.5
+      move_duration: 0.2
+      click_delay: 0.7
     verify_success:
       - type: "any"
         text: "FPS"
         text_match: "contains"
-    expected_delay: 35
+    expected_delay: 15
     timeout: 10
 
   4:
     description: "Wait for benchmark to complete"
     action:
       type: "wait"
-      duration: 100
+      duration: 110
     expected_delay: 0
     timeout: 140
 
@@ -86,8 +86,8 @@ steps:
       type: "click"
       button: "left"
       clickType: "ctypes"
-      move_duration: 0.5
-      click_delay: 0.5
+      move_duration: 0.2
+      click_delay: 0.7
     verify_success:
       - type: "any"
         text: "QUIT"
@@ -105,8 +105,8 @@ steps:
       type: "click"
       button: "left"
       clickType: "ctypes"
-      move_duration: 0.5
-      click_delay: 0.5
+      move_duration: 0.2
+      click_delay: 0.7
     expected_delay: 10
     timeout: 10
 

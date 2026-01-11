@@ -19,6 +19,16 @@ from modules.gemma_client import BoundingBox  # Reuse the BoundingBox class
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass
+class OmniparserResult:
+    """Result from Omniparser processing (compatibility with backend client)."""
+    success: bool
+    elements: Optional[List[Dict[str, Any]]] = None
+    annotated_image_data: Optional[bytes] = None
+    response_time: Optional[float] = None
+    error: Optional[str] = None
+
 # Default OCR configuration
 DEFAULT_OCR_CONFIG = {
     "box_threshold": 0.05,

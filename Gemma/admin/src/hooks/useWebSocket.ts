@@ -43,6 +43,31 @@ export interface DeviceEvent {
   timestamp: string;
 }
 
+export interface CampaignEvent {
+  event: 'campaign_created' | 'campaign_progress' | 'campaign_completed' | 'campaign_failed';
+  data: {
+    campaign_id: string;
+    campaign: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+  timestamp: string;
+}
+
+// Timeline events from TimelineManager via automation_orchestrator
+// Note: This matches the TimelineEvent interface in RunTimeline.tsx
+export interface TimelineEvent {
+  run_id: string;
+  event_id: string;
+  event_type: string;
+  message: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped' | 'warning' | 'error';
+  timestamp: string;
+  duration_ms?: number | null;
+  metadata?: Record<string, unknown>;
+  replaces_event_id?: string | null;
+  group?: string | null;
+}
+
 type EventCallback<T> = (data: T) => void;
 
 interface UseWebSocketOptions {
@@ -67,6 +92,8 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
   const stepListeners = useRef<Set<EventCallback<StepEvent>>>(new Set());
   const progressListeners = useRef<Set<EventCallback<ProgressEvent>>>(new Set());
   const deviceListeners = useRef<Set<EventCallback<DeviceEvent>>>(new Set());
+  const campaignListeners = useRef<Set<EventCallback<CampaignEvent>>>(new Set());
+  const timelineListeners = useRef<Set<EventCallback<TimelineEvent>>>(new Set());
 
   // Initialize socket connection
   useEffect(() => {
@@ -86,13 +113,11 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log('[WebSocket] Connected to Gemma backend');
       setIsConnected(true);
       setConnectionError(null);
     });
 
-    socket.on('disconnect', (reason) => {
-      console.log('[WebSocket] Disconnected:', reason);
+    socket.on('disconnect', () => {
       setIsConnected(false);
     });
 
@@ -104,7 +129,6 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
 
     // Automation events (run started/completed/failed)
     socket.on('automation_event', (data: AutomationEvent) => {
-      console.log('[WebSocket] Automation event:', data.event, data.data?.run_id);
       automationListeners.current.forEach((callback) => callback(data));
     });
 
@@ -123,9 +147,19 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       deviceListeners.current.forEach((callback) => callback(data));
     });
 
-    // Connection status from server
-    socket.on('connection_status', (data: { status: string; client_id: string }) => {
-      console.log('[WebSocket] Connection confirmed:', data.client_id);
+    // Campaign events
+    socket.on('campaign_event', (data: CampaignEvent) => {
+      campaignListeners.current.forEach((callback) => callback(data));
+    });
+
+    // Timeline events (detailed events from TimelineManager for real-time updates)
+    socket.on('timeline_event', (data: TimelineEvent) => {
+      timelineListeners.current.forEach((callback) => callback(data));
+    });
+
+    // Connection status from server (silently acknowledge)
+    socket.on('connection_status', (_data: { status: string; client_id: string }) => {
+      // Connection confirmed - no need to log
     });
 
     return () => {
@@ -166,6 +200,22 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     };
   }, []);
 
+  // Subscribe to campaign events
+  const onCampaignEvent = useCallback((callback: EventCallback<CampaignEvent>) => {
+    campaignListeners.current.add(callback);
+    return () => {
+      campaignListeners.current.delete(callback);
+    };
+  }, []);
+
+  // Subscribe to timeline events (real-time updates from TimelineManager)
+  const onTimelineEvent = useCallback((callback: EventCallback<TimelineEvent>) => {
+    timelineListeners.current.add(callback);
+    return () => {
+      timelineListeners.current.delete(callback);
+    };
+  }, []);
+
   // Subscribe to a specific run's updates
   const subscribeToRun = useCallback((runId: string) => {
     socketRef.current?.emit('subscribe_to_run', { run_id: runId });
@@ -194,6 +244,8 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     onStepEvent,
     onProgressEvent,
     onDeviceEvent,
+    onCampaignEvent,
+    onTimelineEvent,
     // Run-specific subscriptions
     subscribeToRun,
     unsubscribeFromRun,

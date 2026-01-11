@@ -390,6 +390,22 @@ class APIRoutes:
             """Take screenshot from a specific SUT"""
             try:
                 device = self.device_registry.get_device_by_id(device_id)
+
+                # If not found by ID, check external discovery service
+                if not device and self.use_external_discovery and self.discovery_client:
+                    try:
+                        suts = self.discovery_client.get_suts_sync()
+                        for sut in suts:
+                            if sut.get("unique_id") == device_id or sut.get("ip") == device_id:
+                                class DeviceProxy:
+                                    def __init__(self, data):
+                                        self.ip = data.get("ip")
+                                        self.port = data.get("port", 8080)
+                                device = DeviceProxy(sut)
+                                break
+                    except Exception as e:
+                        logger.warning(f"Discovery service error: {e}")
+
                 if not device:
                     return jsonify({"error": f"Device {device_id} not found"}), 404
 
@@ -562,18 +578,42 @@ class APIRoutes:
             try:
                 if 'screenshot' not in request.files:
                     return jsonify({"error": "Screenshot file required"}), 400
-                    
+
                 file = request.files['screenshot']
                 if file.filename == '':
                     return jsonify({"error": "No file selected"}), 400
-                    
+
+                # Extract OCR config from form data
+                ocr_config = {}
+                if request.form.get('use_paddleocr') is not None:
+                    ocr_config['use_paddleocr'] = request.form.get('use_paddleocr').lower() == 'true'
+                if request.form.get('text_threshold'):
+                    try:
+                        ocr_config['text_threshold'] = float(request.form.get('text_threshold'))
+                    except ValueError:
+                        pass
+                if request.form.get('box_threshold'):
+                    try:
+                        ocr_config['box_threshold'] = float(request.form.get('box_threshold'))
+                    except ValueError:
+                        pass
+                if request.form.get('iou_threshold'):
+                    try:
+                        ocr_config['iou_threshold'] = float(request.form.get('iou_threshold'))
+                    except ValueError:
+                        pass
+
                 # Save uploaded file temporarily
                 with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
                     file.save(tmp_file.name)
                     tmp_path = tmp_file.name
-                    
+
                 try:
-                    result = self.omniparser_client.analyze_screenshot(tmp_path)
+                    # Pass OCR config if any parameters were provided
+                    if ocr_config:
+                        result = self.omniparser_client.analyze_screenshot(tmp_path, ocr_config=ocr_config)
+                    else:
+                        result = self.omniparser_client.analyze_screenshot(tmp_path)
                     
                     if result.success:
                         response_data = {
@@ -584,7 +624,9 @@ class APIRoutes:
                         }
                         
                         # If annotated image is requested, include it
-                        if request.args.get('include_annotation') == 'true' and result.annotated_image_data:
+                        # Check both query params and form data for include_annotation
+                        include_annotation = request.args.get('include_annotation') == 'true' or request.form.get('include_annotation') == 'true'
+                        if include_annotation and result.annotated_image_data:
                             import base64
                             response_data["annotated_image_base64"] = base64.b64encode(result.annotated_image_data).decode('utf-8')
                             
@@ -676,6 +718,136 @@ class APIRoutes:
                 return jsonify(stats)
             except Exception as e:
                 logger.error(f"Error getting game stats: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        # ============== Workflow YAML CRUD Endpoints ==============
+
+        @app.route('/api/workflows', methods=['GET'])
+        def list_workflows():
+            """Get list of all workflows with summaries for sidebar display"""
+            try:
+                if not self.game_manager:
+                    return jsonify({"workflows": []})
+
+                workflows = self.game_manager.list_workflows()
+                return jsonify({"workflows": workflows})
+            except Exception as e:
+                logger.error(f"Error listing workflows: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/games/<game_name>/yaml', methods=['GET'])
+        def get_game_yaml(game_name):
+            """Get raw YAML content for a game configuration"""
+            try:
+                if not self.game_manager:
+                    return jsonify({"error": "Game manager not available"}), 500
+
+                yaml_content = self.game_manager.get_game_yaml(game_name)
+                if yaml_content is None:
+                    return jsonify({"error": f"Game '{game_name}' not found"}), 404
+
+                return jsonify({
+                    "game_name": game_name,
+                    "yaml": yaml_content
+                })
+            except Exception as e:
+                logger.error(f"Error getting YAML for {game_name}: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/games/<game_name>/yaml', methods=['PUT'])
+        def save_game_yaml(game_name):
+            """Save raw YAML content for an existing game configuration"""
+            try:
+                if not self.game_manager:
+                    return jsonify({"error": "Game manager not available"}), 500
+
+                data = request.get_json()
+                if not data or 'yaml' not in data:
+                    return jsonify({"error": "Missing 'yaml' in request body"}), 400
+
+                result = self.game_manager.save_game_yaml(game_name, data['yaml'])
+
+                if result['status'] == 'error':
+                    return jsonify(result), 400
+
+                # Broadcast update to WebSocket clients
+                games_data = self.game_manager.to_dict()
+                self.websocket_handler.broadcast_message('games_update', games_data)
+
+                return jsonify(result)
+            except Exception as e:
+                logger.error(f"Error saving YAML for {game_name}: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/games', methods=['POST'])
+        def create_game():
+            """Create a new game configuration"""
+            try:
+                if not self.game_manager:
+                    return jsonify({"error": "Game manager not available"}), 500
+
+                data = request.get_json()
+                if not data:
+                    return jsonify({"error": "Missing request body"}), 400
+
+                name = data.get('name')
+                yaml_content = data.get('yaml')
+
+                if not name:
+                    return jsonify({"error": "Missing 'name' in request body"}), 400
+                if not yaml_content:
+                    return jsonify({"error": "Missing 'yaml' in request body"}), 400
+
+                result = self.game_manager.create_game(name, yaml_content)
+
+                if result['status'] == 'error':
+                    return jsonify(result), 400
+
+                # Broadcast update to WebSocket clients
+                games_data = self.game_manager.to_dict()
+                self.websocket_handler.broadcast_message('games_update', games_data)
+
+                return jsonify(result), 201
+            except Exception as e:
+                logger.error(f"Error creating game: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/games/<game_name>', methods=['DELETE'])
+        def delete_game(game_name):
+            """Delete a game configuration"""
+            try:
+                if not self.game_manager:
+                    return jsonify({"error": "Game manager not available"}), 500
+
+                result = self.game_manager.delete_game(game_name)
+
+                if result['status'] == 'error':
+                    return jsonify(result), 400
+
+                # Broadcast update to WebSocket clients
+                games_data = self.game_manager.to_dict()
+                self.websocket_handler.broadcast_message('games_update', games_data)
+
+                return jsonify(result)
+            except Exception as e:
+                logger.error(f"Error deleting game {game_name}: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/games/<game_name>/validate', methods=['POST'])
+        def validate_game_yaml(game_name):
+            """Validate YAML content without saving"""
+            try:
+                if not self.game_manager:
+                    return jsonify({"error": "Game manager not available"}), 500
+
+                data = request.get_json()
+                if not data or 'yaml' not in data:
+                    return jsonify({"error": "Missing 'yaml' in request body"}), 400
+
+                result = self.game_manager.validate_yaml(data['yaml'])
+                return jsonify(result)
+            except Exception as e:
+                logger.error(f"Error validating YAML: {e}")
                 return jsonify({"error": str(e)}), 500
 
         @app.route('/api/games/<game_name>/check-availability', methods=['GET'])
@@ -1284,19 +1456,32 @@ class APIRoutes:
             try:
                 import json
                 from pathlib import Path
+                from ..core.run_manager import RunStatus
 
                 if not hasattr(self, 'run_manager') or self.run_manager is None:
                     return jsonify({"error": "Run manager not available"}), 500
 
-                # First check if run is currently active (has timeline in memory)
+                # First check if run is currently active
                 active_run = self.run_manager.get_run(run_id)
-                if active_run and hasattr(active_run, 'timeline') and active_run.timeline:
-                    # Return timeline from active run
-                    return jsonify({
-                        "run_id": run_id,
-                        "events": active_run.timeline.get_events_dict(),
-                        "source": "active"
-                    })
+                if active_run:
+                    # Check if run is queued (hasn't started executing yet)
+                    if active_run.status == RunStatus.QUEUED:
+                        return jsonify({
+                            "run_id": run_id,
+                            "run_status": "queued",
+                            "events": [],
+                            "message": "Run is queued, waiting to start",
+                            "source": "active"
+                        })
+
+                    # Check if run has timeline in memory (actively executing)
+                    if hasattr(active_run, 'timeline') and active_run.timeline:
+                        # Return timeline from active run
+                        return jsonify({
+                            "run_id": run_id,
+                            "events": active_run.timeline.get_events_dict(),
+                            "source": "active"
+                        })
 
                 # Fall back to timeline.json file in run directory
                 manifest = self.run_manager.storage.get_manifest(run_id)

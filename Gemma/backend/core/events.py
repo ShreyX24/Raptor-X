@@ -30,6 +30,11 @@ class EventType(Enum):
     AUTOMATION_STEP_COMPLETED = "automation_step_completed"
     AUTOMATION_STEP_FAILED = "automation_step_failed"
     AUTOMATION_PROGRESS = "automation_progress"
+    # Campaign events
+    CAMPAIGN_CREATED = "campaign_created"
+    CAMPAIGN_PROGRESS = "campaign_progress"
+    CAMPAIGN_COMPLETED = "campaign_completed"
+    CAMPAIGN_FAILED = "campaign_failed"
 
 
 @dataclass

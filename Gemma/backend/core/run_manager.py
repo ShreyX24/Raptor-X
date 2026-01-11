@@ -737,9 +737,9 @@ class RunManager:
             del self.active_runs[run_id]
             logger.info(f"Removed run {run_id} from active_runs")
             
-            # Keep history manageable
+            # Keep history manageable (newest runs are at front due to insert(0, ...))
             if len(self.run_history) > 100:
-                self.run_history = self.run_history[-100:]
+                self.run_history = self.run_history[:100]
             
             logger.info(f"Completed run {run_id}: {run.game_name} ({'success' if success else 'failed'})")
             

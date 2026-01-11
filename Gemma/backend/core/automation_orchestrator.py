@@ -936,7 +936,8 @@ class AutomationOrchestrator:
                             timeline.warning(f"Game process '{game_process_name}' not detected, continuing with automation")
 
                 # ===== Game Initialization Wait =====
-                init_wait = startup_wait if startup_wait else 30  # Use config value or default 30s
+                # Use init_wait from config if available, otherwise fall back to startup_wait or default 30s
+                init_wait = game_config.init_wait if hasattr(game_config, 'init_wait') and game_config.init_wait else (startup_wait if startup_wait else 30)
                 if timeline:
                     timeline.game_initializing(init_wait)
                 logger.info(f"Game process detected, waiting {init_wait}s for full game initialization...")
@@ -1396,18 +1397,26 @@ class AutomationOrchestrator:
         """
         Discover game from SUT's installed games and return Steam App ID or path.
 
-        Priority order:
+        Priority order (when launch_method='steam' or not set):
         1. Match by steam_app_id from YAML config (most reliable)
         2. Match by game name (fallback)
         3. Use YAML config path (last resort)
+
+        When launch_method='exe':
+        - Uses steam_app_id to verify game is installed on SUT
+        - Returns exe path from YAML config for direct launch
 
         Args:
             network: NetworkManager instance
             game_config: GameConfig object
 
         Returns:
-            Steam App ID (preferred) or path to game executable
+            Steam App ID (for Steam launch) or path to game executable (for direct launch)
         """
+        # Check launch method preference
+        launch_method = getattr(game_config, 'launch_method', None)
+        use_direct_exe = launch_method == 'exe'
+
         # If we have steam_app_id in YAML config, verify it's installed on SUT
         config_steam_app_id = getattr(game_config, 'steam_app_id', None)
 
@@ -1429,6 +1438,10 @@ class AutomationOrchestrator:
                         if sut_app_id and str(sut_app_id) == str(config_steam_app_id):
                             if game.get("exists", True):
                                 logger.info(f"Found game '{game.get('name')}' on SUT via Steam App ID: {config_steam_app_id}")
+                                # If launch_method='exe', return exe path instead of steam_app_id
+                                if use_direct_exe and game_config.path:
+                                    logger.info(f"Using direct exe launch (launch_method=exe): {game_config.path}")
+                                    return game_config.path
                                 return config_steam_app_id
 
                     # steam_app_id in config but game not installed on SUT
@@ -1444,7 +1457,16 @@ class AutomationOrchestrator:
                     # Check if game names match (case-insensitive)
                     if game_name_lower in installed_name or installed_name in game_name_lower:
                         if game.get("exists", True):
-                            # Prefer Steam App ID - SUT launcher handles it best
+                            # If launch_method='exe', prefer direct exe path
+                            if use_direct_exe:
+                                if game_config.path:
+                                    logger.info(f"Using direct exe launch (launch_method=exe): {game_config.path}")
+                                    return game_config.path
+                                elif install_path:
+                                    logger.info(f"Using SUT install path for direct exe launch: {install_path}")
+                                    return install_path
+
+                            # Default: Prefer Steam App ID - SUT launcher handles it best
                             if steam_app_id:
                                 logger.info(f"Discovered game '{game.get('name')}' on SUT with Steam App ID: {steam_app_id}")
                                 return steam_app_id
@@ -1463,6 +1485,11 @@ class AutomationOrchestrator:
 
         # PRIORITY 3: Use steam_app_id from config even if we couldn't verify on SUT
         # (SUT might not have /installed_games endpoint, but can still launch by app id)
+        # But if launch_method='exe', prefer exe path
+        if use_direct_exe and game_config.path:
+            logger.info(f"Using YAML exe path for direct launch: {game_config.path}")
+            return game_config.path
+
         if config_steam_app_id:
             logger.info(f"Using Steam App ID from YAML config: {config_steam_app_id}")
             return config_steam_app_id

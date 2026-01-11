@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Routes, Route, NavLink, Link } from 'react-router-dom';
+import { Routes, Route, NavLink, Link, useLocation } from 'react-router-dom';
 import { Brain, ScanEye, FileChartColumn, Antenna, ListOrdered } from 'lucide-react';
 import { Dashboard } from './pages/Dashboard';
 import { Devices } from './pages/Devices';
@@ -63,6 +63,10 @@ function ServiceIcon({ icon: Icon, name, status, extra, active }: ServiceIconPro
 
 function App() {
   const isMobile = useIsMobile();
+  const location = useLocation();
+
+  // Hide header/footer for WorkflowBuilder (fullscreen mode)
+  const isWorkflowBuilder = location.pathname === '/workflow';
 
   // Service health for footer status bar - poll every 10s since /api/status takes ~3s
   const { services } = useServiceHealth(10000);
@@ -81,8 +85,8 @@ function App() {
   return (
     <ToastProvider>
     <div className="min-h-screen bg-background flex flex-col">
-      {/* Header - Hide on mobile (MobileDashboard has its own header) */}
-      {!isMobile && (
+      {/* Header - Hide on mobile and WorkflowBuilder */}
+      {!isMobile && !isWorkflowBuilder && (
         <header className="bg-surface border-b border-border sticky top-0 z-50">
           <div className="px-4 lg:px-6">
             <div className="flex items-center justify-between h-14">
@@ -163,8 +167,8 @@ function App() {
         </Routes>
       </main>
 
-      {/* Footer - Hide on mobile (MobileDashboard has its own footer) */}
-      {!isMobile && (
+      {/* Footer - Hide on mobile and WorkflowBuilder */}
+      {!isMobile && !isWorkflowBuilder && (
         <footer className="bg-surface border-t border-border sticky bottom-0 z-40 px-4 py-2.5">
           <div className="flex items-center justify-center gap-6">
             {/* Gemma Backend */}

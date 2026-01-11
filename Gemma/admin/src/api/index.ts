@@ -200,7 +200,7 @@ export async function getRunsStats(): Promise<RunsStats> {
 // Run Logs and Timeline APIs
 export interface LogEntry {
   timestamp: string;
-  level: string;
+  level: 'info' | 'warning' | 'error' | 'debug';
   message: string;
 }
 

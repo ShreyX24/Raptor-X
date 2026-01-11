@@ -414,6 +414,12 @@ export interface WorkflowStep {
   expected_delay: number;
   timeout: number;
   optional?: boolean;
+  // Per-step OCR config (overrides workflow-level defaults)
+  ocr_config?: {
+    use_paddleocr?: boolean;
+    text_threshold?: number;
+    box_threshold?: number;
+  };
 }
 
 export interface Workflow {

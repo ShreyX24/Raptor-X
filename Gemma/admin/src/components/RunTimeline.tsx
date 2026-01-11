@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useWebSocket, TimelineEvent as WsTimelineEvent } from '../hooks/useWebSocket';
 
 // Helper hook for live countdown
 function useCountdown(startTime: string | null, durationSeconds: number | null): number | null {
@@ -371,6 +372,47 @@ export function RunTimeline({ runId, pollInterval = 2000, compact = false, runSt
   const [selectedEvent, setSelectedEvent] = useState<TimelineEvent | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // WebSocket for real-time timeline updates
+  const { onTimelineEvent, isConnected } = useWebSocket();
+
+  // Subscribe to WebSocket timeline events for this run
+  useEffect(() => {
+    const unsubscribe = onTimelineEvent((wsEvent: WsTimelineEvent) => {
+      if (wsEvent.run_id === runId) {
+        // Convert WebSocket event to local TimelineEvent format
+        const event: TimelineEvent = {
+          event_id: wsEvent.event_id,
+          event_type: wsEvent.event_type,
+          message: wsEvent.message,
+          timestamp: wsEvent.timestamp,
+          status: wsEvent.status,
+          duration_ms: wsEvent.duration_ms ?? null,
+          metadata: wsEvent.metadata ?? {},
+          replaces_event_id: wsEvent.replaces_event_id ?? null,
+          group: wsEvent.group ?? null,
+        };
+
+        // Add or update event in local state
+        setEvents(prev => {
+          const existingIndex = prev.findIndex(e => e.event_id === event.event_id);
+          if (existingIndex >= 0) {
+            // Update existing event
+            const updated = [...prev];
+            updated[existingIndex] = event;
+            return updated;
+          }
+          // Add new event, sorted by timestamp
+          const newEvents = [...prev, event];
+          newEvents.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+          return newEvents;
+        });
+        setLoading(false);
+        setError(null);
+      }
+    });
+    return unsubscribe;
+  }, [runId, onTimelineEvent]);
+
   // For queued runs, show "Awaiting X completion" instead of fetching timeline
   if (runStatus === 'queued') {
     const waitingMessage = previousGameName
@@ -424,14 +466,17 @@ export function RunTimeline({ runId, pollInterval = 2000, compact = false, runSt
   }, [runId]);
 
   // Initial fetch and polling
+  // Use slower polling when WebSocket is connected (10s), faster when disconnected (2s default)
+  const actualPollInterval = isConnected ? Math.max(pollInterval, 10000) : pollInterval;
+
   useEffect(() => {
     fetchTimeline();
     // Only set up polling if pollInterval > 0 (0 means no polling)
-    if (pollInterval > 0) {
-      const interval = setInterval(fetchTimeline, pollInterval);
+    if (actualPollInterval > 0) {
+      const interval = setInterval(fetchTimeline, actualPollInterval);
       return () => clearInterval(interval);
     }
-  }, [fetchTimeline, pollInterval]);
+  }, [fetchTimeline, actualPollInterval]);
 
   // Auto-scroll to latest event
   useEffect(() => {

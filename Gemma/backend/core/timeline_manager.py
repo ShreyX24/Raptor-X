@@ -661,7 +661,7 @@ class TimelineManager:
         return self.add_event(
             "steam_switch",
             TimelineEventType.STEAM_ACCOUNT_SWITCHING,
-            f"Switching account: {from_account} → {to_account}",
+            f"Switching account: {from_account} -> {to_account}",
             metadata={'from_account': from_account, 'to_account': to_account}
         )
 

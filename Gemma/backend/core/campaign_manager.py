@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from enum import Enum
 
+from .events import event_bus, EventType
+
 logger = logging.getLogger(__name__)
 
 
@@ -96,10 +98,40 @@ class CampaignManager:
         self.campaign_history: List[Campaign] = []
         self._lock = threading.RLock()  # Use RLock to allow nested locking
 
+        # Mapping from run_id to campaign_id for quick lookup on events
+        self._run_to_campaign: Dict[str, str] = {}
+
         # Load campaign history from storage
         self._load_history_from_storage()
 
+        # Subscribe to run events for real-time progress updates
+        self._subscribe_to_events()
+
         logger.info("CampaignManager initialized")
+
+    def _subscribe_to_events(self):
+        """Subscribe to run events to update campaign progress in real-time"""
+        event_bus.subscribe(EventType.AUTOMATION_STARTED, self._on_run_event)
+        event_bus.subscribe(EventType.AUTOMATION_COMPLETED, self._on_run_event)
+        event_bus.subscribe(EventType.AUTOMATION_FAILED, self._on_run_event)
+
+    def _on_run_event(self, event):
+        """Handle run events to update campaign progress"""
+        run_id = event.data.get('run_id')
+        if not run_id:
+            return
+
+        # Check if this run belongs to a campaign
+        campaign_id = self._run_to_campaign.get(run_id)
+        if not campaign_id:
+            return
+
+        # Update campaign progress
+        with self._lock:
+            campaign = self.campaigns.get(campaign_id)
+            if campaign:
+                logger.debug(f"Updating campaign {campaign_id[:8]} progress due to run event: {event.event_type.value}")
+                self._update_campaign_progress(campaign)
 
     def _load_history_from_storage(self):
         """Load completed campaigns from persistent storage"""
@@ -224,28 +256,50 @@ class CampaignManager:
 
         campaign.run_ids = run_ids
 
-        # Store campaign
+        # Store campaign and run-to-campaign mapping
         with self._lock:
             self.campaigns[campaign_id] = campaign
+            for run_id in run_ids:
+                self._run_to_campaign[run_id] = campaign_id
 
         logger.info(f"Campaign {campaign_id[:8]} created with {len(run_ids)} runs queued")
+
+        # Emit campaign created event
+        event_bus.emit(EventType.CAMPAIGN_CREATED, {
+            'campaign_id': campaign_id,
+            'campaign': campaign.to_dict()
+        })
+
         return campaign
 
-    def get_campaign(self, campaign_id: str) -> Optional[Campaign]:
-        """Get a campaign by ID"""
+    def get_campaign(self, campaign_id: str, force_update: bool = False) -> Optional[Campaign]:
+        """Get a campaign by ID.
+
+        Args:
+            campaign_id: The campaign ID
+            force_update: If True, recalculate progress from run states.
+                          If False, use cached progress (updated by events).
+        """
         with self._lock:
             campaign = self.campaigns.get(campaign_id)
-            if campaign:
-                # Update progress from run states
+            if campaign and force_update:
+                # Force update from run states (for initial load or manual refresh)
                 self._update_campaign_progress(campaign)
             return campaign
 
-    def get_all_campaigns(self) -> List[Campaign]:
-        """Get all active campaigns"""
+    def get_all_campaigns(self, force_update: bool = False) -> List[Campaign]:
+        """Get all active campaigns.
+
+        Args:
+            force_update: If True, recalculate all progress from run states.
+                          If False (default), use cached progress (updated by events).
+                          The event-driven approach keeps progress up-to-date automatically.
+        """
         with self._lock:
             campaigns = list(self.campaigns.values())
-            for campaign in campaigns:
-                self._update_campaign_progress(campaign)
+            if force_update:
+                for campaign in campaigns:
+                    self._update_campaign_progress(campaign)
             return campaigns
 
     def get_campaign_history(self) -> List[Campaign]:
@@ -279,6 +333,11 @@ class CampaignManager:
                 current_game = run.game_name
                 current_index = i + 1
 
+        # Track if progress changed for event emission
+        old_completed = campaign.progress.completed_games
+        old_failed = campaign.progress.failed_games
+        old_status = campaign.status
+
         campaign.progress.completed_games = completed
         campaign.progress.failed_games = failed
         campaign.progress.current_game = current_game
@@ -295,13 +354,31 @@ class CampaignManager:
             else:
                 campaign.status = CampaignStatus.PARTIALLY_COMPLETED
 
-            # Move to history
+            # Move to history and clean up run mappings
             with self._lock:
                 if campaign.campaign_id in self.campaigns:
                     del self.campaigns[campaign.campaign_id]
                     self.campaign_history.append(campaign)
+                    # Clean up run-to-campaign mappings
+                    for run_id in campaign.run_ids:
+                        self._run_to_campaign.pop(run_id, None)
+
+            # Emit completion event
+            event_type = EventType.CAMPAIGN_COMPLETED if failed == 0 else EventType.CAMPAIGN_FAILED
+            event_bus.emit(event_type, {
+                'campaign_id': campaign.campaign_id,
+                'campaign': campaign.to_dict()
+            })
         elif completed > 0 or current_game:
             campaign.status = CampaignStatus.RUNNING
+
+        # Emit progress event if progress changed
+        progress_changed = (completed != old_completed or failed != old_failed or campaign.status != old_status)
+        if progress_changed and campaign.status == CampaignStatus.RUNNING:
+            event_bus.emit(EventType.CAMPAIGN_PROGRESS, {
+                'campaign_id': campaign.campaign_id,
+                'campaign': campaign.to_dict()
+            })
 
     def stop_campaign(self, campaign_id: str) -> bool:
         """

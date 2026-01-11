@@ -71,8 +71,6 @@ export function useRuns(pollInterval: number = 2000) {
 
       if (!runId) return;
 
-      console.log('[useRuns] WebSocket event:', event.event, runId);
-
       switch (event.event) {
         case 'automation_started':
           // Add or update in active runs - fetch full data to get complete run object

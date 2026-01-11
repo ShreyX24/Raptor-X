@@ -1,0 +1,219 @@
+# Steam Dialog Detection Configuration
+# =====================================
+# Define Steam popup dialogs that may appear during game launch.
+# Each dialog has detection keywords and a handling procedure.
+#
+# The system takes a screenshot after game launch, parses it with OmniParser,
+# and checks if any dialog keywords are found. If matched, the specified
+# action is executed.
+
+dialogs:
+  # Remote Play - Account is playing on another computer, Steam offers to stream
+  - id: remote_play
+    name: "Steam Remote Play"
+    description: "Appears when the game is running on another computer and Steam offers to stream instead"
+    priority: 0  # Highest priority - must catch before game "launches" via streaming
+
+    detection:
+      keywords:
+        - "steam remote play"
+        - "instead of running this game here"
+        - "stream it to you from a computer"
+        - "remote play"
+      require_all: false
+
+    action:
+      type: click_button
+      button_text: "Cancel"  # Click Cancel - we want to run locally, not stream
+      fallback: press_escape
+
+    handler: fail_run
+    # fail_run: Account is busy on another machine, fail the automation
+
+    fail_message: "Steam account is busy - game is running on another computer"
+
+  # Account Conflict - Another device is using this account
+  - id: account_conflict
+    name: "Account In Use On Another Computer"
+    description: "Appears when launching a game while the Steam account is already playing on another device"
+    priority: 1  # Higher priority = check first
+
+    detection:
+      # Any of these keywords in the parsed text triggers this dialog
+      keywords:
+        - "error - steam"
+        - "logged in on another computer"
+        - "another computer already playing"
+        - "disconnect the other session"
+        - "you are logged in on another"
+      # All keywords must be present (optional, default: false = any match)
+      require_all: false
+
+    action:
+      type: click_button
+      button_text: "Cancel"  # Click Cancel to abort (NOT Continue which kicks other user)
+      fallback: press_escape  # If button not found, press Escape
+
+    handler: try_alternative_account
+    # Handler options:
+    # - try_alternative_account: Mark account busy, try another Steam account pair
+    # - fail_run: Fail the automation run with error
+    # - continue: Just dismiss and continue (not recommended for this dialog)
+
+    fail_message: "Steam account is in use on another computer"
+
+  # Controller Required - Game requires a controller
+  - id: controller_required
+    name: "Controller Required"
+    description: "Appears for games that require a controller to play (like F1 24)"
+    priority: 1
+
+    detection:
+      keywords:
+        - "grab your controller"
+        - "requires a controller"
+        - "xbox or playstation controller"
+        - "haven't registered any controllers"
+      require_all: false
+
+    action:
+      type: click_button
+      button_text: "OK"
+      fallback: press_enter
+
+    handler: continue
+    # Continue with game launch - controller warning is informational
+
+  # Graphics API Selection - Choose DirectX/Vulkan for new games
+  - id: graphics_api_selection
+    name: "Graphics API Selection"
+    description: "Appears on first launch of some games asking which graphics API to use"
+    priority: 2
+
+    detection:
+      keywords:
+        - "which api"
+        - "select graphics"
+        - "directx 11"
+        - "directx 12"
+        - "vulkan"
+        - "graphics api"
+      require_all: false
+
+    action:
+      type: click_button
+      # Default button - can be overridden in game config via preferred_graphics_api
+      button_text: "DirectX 12"
+      alternatives:
+        - "DX12"
+        - "DirectX12"
+        - "Direct3D 12"
+
+    handler: continue
+    # After clicking, continue with normal game launch flow
+
+  # Steam Play Compatibility - Proton/compatibility layer prompts
+  - id: steam_play_compatibility
+    name: "Steam Play Compatibility Warning"
+    description: "Warning about running games with compatibility layers"
+    priority: 3
+
+    detection:
+      keywords:
+        - "steam play"
+        - "compatibility"
+        - "proton"
+        - "not officially supported"
+
+    action:
+      type: click_button
+      button_text: "OK"
+      alternatives:
+        - "Continue"
+        - "Play"
+
+    handler: continue
+
+  # EULA/Terms Agreement
+  - id: eula_agreement
+    name: "EULA/Terms Agreement"
+    description: "End User License Agreement that must be accepted"
+    priority: 4
+
+    detection:
+      keywords:
+        - "license agreement"
+        - "terms of service"
+        - "eula"
+        - "end user license"
+        - "i agree"
+        - "accept"
+
+    action:
+      type: click_button
+      button_text: "I Agree"
+      alternatives:
+        - "Accept"
+        - "Agree"
+        - "OK"
+
+    handler: continue
+
+  # Cloud Sync Conflict
+  - id: cloud_sync_conflict
+    name: "Cloud Save Conflict"
+    description: "Steam Cloud sync conflict between local and cloud saves"
+    priority: 5
+
+    detection:
+      keywords:
+        - "cloud sync"
+        - "cloud conflict"
+        - "sync conflict"
+        - "local save"
+        - "cloud save"
+        - "which version"
+
+    action:
+      type: click_button
+      button_text: "Upload to Cloud"  # Prefer local (more recent from automation)
+      alternatives:
+        - "Use Local"
+        - "Upload"
+
+    handler: continue
+
+  # Generic Steam Error
+  - id: steam_error_generic
+    name: "Generic Steam Error"
+    description: "Catch-all for Steam error dialogs"
+    priority: 99  # Low priority - check last
+
+    detection:
+      keywords:
+        - "steam - error"
+        - "an error occurred"
+        - "failed to start"
+        - "could not connect"
+
+    action:
+      type: click_button
+      button_text: "OK"
+      fallback: press_escape
+
+    handler: retry_once
+    # retry_once: Dismiss dialog and retry game launch once
+
+# Detection Settings
+settings:
+  # How long to wait after game launch before checking (seconds)
+  initial_wait: 3
+
+  # How many times to check for dialogs
+  check_attempts: 3
+
+  # Seconds between checks
+  check_interval: 2
+
+  # Timeout for OmniParser processing (seconds)
+  omniparser_timeout: 60

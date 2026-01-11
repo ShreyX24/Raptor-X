@@ -25,12 +25,14 @@ class GameConfig:
     resolution: str
     preset: str
     yaml_path: str
-    startup_wait: int = 30  # Startup wait time in seconds
+    startup_wait: int = 30  # Startup wait time in seconds (process detection timeout)
+    init_wait: Optional[int] = None  # Post-launch initialization wait (if different from startup_wait)
     steam_app_id: Optional[str] = None  # Steam App ID for launching via Steam
     process_id: Optional[str] = None  # Process name to wait for after launch (launcher)
     game_process: Optional[str] = None  # Actual game process to track after launcher (e.g., "HITMAN3" for games with launchers)
     preset_id: Optional[str] = None  # Preset-manager game folder name (e.g., "cyberpunk-2077")
     launch_args: Optional[str] = None  # Command-line arguments for game (e.g., "-benchmark test.xml")
+    launch_method: Optional[str] = None  # Launch method: 'steam' (default), 'exe' (direct executable)
     last_modified: Optional[datetime] = None
 
 
@@ -133,11 +135,13 @@ class GameConfigManager:
                 preset=metadata.get('preset', 'High'),
                 yaml_path=yaml_file,
                 startup_wait=metadata.get('startup_wait', 30),
+                init_wait=metadata.get('init_wait'),  # Post-launch initialization wait
                 steam_app_id=metadata.get('steam_app_id'),  # Steam App ID for launching
                 process_id=metadata.get('process_id'),  # Process name to wait for after launch (launcher)
                 game_process=metadata.get('game_process'),  # Actual game process after launcher
                 preset_id=metadata.get('preset_id'),  # Preset-manager game folder name
                 launch_args=metadata.get('launch_args'),  # Command-line arguments for game
+                launch_method=metadata.get('launch_method'),  # Launch method: 'steam' or 'exe'
                 last_modified=last_modified
             )
             
@@ -217,3 +221,249 @@ class GameConfigManager:
                 config_dict['last_modified'] = config.last_modified.isoformat()
             result[name] = config_dict
         return result
+
+    # ============== YAML CRUD Operations ==============
+
+    def get_game_yaml(self, name: str) -> Optional[str]:
+        """
+        Get raw YAML content for a game configuration
+
+        Args:
+            name: Game name
+
+        Returns:
+            Raw YAML string or None if not found
+        """
+        game = self.games.get(name)
+        if not game:
+            logger.warning(f"Game not found: {name}")
+            return None
+
+        try:
+            with open(game.yaml_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except Exception as e:
+            logger.error(f"Failed to read YAML for {name}: {e}")
+            return None
+
+    def save_game_yaml(self, name: str, content: str) -> Dict[str, Any]:
+        """
+        Save raw YAML content for an existing game configuration
+
+        Args:
+            name: Game name
+            content: Raw YAML string
+
+        Returns:
+            Dict with status and any errors
+        """
+        game = self.games.get(name)
+        if not game:
+            return {'status': 'error', 'error': f'Game not found: {name}'}
+
+        # Validate YAML syntax first
+        validation = self.validate_yaml(content)
+        if not validation['valid']:
+            return {'status': 'error', 'error': 'Invalid YAML', 'details': validation['errors']}
+
+        try:
+            # Write to file
+            with open(game.yaml_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+            # Reload this config to update in-memory state
+            self._load_single_config(game.yaml_path)
+
+            logger.info(f"Saved YAML for game: {name}")
+            return {'status': 'success', 'message': f'Saved {name}'}
+
+        except Exception as e:
+            logger.error(f"Failed to save YAML for {name}: {e}")
+            return {'status': 'error', 'error': str(e)}
+
+    def create_game(self, name: str, content: str) -> Dict[str, Any]:
+        """
+        Create a new game configuration file
+
+        Args:
+            name: Game name (will be used for filename)
+            content: Raw YAML string
+
+        Returns:
+            Dict with status and any errors
+        """
+        # Sanitize name for filename
+        safe_name = name.lower().replace(' ', '-').replace('_', '-')
+        safe_name = ''.join(c for c in safe_name if c.isalnum() or c == '-')
+
+        yaml_path = os.path.join(self.config_dir, f"{safe_name}.yaml")
+
+        # Check if file already exists
+        if os.path.exists(yaml_path):
+            return {'status': 'error', 'error': f'Game config already exists: {safe_name}.yaml'}
+
+        # Validate YAML syntax
+        validation = self.validate_yaml(content)
+        if not validation['valid']:
+            return {'status': 'error', 'error': 'Invalid YAML', 'details': validation['errors']}
+
+        try:
+            # Write new file
+            with open(yaml_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+            # Load the new config
+            self._load_single_config(yaml_path)
+
+            logger.info(f"Created new game config: {safe_name}.yaml")
+            return {
+                'status': 'success',
+                'message': f'Created {safe_name}.yaml',
+                'filename': f'{safe_name}.yaml',
+                'path': yaml_path
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to create game config: {e}")
+            return {'status': 'error', 'error': str(e)}
+
+    def delete_game(self, name: str) -> Dict[str, Any]:
+        """
+        Delete a game configuration file
+
+        Args:
+            name: Game name
+
+        Returns:
+            Dict with status and any errors
+        """
+        game = self.games.get(name)
+        if not game:
+            return {'status': 'error', 'error': f'Game not found: {name}'}
+
+        yaml_path = game.yaml_path
+
+        try:
+            # Remove file
+            os.remove(yaml_path)
+
+            # Remove from in-memory dict
+            del self.games[name]
+
+            logger.info(f"Deleted game config: {name}")
+            return {'status': 'success', 'message': f'Deleted {name}'}
+
+        except Exception as e:
+            logger.error(f"Failed to delete game config {name}: {e}")
+            return {'status': 'error', 'error': str(e)}
+
+    def validate_yaml(self, content: str) -> Dict[str, Any]:
+        """
+        Validate YAML content syntax and structure
+
+        Args:
+            content: Raw YAML string
+
+        Returns:
+            Dict with 'valid' bool and 'errors' list
+        """
+        errors = []
+
+        # Check for empty content
+        if not content or not content.strip():
+            return {'valid': False, 'errors': ['YAML content is empty']}
+
+        # Parse YAML
+        try:
+            data = yaml.safe_load(content)
+        except yaml.YAMLError as e:
+            error_msg = str(e)
+            # Try to extract line number from YAML error
+            return {'valid': False, 'errors': [f'YAML syntax error: {error_msg}']}
+
+        # Check if it's a valid dict
+        if not isinstance(data, dict):
+            return {'valid': False, 'errors': ['YAML must be a dictionary/object']}
+
+        # Validate structure
+        if 'metadata' not in data:
+            errors.append('Missing "metadata" section')
+        else:
+            metadata = data['metadata']
+            if not isinstance(metadata, dict):
+                errors.append('"metadata" must be a dictionary')
+            elif 'game_name' not in metadata:
+                errors.append('Missing "game_name" in metadata')
+
+        if 'steps' not in data and 'states' not in data:
+            errors.append('Missing "steps" or "states" section')
+
+        if 'steps' in data:
+            steps = data['steps']
+            if not isinstance(steps, dict):
+                errors.append('"steps" must be a dictionary with step numbers as keys')
+            else:
+                for step_num, step_data in steps.items():
+                    if not isinstance(step_data, dict):
+                        errors.append(f'Step {step_num} must be a dictionary')
+                        continue
+                    if 'description' not in step_data:
+                        errors.append(f'Step {step_num} missing "description"')
+
+        return {
+            'valid': len(errors) == 0,
+            'errors': errors,
+            'warnings': []  # Could add warnings for best practices
+        }
+
+    def get_workflow_summary(self, name: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a summary of a workflow for display in UI
+
+        Args:
+            name: Game name
+
+        Returns:
+            Dict with summary info or None if not found
+        """
+        game = self.games.get(name)
+        if not game:
+            return None
+
+        # Read and parse YAML to count steps
+        step_count = 0
+        try:
+            with open(game.yaml_path, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f)
+
+            if 'steps' in data and isinstance(data['steps'], dict):
+                step_count = len(data['steps'])
+        except Exception as e:
+            logger.warning(f"Failed to get step count for {name}: {e}")
+
+        return {
+            'name': game.name,
+            'filename': os.path.basename(game.yaml_path),
+            'config_type': game.config_type,
+            'step_count': step_count,
+            'last_modified': game.last_modified.isoformat() if game.last_modified else None,
+            'steam_app_id': game.steam_app_id,
+            'preset_id': game.preset_id
+        }
+
+    def list_workflows(self) -> List[Dict[str, Any]]:
+        """
+        Get list of all workflows with summaries
+
+        Returns:
+            List of workflow summaries
+        """
+        summaries = []
+        for name in self.games:
+            summary = self.get_workflow_summary(name)
+            if summary:
+                summaries.append(summary)
+
+        # Sort by name
+        summaries.sort(key=lambda x: x['name'].lower())
+        return summaries

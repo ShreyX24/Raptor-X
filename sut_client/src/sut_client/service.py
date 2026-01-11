@@ -786,7 +786,7 @@ def create_app() -> Flask:
             # Focus the window
             # Skip pywinauto for games - it hangs on fullscreen exclusive mode
             # Win32 method is faster and more reliable for game windows
-            success = ensure_window_foreground_v2(pid, timeout=3, use_pywinauto=False)
+            success = ensure_window_foreground_v2(pid, timeout=5, use_pywinauto=False)
 
             # Optionally minimize other windows
             minimized_count = 0
