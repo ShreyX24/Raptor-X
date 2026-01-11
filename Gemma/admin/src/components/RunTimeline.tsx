@@ -1,6 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWebSocket, TimelineEvent as WsTimelineEvent } from '../hooks/useWebSocket';
 
+// Module-level cache for timeline data - persists across component re-mounts
+// Key: runId, Value: { events: TimelineEvent[], timestamp: number }
+const timelineCache = new Map<string, { events: TimelineEvent[]; timestamp: number }>();
+
+// Cache TTL for active runs (1 second) - use cached data briefly, then refresh
+const ACTIVE_CACHE_TTL_MS = 1000;
+// Cache is effectively permanent for completed runs - they don't change
+
 // Helper hook for live countdown
 function useCountdown(startTime: string | null, durationSeconds: number | null): number | null {
   const [remaining, setRemaining] = useState<number | null>(null);
@@ -219,7 +227,7 @@ function TimelineNode({ event, isFirst: _isFirst, isLast, onClick, isSelected }:
   );
 
   return (
-    <div className="flex flex-col items-center min-w-[100px] relative group">
+    <div className="flex flex-col items-center min-w-[100px] flex-shrink-0 relative group">
       {/* Time label above - shown on hover, or countdown if waiting */}
       <div className="h-6 mb-1 flex items-center justify-center">
         {isWaitingEvent ? (
@@ -366,8 +374,10 @@ function getEventIteration(event: TimelineEvent): number | null {
 }
 
 export function RunTimeline({ runId, pollInterval = 2000, compact = false, runStatus, filterIteration, previousGameName }: RunTimelineProps) {
-  const [events, setEvents] = useState<TimelineEvent[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Initialize from cache if available for instant display
+  const cachedData = timelineCache.get(runId);
+  const [events, setEvents] = useState<TimelineEvent[]>(cachedData?.events || []);
+  const [loading, setLoading] = useState(!cachedData); // Not loading if we have cache
   const [error, setError] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<TimelineEvent | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -392,18 +402,23 @@ export function RunTimeline({ runId, pollInterval = 2000, compact = false, runSt
           group: wsEvent.group ?? null,
         };
 
-        // Add or update event in local state
+        // Add or update event in local state and cache
         setEvents(prev => {
           const existingIndex = prev.findIndex(e => e.event_id === event.event_id);
+          let newEvents: TimelineEvent[];
           if (existingIndex >= 0) {
             // Update existing event
-            const updated = [...prev];
-            updated[existingIndex] = event;
-            return updated;
+            newEvents = [...prev];
+            newEvents[existingIndex] = event;
+          } else {
+            // Add new event, sorted by timestamp
+            newEvents = [...prev, event];
+            newEvents.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
           }
-          // Add new event, sorted by timestamp
-          const newEvents = [...prev, event];
-          newEvents.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+          // Update cache with new events
+          timelineCache.set(runId, { events: newEvents, timestamp: Date.now() });
+
           return newEvents;
         });
         setLoading(false);
@@ -449,21 +464,42 @@ export function RunTimeline({ runId, pollInterval = 2000, compact = false, runSt
     return event;
   }, [runStatus]);
 
-  const fetchTimeline = useCallback(async () => {
+  const fetchTimeline = useCallback(async (skipCacheCheck = false) => {
+    // Check if cache is fresh enough (for non-completed runs)
+    if (!skipCacheCheck) {
+      const cached = timelineCache.get(runId);
+      if (cached) {
+        const isCompleted = runStatus === 'completed' || runStatus === 'failed';
+        const cacheAge = Date.now() - cached.timestamp;
+        // For completed runs, always use cache; for active, use if fresh
+        if (isCompleted || cacheAge < ACTIVE_CACHE_TTL_MS) {
+          if (events.length === 0) {
+            setEvents(cached.events);
+            setLoading(false);
+          }
+          return;
+        }
+      }
+    }
+
     try {
       const response = await fetch(`/api/runs/${runId}/timeline`);
       if (!response.ok) {
         throw new Error('Failed to fetch timeline');
       }
       const data = await response.json();
-      setEvents(data.events || []);
+      const newEvents = data.events || [];
+      setEvents(newEvents);
       setError(null);
+
+      // Update cache
+      timelineCache.set(runId, { events: newEvents, timestamp: Date.now() });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load timeline');
     } finally {
       setLoading(false);
     }
-  }, [runId]);
+  }, [runId, runStatus, events.length]);
 
   // Initial fetch and polling
   // Use slower polling when WebSocket is connected (10s), faster when disconnected (2s default)

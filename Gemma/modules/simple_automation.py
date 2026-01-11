@@ -229,8 +229,9 @@ class SimpleAutomation:
             needs_parsing = "find" in step
 
             if needs_parsing:
-                # Capture screenshot
-                screenshot_path = f"{self.run_dir}/screenshots/screenshot_{current_step}.png"
+                # Capture screenshot (include retry suffix to preserve all attempts for debugging)
+                retry_suffix = f"_retry{retries}" if retries > 0 else ""
+                screenshot_path = f"{self.run_dir}/screenshots/screenshot_{current_step}{retry_suffix}.png"
                 try:
                     self.screenshot_mgr.capture(screenshot_path)
                 except Exception as e:
@@ -341,7 +342,7 @@ class SimpleAutomation:
                 bounding_boxes = []
 
             # Process step using modular action system
-            success = self._process_step_modular(step, bounding_boxes, current_step)
+            success = self._process_step_modular(step, bounding_boxes, current_step, retries)
 
             if success:
                 logger.info(f">> Step {current_step} completed successfully")
@@ -391,9 +392,9 @@ class SimpleAutomation:
 
         return current_step > len(steps)
     
-    def _process_step_modular(self, step: Dict[str, Any], bounding_boxes: List[BoundingBox], step_num: int) -> bool:
+    def _process_step_modular(self, step: Dict[str, Any], bounding_boxes: List[BoundingBox], step_num: int, retries: int = 0) -> bool:
         """Process a step using the new modular action system with enhanced logging."""
-        
+
         target_element = None
         
         # 1. FIND ELEMENT (if specified)
@@ -430,7 +431,7 @@ class SimpleAutomation:
         
         # 3. VERIFY SUCCESS (if specified)
         if "verify_success" in step:
-            return self._verify_step_success(step, step_num)
+            return self._verify_step_success(step, step_num, retries)
         
         return True
     
@@ -997,18 +998,20 @@ class SimpleAutomation:
             
 
     
-    def _verify_step_success(self, step: Dict[str, Any], step_num: int) -> bool:
+    def _verify_step_success(self, step: Dict[str, Any], step_num: int, retries: int = 0) -> bool:
         """Verify step success with enhanced checking."""
         logger.info("Verifying step success...")
-        
-        verify_path = f"{self.run_dir}/screenshots/verify_{step_num}.png"
+
+        # Include retry suffix to preserve all verification attempts for debugging
+        retry_suffix = f"_retry{retries}" if retries > 0 else ""
+        verify_path = f"{self.run_dir}/screenshots/verify_{step_num}{retry_suffix}.png"
         try:
             self.screenshot_mgr.capture(verify_path)
             verify_boxes = self.vision_model.detect_ui_elements(verify_path)
-            
+
             if self.annotator:
                 try:
-                    annotated_verify_path = f"{self.run_dir}/annotated/verify_{step_num}.png"
+                    annotated_verify_path = f"{self.run_dir}/annotated/verify_{step_num}{retry_suffix}.png"
                     self.annotator.draw_bounding_boxes(verify_path, verify_boxes, annotated_verify_path)
                 except Exception as e:
                     logger.warning(f"Failed to create verification annotation: {str(e)}")

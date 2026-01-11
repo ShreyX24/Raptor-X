@@ -380,8 +380,9 @@ def get_service_status(name: str):
 
 @admin_bp.route('/games', methods=['GET'])
 def list_games():
-    """List all game configurations"""
+    """List all game configurations (excludes hidden configs by default)"""
     try:
+        include_hidden = request.args.get('include_hidden', 'false').lower() == 'true'
         games = []
         if GAMES_CONFIG_DIR.exists():
             for yaml_file in GAMES_CONFIG_DIR.glob("*.yaml"):
@@ -391,6 +392,11 @@ def list_games():
                     with open(yaml_file, "r", encoding="utf-8") as f:
                         data = yaml.safe_load(f)
                     metadata = data.get("metadata", {})
+
+                    # Skip hidden configs unless explicitly requested
+                    if metadata.get("hidden", False) and not include_hidden:
+                        continue
+
                     games.append({
                         "filename": yaml_file.name,
                         "name": yaml_file.stem,
@@ -398,6 +404,7 @@ def list_games():
                         "steam_app_id": metadata.get("steam_app_id"),
                         "preset_id": metadata.get("preset_id"),
                         "display_name": metadata.get("display_name"),
+                        "hidden": metadata.get("hidden", False),
                     })
                 except Exception as e:
                     logger.warning(f"Error reading {yaml_file}: {e}")

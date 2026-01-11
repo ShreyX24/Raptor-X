@@ -361,6 +361,7 @@ export function Dashboard() {
                 selectedSutId={selectedSutId}
                 selectedGameNames={selectedGameNames}
                 onSelectSut={handleSelectSut}
+                onSelectGames={handleSelectGames}
                 onRunStarted={handleRunStarted}
                 onCampaignStarted={handleCampaignStarted}
                 className="h-full"

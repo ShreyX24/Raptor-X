@@ -13,13 +13,19 @@ from .core.controller import BackendController
 
 def setup_logging(config):
     """Setup logging configuration"""
+    # Create UTF-8 capable handlers for Windows compatibility
+    file_handler = logging.FileHandler(config.log_file, encoding='utf-8')
+
+    # For console output, use UTF-8 stream to handle special characters (e.g., ⌘ from OCR)
+    import io
+    stream_handler = logging.StreamHandler(
+        io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    )
+
     logging.basicConfig(
         level=getattr(logging, config.log_level.upper(), logging.INFO),
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(config.log_file),
-            logging.StreamHandler(sys.stdout)
-        ]
+        handlers=[file_handler, stream_handler]
     )
     
     # Set specific log levels for noisy libraries
@@ -27,6 +33,7 @@ def setup_logging(config):
     logging.getLogger('urllib3').setLevel(logging.WARNING)
     logging.getLogger('socketio').setLevel(logging.WARNING)
     logging.getLogger('engineio').setLevel(logging.WARNING)
+    logging.getLogger('werkzeug').setLevel(logging.WARNING)  # Suppress HTTP request spam
 
 
 # Global controller reference for signal handling

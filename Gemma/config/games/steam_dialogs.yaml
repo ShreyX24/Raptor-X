@@ -7,6 +7,10 @@
 # and checks if any dialog keywords are found. If matched, the specified
 # action is executed.
 
+metadata:
+  game_name: "Steam Dialogs"
+  hidden: true  # Utility config - not a real game
+
 dialogs:
   # Remote Play - Account is playing on another computer, Steam offers to stream
   - id: remote_play
@@ -134,28 +138,35 @@ dialogs:
 
     handler: continue
 
-  # EULA/Terms Agreement
+  # EULA/Terms Agreement (Ubisoft, EA, etc.)
   - id: eula_agreement
     name: "EULA/Terms Agreement"
-    description: "End User License Agreement that must be accepted"
+    description: "End User License Agreement that must be accepted (Ubisoft, EA, etc.)"
     priority: 4
 
     detection:
       keywords:
         - "license agreement"
+        - "licence agreement"
         - "terms of service"
         - "eula"
         - "end user license"
-        - "i agree"
-        - "accept"
+        - "end user licence"
+        - "ubisoft"
+        - "you must agree to the terms"
+        - "please read this agreement"
+        - "by installing or using"
+        - "privacy policy"
+      require_all: false
 
     action:
       type: click_button
-      button_text: "I Agree"
+      button_text: "Accept"
       alternatives:
-        - "Accept"
+        - "I Agree"
         - "Agree"
         - "OK"
+        - "Continue"
 
     handler: continue
 

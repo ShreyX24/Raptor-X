@@ -393,7 +393,12 @@ class BackendController:
 
             campaign = self.campaign_manager.get_campaign(campaign_id)
             if not campaign:
-                # Campaign might already be in history
+                # Campaign might already be in history - check there too
+                for hist_campaign in self.campaign_manager.get_campaign_history():
+                    if hist_campaign.campaign_id == campaign_id:
+                        campaign = hist_campaign
+                        break
+            if not campaign:
                 return
 
             # Update campaign manifest on disk with run_ids

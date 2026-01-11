@@ -1394,7 +1394,7 @@ class APIRoutes:
                 # Get manifest from storage
                 manifest = self.run_manager.storage.get_manifest(run_id)
                 if not manifest:
-                    return jsonify({"error": f"Run {run_id} not found"}), 404
+                    return jsonify({"logs": [], "message": f"Run {run_id} not in cache"})
 
                 # Get run directory
                 run_dir = self.run_manager.storage.get_run_dir(run_id)
@@ -1405,8 +1405,25 @@ class APIRoutes:
                 logs = []
                 log_pattern = re.compile(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},?\d*)\s*-\s*(\S+)\s*-\s*(\w+)\s*-\s*(.*)$')
 
-                # Find all blackbox log files
-                for log_file in sorted(run_dir.rglob('blackbox*.log')):
+                # Find blackbox log files using targeted glob patterns
+                # Limit depth to avoid slow recursive search
+                search_patterns = [
+                    'blackbox*',           # Direct in run_dir
+                    'perf-run-*/blackbox*', # In iteration folder
+                    'perf-run-*/perf-run-*/blackbox*',  # Legacy double-nested
+                ]
+
+                log_files = set()
+                for pattern in search_patterns:
+                    for f in run_dir.glob(pattern):
+                        if f.is_file() and f.name.startswith('blackbox'):
+                            log_files.add(f)
+
+                # If no logs found, return early
+                if not log_files:
+                    return jsonify({"logs": [], "run_id": run_id, "folder_name": manifest.folder_name, "total_entries": 0, "message": "No log files found"})
+
+                for log_file in sorted(log_files):
                     try:
                         with open(log_file, 'r', encoding='utf-8') as f:
                             for line in f:
@@ -1773,7 +1790,10 @@ class APIRoutes:
                 if not hasattr(self, 'campaign_manager') or self.campaign_manager is None:
                     return jsonify({"active": [], "history": []})
 
-                active = [c.to_dict() for c in self.campaign_manager.get_all_campaigns()]
+                # Always force_update to ensure status is current (campaigns may have
+                # completed since last event processing). This recalculates progress
+                # from actual run states rather than relying on cached progress.
+                active = [c.to_dict() for c in self.campaign_manager.get_all_campaigns(force_update=True)]
                 history = [c.to_dict() for c in self.campaign_manager.get_campaign_history()]
 
                 return jsonify({

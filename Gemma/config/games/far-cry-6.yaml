@@ -71,7 +71,7 @@ steps:
       - type: "any"
         text: "OPTIONS"
         text_match: "contains"
-    expected_delay: 5
+    expected_delay: 10  # Increased from 5 (loading transition needs more time)
     timeout: 15
 
   5:
@@ -124,12 +124,12 @@ steps:
     expected_delay: 0
     timeout: 10
 
-fallbacks:
-  general:
-    action: "click"
-    find:
-      type: "any"
-      text: "BACK"
-      text_match: "contains"
-    expected_delay: 1
-    max_retries: 3
+# fallbacks:
+#   general:
+#     action: "click"
+#     find:
+#       type: "any"
+#       text: "BACK"
+#       text_match: "contains"
+#     expected_delay: 1
+#     max_retries: 3

@@ -1,0 +1,5 @@
+# Ignore profiling results (can be large)
+results/*.json
+
+# Keep the directory structure
+!results/.gitkeep

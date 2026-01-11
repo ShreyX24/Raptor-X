@@ -15,11 +15,25 @@ interface QuickLaunchPanelProps {
   selectedSutId?: string;
   selectedGameNames?: string[];  // Changed to array for multi-select
   onSelectSut?: (sut: SUT | null) => void;
+  onSelectGames?: (gameNames: string[]) => void;  // Callback to select games in parent
   onRunStarted?: (runId: string) => void;
   onCampaignStarted?: (campaignId: string) => void;
   className?: string;
   compact?: boolean;  // Compact horizontal mode
 }
+
+// Last run settings for "Load Last Run" feature
+interface LastRunSettings {
+  sutId: string;
+  gameNames: string[];
+  quality: QualityLevel | null;
+  resolution: Resolution | null;
+  iterations: number;
+  skipSteamLogin: boolean;
+  timestamp: number;  // When the run was started
+}
+
+const LAST_RUN_STORAGE_KEY = 'rpx_last_run_settings';
 
 type LaunchState = 'idle' | 'checking' | 'ready' | 'launching' | 'error';
 
@@ -135,6 +149,7 @@ export function QuickLaunchPanel({
   selectedSutId,
   selectedGameNames = [],
   onSelectSut,
+  onSelectGames,
   onRunStarted,
   onCampaignStarted,
   className = '',
@@ -143,6 +158,9 @@ export function QuickLaunchPanel({
   // Selection state
   const [localSutId, setLocalSutId] = useState<string | undefined>(selectedSutId);
   const [localGameNames, setLocalGameNames] = useState<string[]>(selectedGameNames);
+
+  // Last run settings for restore feature
+  const [lastRunSettings, setLastRunSettings] = useState<LastRunSettings | null>(null);
 
   // Preset selection - simplified to separate dropdowns
   const [selectedQuality, setSelectedQuality] = useState<QualityLevel | null>(null);
@@ -166,16 +184,37 @@ export function QuickLaunchPanel({
   const [sutSystemInfo, setSutSystemInfo] = useState<SUTSystemInfo | null>(null);
   const [loadingSutInfo, setLoadingSutInfo] = useState(false);
 
+  // Load last run settings from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(LAST_RUN_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as LastRunSettings;
+        setLastRunSettings(parsed);
+      }
+    } catch (error) {
+      console.error('Failed to load last run settings:', error);
+    }
+  }, []);
+
   // Sync with parent selections
   useEffect(() => {
     if (selectedSutId !== undefined) setLocalSutId(selectedSutId);
   }, [selectedSutId]);
 
   useEffect(() => {
-    if (selectedGameNames.length > 0) {
-      setLocalGameNames(selectedGameNames);
-      // Set default iterations based on selection type
-      setIterations(selectedGameNames.length > 1 ? 3 : 1);
+    // Always sync with parent selection (including when cleared to empty)
+    setLocalGameNames(selectedGameNames);
+    // Set default iterations based on selection type
+    if (selectedGameNames.length > 1) {
+      setIterations(3);
+    } else if (selectedGameNames.length === 1) {
+      setIterations(1);
+    }
+    // Reset launch state when selection is cleared
+    if (selectedGameNames.length === 0) {
+      setLaunchState('idle');
+      setGameAvailable(null);
     }
   }, [selectedGameNames]);
 
@@ -347,6 +386,23 @@ export function QuickLaunchPanel({
     setLaunchState('launching');
     setErrorMessage(null);
 
+    // Save current settings to localStorage before launching
+    try {
+      const settings: LastRunSettings = {
+        sutId: selectedSut.device_id,
+        gameNames: selectedGames.map(g => g.name),
+        quality: selectedQuality,
+        resolution: selectedResolution,
+        iterations,
+        skipSteamLogin,
+        timestamp: Date.now(),
+      };
+      localStorage.setItem(LAST_RUN_STORAGE_KEY, JSON.stringify(settings));
+      setLastRunSettings(settings);
+    } catch (error) {
+      console.error('Failed to save last run settings:', error);
+    }
+
     try {
       if (isCampaign) {
         // Campaign run (multiple games)
@@ -359,7 +415,9 @@ export function QuickLaunchPanel({
           selectedResolution || undefined,
           skipSteamLogin
         );
-        setLaunchState('idle');
+        // Set back to 'ready' so button stays enabled for another run
+        // (game availability was just verified, no need to re-check)
+        setLaunchState('ready');
         onCampaignStarted?.(result.campaign_id);
       } else {
         // Single run
@@ -371,7 +429,8 @@ export function QuickLaunchPanel({
           selectedResolution || undefined,
           skipSteamLogin
         );
-        setLaunchState('idle');
+        // Set back to 'ready' so button stays enabled for another run
+        setLaunchState('ready');
         onRunStarted?.(result.run_id);
       }
 
@@ -383,6 +442,53 @@ export function QuickLaunchPanel({
       setErrorMessage(error instanceof Error ? error.message : 'Failed to start run');
     }
   };
+
+  // Handle loading last run settings
+  const handleLoadLastRun = useCallback(() => {
+    if (!lastRunSettings) return;
+
+    // Find the SUT by ID
+    const sut = devices.find(d => d.device_id === lastRunSettings.sutId);
+    if (sut) {
+      setLocalSutId(lastRunSettings.sutId);
+      onSelectSut?.(sut);
+    }
+
+    // Restore games via parent callback
+    if (lastRunSettings.gameNames.length > 0) {
+      setLocalGameNames(lastRunSettings.gameNames);
+      onSelectGames?.(lastRunSettings.gameNames);
+    }
+
+    // Restore local settings
+    setSelectedQuality(lastRunSettings.quality);
+    setSelectedResolution(lastRunSettings.resolution);
+    setIterations(lastRunSettings.iterations);
+    setSkipSteamLogin(lastRunSettings.skipSteamLogin);
+  }, [lastRunSettings, devices, onSelectSut, onSelectGames]);
+
+  // Check if last run can be loaded (SUT still exists and at least one game still exists)
+  const canLoadLastRun = useMemo(() => {
+    if (!lastRunSettings) return false;
+    const sutExists = devices.some(d => d.device_id === lastRunSettings.sutId);
+    const gamesExist = lastRunSettings.gameNames.some(name =>
+      games.some(g => g.name === name)
+    );
+    return sutExists && gamesExist;
+  }, [lastRunSettings, devices, games]);
+
+  // Format relative time for last run
+  const lastRunTimeAgo = useMemo(() => {
+    if (!lastRunSettings) return '';
+    const diff = Date.now() - lastRunSettings.timestamp;
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    if (days > 0) return `${days}d ago`;
+    if (hours > 0) return `${hours}h ago`;
+    if (minutes > 0) return `${minutes}m ago`;
+    return 'just now';
+  }, [lastRunSettings]);
 
   // Determine if launch is possible
   const isReady = launchState === 'ready';
@@ -497,6 +603,21 @@ export function QuickLaunchPanel({
               </span>
             </label>
           </div>
+
+          {/* Load Last Run button */}
+          {canLoadLastRun && (
+            <div className="flex-shrink-0">
+              <div className="text-[10px] text-transparent mb-1">.</div>
+              <button
+                onClick={handleLoadLastRun}
+                className="px-3 py-1.5 rounded text-xs font-medium transition-all
+                  bg-surface-elevated border border-border hover:border-primary text-text-secondary"
+                title={`Load settings from ${lastRunTimeAgo}: ${lastRunSettings?.gameNames.length} game(s)`}
+              >
+                Load Last
+              </button>
+            </div>
+          )}
 
           {/* Launch button */}
           <div className="flex-shrink-0">
@@ -842,6 +963,18 @@ export function QuickLaunchPanel({
               {skipSteamLogin ? 'Manual' : 'Auto'}
             </span>
           </label>
+
+          {/* Load Last Run Button */}
+          {canLoadLastRun && (
+            <button
+              onClick={handleLoadLastRun}
+              className="px-3 py-2 rounded text-xs font-medium transition-all
+                bg-surface-elevated border border-border hover:border-primary text-text-secondary"
+              title={`Load settings from ${lastRunTimeAgo}: ${lastRunSettings?.gameNames.length} game(s)`}
+            >
+              Load Last Run
+            </button>
+          )}
 
           {/* Launch Button */}
           <button

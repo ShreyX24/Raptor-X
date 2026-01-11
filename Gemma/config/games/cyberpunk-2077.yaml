@@ -11,7 +11,7 @@ metadata:
   process_name: Cyberpunk2077
   benchmark_name: Cyberpunk ingame benchmark
   benchmark_duration: 100
-  startup_wait: 80
+  startup_wait: 95
   resolution: 1920x1080
   preset: High
   engine: Red Engine 4.0
