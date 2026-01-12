@@ -59,3 +59,11 @@ Gemma/scripts/
 # Startup scripts (machine-specific)
 start-all.bat
 start-all.ps1
+
+# Claude Code temp files
+tmpclaude-*
+**/tmpclaude-*
+
+# Runtime temp data
+run_status.json
+runs_temp.json
