@@ -482,6 +482,57 @@ class NetworkManager:
         resolutions = self.get_supported_resolutions()
         return any(r.get("width") == width and r.get("height") == height for r in resolutions)
 
+    def kill_process(self, process_name: str) -> Dict[str, Any]:
+        """
+        Kill a process by name on the SUT.
+
+        Args:
+            process_name: Name of the process to kill (e.g., "RDR2.exe")
+
+        Returns:
+            Response dict from SUT with 'status', 'killed', 'message'
+        """
+        try:
+            response = self.session.post(
+                f"{self.base_url}/kill",
+                json={"process_name": process_name},
+                timeout=10
+            )
+            if response.status_code == 200:
+                result = response.json()
+                logger.info(f"Kill process result for {process_name}: {result}")
+                return result
+            else:
+                logger.warning(f"Kill process failed for {process_name}: {response.status_code} - {response.text}")
+                return {"status": "error", "message": f"HTTP {response.status_code}"}
+        except Exception as e:
+            logger.error(f"Error killing process {process_name}: {e}")
+            return {"status": "error", "message": str(e)}
+
+    def check_process(self, process_name: str) -> bool:
+        """
+        Check if a process is running on the SUT.
+
+        Args:
+            process_name: Name of the process to check (e.g., "RDR2.exe")
+
+        Returns:
+            True if process is running, False otherwise
+        """
+        try:
+            response = self.session.post(
+                f"{self.base_url}/check_process",
+                json={"process_name": process_name},
+                timeout=5
+            )
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("running", False)
+            return False
+        except Exception as e:
+            logger.error(f"Error checking process {process_name}: {e}")
+            return False
+
     def close(self):
         """Close the network session."""
         self.session.close()

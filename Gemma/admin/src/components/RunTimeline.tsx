@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useWebSocket, TimelineEvent as WsTimelineEvent } from '../hooks/useWebSocket';
 
 // Module-level cache for timeline data - persists across component re-mounts
@@ -226,6 +226,9 @@ function TimelineNode({ event, isFirst: _isFirst, isLast, onClick, isSelected }:
     event.metadata?.benchmark_duration
   );
 
+  // Check if this is a parallel task
+  const isParallelTask = event.metadata?.parallel === true;
+
   return (
     <div className="flex flex-col items-center min-w-[100px] flex-shrink-0 relative group">
       {/* Time label above - shown on hover, or countdown if waiting */}
@@ -253,6 +256,18 @@ function TimelineNode({ event, isFirst: _isFirst, isLast, onClick, isSelected }:
         <EventIcon eventType={event.event_type} status={event.status} />
       </button>
 
+      {/* Parallel task indicator */}
+      {isParallelTask && (
+        <div
+          className="absolute -top-1 -right-1 z-20 w-4 h-4 rounded-full bg-warning/90 flex items-center justify-center"
+          title="Running in parallel with other tasks"
+        >
+          <svg className="w-2.5 h-2.5 text-black" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M13 3L4 14h7l-1 7 9-11h-7l1-7z" />
+          </svg>
+        </div>
+      )}
+
       {/* Connector line */}
       {!isLast && (
         <div
@@ -272,7 +287,7 @@ function TimelineNode({ event, isFirst: _isFirst, isLast, onClick, isSelected }:
 
       {/* Message label below */}
       <div className="mt-2 text-[10px] text-text-secondary text-center max-w-[90px] line-clamp-2" title={event.message}>
-        {shortMessage}
+        {isParallelTask && <span className="text-warning">⚡</span>} {shortMessage}
       </div>
     </div>
   );
@@ -291,6 +306,8 @@ function EventDetailPanel({ event, onClose }: { event: TimelineEvent; onClose: (
 
   const colors = statusColors[event.status] || statusColors.pending;
 
+  const isParallelTask = event.metadata?.parallel === true;
+
   return (
     <div className="mt-4 p-4 rounded-lg bg-surface-elevated border border-border">
       <div className="flex items-start justify-between mb-3">
@@ -298,6 +315,14 @@ function EventDetailPanel({ event, onClose }: { event: TimelineEvent; onClose: (
           <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${colors.bg} ${colors.text}`}>
             {event.status}
           </span>
+          {isParallelTask && (
+            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-warning/20 text-warning flex items-center gap-1">
+              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M13 3L4 14h7l-1 7 9-11h-7l1-7z" />
+              </svg>
+              Parallel
+            </span>
+          )}
           <span className="text-xs text-text-muted font-mono">
             {new Date(event.timestamp).toLocaleTimeString()}
           </span>
@@ -373,6 +398,23 @@ function getEventIteration(event: TimelineEvent): number | null {
   return null;
 }
 
+// Calculate grid position for snake pattern (boustrophedon)
+function getSnakePosition(index: number, cols: number): { row: number; col: number } {
+  const row = Math.floor(index / cols);
+  const posInRow = index % cols;
+  // Even rows: left-to-right (0,1,2,3,4,5)
+  // Odd rows: right-to-left (5,4,3,2,1,0)
+  const col = row % 2 === 0 ? posInRow : (cols - 1 - posInRow);
+  return { row, col };
+}
+
+// Snake timeline constants
+const MIN_CELL_WIDTH = 80; // px - minimum width of each cell
+const CELL_HEIGHT = 80; // px - height for countdown + circle + label
+const GAP_X = 4; // horizontal gap between cells
+const GAP_Y = 8; // vertical gap between rows
+const CIRCLE_SIZE = 24; // px - size of the node circle
+
 export function RunTimeline({ runId, pollInterval = 2000, compact = false, runStatus, filterIteration, previousGameName }: RunTimelineProps) {
   // Initialize from cache if available for instant display
   const cachedData = timelineCache.get(runId);
@@ -380,7 +422,9 @@ export function RunTimeline({ runId, pollInterval = 2000, compact = false, runSt
   const [loading, setLoading] = useState(!cachedData); // Not loading if we have cache
   const [error, setError] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<TimelineEvent | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [cols, setCols] = useState(6); // Default columns, will be calculated
+  const [cellWidth, setCellWidth] = useState(MIN_CELL_WIDTH); // Actual cell width to fill container
 
   // WebSocket for real-time timeline updates
   const { onTimelineEvent, isConnected } = useWebSocket();
@@ -427,6 +471,57 @@ export function RunTimeline({ runId, pollInterval = 2000, compact = false, runSt
     });
     return unsubscribe;
   }, [runId, onTimelineEvent]);
+
+  // Responsive columns - calculate based on container width
+  // 1. Calculate how many columns fit at MIN_CELL_WIDTH
+  // 2. Calculate actual cell width to fill the container exactly
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const calculateLayout = (width: number) => {
+      if (width <= 0) return null; // Skip if no width yet
+
+      // How many columns fit? (accounting for gaps between columns)
+      // Total width = numCols * cellWidth + (numCols - 1) * GAP_X
+      // Rearranging: numCols = (width + GAP_X) / (cellWidth + GAP_X)
+      const numCols = Math.max(4, Math.floor((width + GAP_X) / (MIN_CELL_WIDTH + GAP_X)));
+
+      // Now calculate actual cell width to fill the container perfectly
+      // width = numCols * actualCellWidth + (numCols - 1) * GAP_X
+      // actualCellWidth = (width - (numCols - 1) * GAP_X) / numCols
+      const actualCellWidth = (width - (numCols - 1) * GAP_X) / numCols;
+
+      return { numCols, actualCellWidth };
+    };
+
+    const updateLayout = () => {
+      if (!containerRef.current) return;
+      const width = containerRef.current.getBoundingClientRect().width;
+      const result = calculateLayout(width);
+      if (result) {
+        setCols(result.numCols);
+        setCellWidth(result.actualCellWidth);
+      }
+    };
+
+    // Use requestAnimationFrame to ensure layout is complete before measuring
+    // This is important when component is inside expandable sections
+    requestAnimationFrame(() => {
+      updateLayout();
+    });
+
+    // Observe for changes
+    const observer = new ResizeObserver(entries => {
+      const width = entries[0]?.contentRect.width || 0;
+      const result = calculateLayout(width);
+      if (result) {
+        setCols(result.numCols);
+        setCellWidth(result.actualCellWidth);
+      }
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, [events.length]); // Re-run when events change (e.g., when row expands)
 
   // For queued runs, show "Awaiting X completion" instead of fetching timeline
   if (runStatus === 'queued') {
@@ -514,13 +609,6 @@ export function RunTimeline({ runId, pollInterval = 2000, compact = false, runSt
     }
   }, [fetchTimeline, actualPollInterval]);
 
-  // Auto-scroll to latest event
-  useEffect(() => {
-    if (scrollRef.current && events.length > 0) {
-      scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
-    }
-  }, [events.length]);
-
   // Filter out replaced events for display (keep latest version) and adjust status
   const displayEvents = events
     .filter(event => {
@@ -541,6 +629,49 @@ export function RunTimeline({ runId, pollInterval = 2000, compact = false, runSt
       return true;
     })
     .map(adjustEventStatus);
+
+  // Calculate grid data with snake pattern and connectors
+  const gridData = useMemo(() => {
+    const totalRows = Math.ceil(displayEvents.length / cols);
+
+    // Create positioned events
+    const positioned = displayEvents.map((event, index) => {
+      const { row, col } = getSnakePosition(index, cols);
+      return { event, row, col, index };
+    });
+
+    // Generate connector segments for SVG lines
+    const connectors: Array<{
+      type: 'horizontal' | 'vertical';
+      row: number;
+      col: number;
+      direction?: 'down-left' | 'down-right';
+      sourceIndex: number;
+    }> = [];
+
+    for (let i = 0; i < displayEvents.length - 1; i++) {
+      const curr = getSnakePosition(i, cols);
+      const next = getSnakePosition(i + 1, cols);
+
+      if (curr.row === next.row) {
+        // Horizontal connector within same row
+        const minCol = Math.min(curr.col, next.col);
+        connectors.push({ type: 'horizontal', row: curr.row, col: minCol, sourceIndex: i });
+      } else {
+        // Vertical connector between rows (at row end)
+        const isEvenRow = curr.row % 2 === 0;
+        connectors.push({
+          type: 'vertical',
+          row: curr.row,
+          col: isEvenRow ? cols - 1 : 0,
+          direction: isEvenRow ? 'down-left' : 'down-right',
+          sourceIndex: i,
+        });
+      }
+    }
+
+    return { positioned, connectors, totalRows };
+  }, [displayEvents, cols]);
 
   if (loading && events.length === 0) {
     return (
@@ -587,8 +718,23 @@ export function RunTimeline({ runId, pollInterval = 2000, compact = false, runSt
     );
   }
 
+  // Helper to get line color based on event status
+  const getLineColor = (status: string) => {
+    switch (status) {
+      case 'completed': return 'var(--color-success)';
+      case 'failed':
+      case 'error': return 'var(--color-danger)';
+      case 'in_progress': return 'var(--color-primary)';
+      default: return 'var(--color-border)';
+    }
+  };
+
+  // Calculate top offset for circle center (space for time label + half circle)
+  const TIME_LABEL_HEIGHT = 24; // h-6 for time label
+  const circleCenter = TIME_LABEL_HEIGHT + CIRCLE_SIZE / 2;
+
   return (
-    <div className="w-full">
+    <div ref={containerRef} className="w-full">
       {/* Summary stats */}
       <div className="flex items-center gap-4 mb-2 text-xs text-text-muted">
         <span className="font-numbers">{displayEvents.filter(e => e.status === 'completed').length}/{displayEvents.length}</span>
@@ -606,22 +752,142 @@ export function RunTimeline({ runId, pollInterval = 2000, compact = false, runSt
         )}
       </div>
 
-      {/* Horizontal scrolling timeline */}
-      <div className="relative">
+      {/* Snake pattern timeline grid - fills available width */}
+      <div className="relative overflow-hidden w-full">
         <div
-          ref={scrollRef}
-          className="flex items-start gap-0 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: `repeat(${cols}, ${cellWidth}px)`,
+            gridTemplateRows: `repeat(${gridData.totalRows}, ${CELL_HEIGHT}px)`,
+            gap: `${GAP_Y}px ${GAP_X}px`,
+          }}
         >
-          {displayEvents.map((event, idx) => (
-            <TimelineNode
-              key={event.event_id}
-              event={event}
-              isFirst={idx === 0}
-              isLast={idx === displayEvents.length - 1}
-              onClick={() => setSelectedEvent(selectedEvent?.event_id === event.event_id ? null : event)}
-              isSelected={selectedEvent?.event_id === event.event_id}
-            />
-          ))}
+          {/* SVG layer for connecting lines (behind circles) */}
+          <svg
+            className="absolute inset-0 pointer-events-none z-0"
+            style={{
+              width: cols * cellWidth + (cols - 1) * GAP_X,
+              height: gridData.totalRows * (CELL_HEIGHT + GAP_Y) - GAP_Y,
+            }}
+          >
+            {gridData.connectors.map((conn, i) => {
+              const cellWidthWithGap = cellWidth + GAP_X;
+              const cellHeightWithGap = CELL_HEIGHT + GAP_Y;
+              const sourceEvent = displayEvents[conn.sourceIndex];
+              const lineColor = getLineColor(sourceEvent?.status || 'pending');
+
+              if (conn.type === 'horizontal') {
+                // Horizontal line between two circles
+                const x1 = conn.col * cellWidthWithGap + cellWidth / 2 + CIRCLE_SIZE / 2;
+                const x2 = (conn.col + 1) * cellWidthWithGap + cellWidth / 2 - CIRCLE_SIZE / 2;
+                const y = conn.row * cellHeightWithGap + circleCenter;
+
+                return (
+                  <line
+                    key={i}
+                    x1={x1}
+                    y1={y}
+                    x2={x2}
+                    y2={y}
+                    stroke={lineColor}
+                    strokeWidth="2"
+                  />
+                );
+              } else {
+                // Vertical connector between rows
+                const isRight = conn.direction === 'down-left';
+                const x = isRight
+                  ? (cols - 1) * cellWidthWithGap + cellWidth / 2
+                  : cellWidth / 2;
+                const y1 = conn.row * cellHeightWithGap + circleCenter + CIRCLE_SIZE / 2;
+                const y2 = (conn.row + 1) * cellHeightWithGap + circleCenter - CIRCLE_SIZE / 2;
+
+                return (
+                  <line
+                    key={i}
+                    x1={x}
+                    y1={y1}
+                    x2={x}
+                    y2={y2}
+                    stroke={lineColor}
+                    strokeWidth="2"
+                  />
+                );
+              }
+            })}
+          </svg>
+
+          {/* Render event nodes in snake pattern */}
+          {gridData.positioned.map(({ event, row, col }) => {
+            const colors = statusColors[event.status] || statusColors.pending;
+            const isSelected = selectedEvent?.event_id === event.event_id;
+
+            // Check if this is a waiting event
+            const isWaitingEvent = event.status === 'in_progress' && (
+              event.metadata?.countdown ||
+              event.metadata?.timeout ||
+              event.metadata?.seconds ||
+              event.metadata?.wait_seconds ||
+              event.metadata?.duration ||
+              event.metadata?.benchmark_duration
+            );
+
+            // Format time
+            const formatTime = (isoString: string) => {
+              const date = new Date(isoString);
+              return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            };
+
+            // Truncate message
+            const shortMessage = event.message.length > 20
+              ? event.message.substring(0, 20) + '...'
+              : event.message;
+
+            return (
+              <div
+                key={event.event_id}
+                className="flex flex-col items-center z-10 group"
+                style={{
+                  gridColumn: col + 1,
+                  gridRow: row + 1,
+                }}
+                title={event.message}
+              >
+                {/* Time label or countdown above */}
+                <div className="h-6 mb-1 flex items-center justify-center">
+                  {isWaitingEvent ? (
+                    <WaitCounter event={event} position="above" />
+                  ) : (
+                    <div className="text-[10px] text-text-muted font-mono opacity-0 group-hover:opacity-100 transition-opacity">
+                      {formatTime(event.timestamp)}
+                    </div>
+                  )}
+                </div>
+
+                {/* Circle node */}
+                <button
+                  onClick={() => setSelectedEvent(isSelected ? null : event)}
+                  className={`
+                    flex items-center justify-center rounded-full border-2 transition-all
+                    ${colors.bg} ${colors.border} ${colors.text}
+                    ${isSelected ? 'ring-2 ring-primary/50 ring-offset-2 ring-offset-surface scale-110' : ''}
+                    hover:scale-110 cursor-pointer
+                  `}
+                  style={{
+                    width: `${CIRCLE_SIZE}px`,
+                    height: `${CIRCLE_SIZE}px`,
+                  }}
+                >
+                  <EventIcon eventType={event.event_type} status={event.status} />
+                </button>
+
+                {/* Label below */}
+                <div className="mt-1 text-[10px] text-text-secondary text-center leading-tight w-full line-clamp-2 px-0.5">
+                  {shortMessage}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 

@@ -496,16 +496,24 @@ class TimelineManager:
             replaces="omniparser"
         )
 
-    def preset_syncing(self, game: str, preset: str = None):
-        """Log preset sync starting"""
+    def preset_syncing(self, game: str, preset: str = None, parallel_info: str = None):
+        """Log preset sync starting
+
+        Args:
+            game: Game name
+            preset: Preset name (optional)
+            parallel_info: Info about parallel tasks (e.g., "while game terminates")
+        """
         msg = f"Syncing preset for {game}"
         if preset:
             msg += f" ({preset})"
+        if parallel_info:
+            msg += f" ({parallel_info})"
         return self.add_event(
             "preset",
             TimelineEventType.PRESET_SYNCING,
             msg + "...",
-            metadata={'game': game, 'preset': preset}
+            metadata={'game': game, 'preset': preset, 'parallel': parallel_info is not None}
         )
 
     def preset_synced(self, game: str, preset: str = None):

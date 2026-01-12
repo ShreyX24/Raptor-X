@@ -304,9 +304,9 @@ function ExpandedLogsModal({
         </div>
 
         {/* Content */}
-        <div className={`flex gap-2 p-4 ${compareMode ? 'h-[calc(90vh-130px)]' : 'h-[calc(90vh-130px)]'}`}>
-          {/* Left/Main Panel */}
-          <div className={`${compareMode ? 'w-1/2' : 'w-full'} border border-border rounded-lg overflow-hidden`}>
+        <div className={`flex gap-2 p-4 h-[calc(90vh-130px)]`}>
+          {/* Left/Main Panel - flex-1 properly accounts for gap */}
+          <div className={`${compareMode ? 'flex-1 min-w-0' : 'w-full'} border border-border rounded-lg overflow-hidden`}>
             {selectedGame && logsLoading.has(selectedGame) ? (
               <div className="h-full flex items-center justify-center text-text-muted">
                 Loading logs...
@@ -323,9 +323,9 @@ function ExpandedLogsModal({
             )}
           </div>
 
-          {/* Right Panel (Compare) */}
+          {/* Right Panel (Compare) - flex-1 properly accounts for gap */}
           {compareMode && (
-            <div className="w-1/2 border border-cyan-500/30 rounded-lg overflow-hidden">
+            <div className="flex-1 min-w-0 border border-cyan-500/30 rounded-lg overflow-hidden">
               {compareGame && logsLoading.has(compareGame) ? (
                 <div className="h-full flex items-center justify-center text-text-muted">
                   Loading logs...
@@ -799,29 +799,29 @@ export function Runs() {
         ) : (
           <>
           <div className="card overflow-hidden">
-            <table className="min-w-full divide-y divide-border">
+            <table className="w-full table-fixed divide-y divide-border">
               <thead className="bg-surface-elevated">
                 <tr>
                   <th className="w-8 px-2"></th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="w-24 px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider">
                     Type
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider">
                     Game(s)
                   </th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider hidden sm:table-cell">
+                  <th className="w-32 px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider hidden sm:table-cell">
                     SUT
                   </th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider hidden lg:table-cell">
+                  <th className="w-28 px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider hidden lg:table-cell">
                     Preset
                   </th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="w-32 px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider hidden md:table-cell">
+                  <th className="w-24 px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider hidden md:table-cell">
                     Duration
                   </th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider hidden lg:table-cell">
+                  <th className="w-44 px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider hidden lg:table-cell">
                     Started
                   </th>
                   <th className="w-16 px-2 py-3"></th>

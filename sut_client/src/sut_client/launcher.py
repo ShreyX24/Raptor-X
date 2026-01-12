@@ -340,19 +340,43 @@ def launch_game(
     # Handle force relaunch - kill existing game before launching
     # This handles both: (1) tracked game from previous launch, (2) game running from before SUT started
     if force_relaunch:
+        game_was_killed = False
+        process_to_verify = None
+
         # First, try to kill by tracked name (from previous launch in this session)
         if current_game_process_name:
             logger.info(f"Force relaunch: terminating tracked game {current_game_process_name}")
-            terminate_process_by_name(current_game_process_name)
-            time.sleep(2)
+            if terminate_process_by_name(current_game_process_name):
+                game_was_killed = True
+                process_to_verify = current_game_process_name
+
         # Also kill by target process name (handles SUT restart case where tracking is lost)
         if process_id and process_id != current_game_process_name:
             # Check if target process is already running
             existing_proc = find_process_by_name(process_id, exact_only=True)
             if existing_proc:
                 logger.info(f"Force relaunch: terminating existing {process_id} (PID {existing_proc.pid})")
-                terminate_process_by_name(process_id)
-                time.sleep(2)
+                if terminate_process_by_name(process_id):
+                    game_was_killed = True
+                    process_to_verify = process_id
+
+        # If we killed a game, verify it's actually gone and wait for Steam to reset
+        if game_was_killed and process_to_verify:
+            # Wait up to 15 seconds for process to fully terminate
+            kill_verify_timeout = 15
+            logger.info(f"Waiting up to {kill_verify_timeout}s for {process_to_verify} to fully terminate...")
+            for i in range(kill_verify_timeout):
+                time.sleep(1)
+                if not find_process_by_name(process_to_verify, exact_only=True):
+                    logger.info(f"Process {process_to_verify} terminated after {i+1}s")
+                    break
+                if i == kill_verify_timeout - 1:
+                    logger.warning(f"Process {process_to_verify} still running after {kill_verify_timeout}s timeout")
+
+            # Additional delay for Steam to reset (sync cloud saves, release game lock, etc.)
+            steam_reset_delay = 15
+            logger.info(f"Waiting {steam_reset_delay}s for Steam to reset after game termination...")
+            time.sleep(steam_reset_delay)
 
     # Validate game_path is provided
     if not game_path:

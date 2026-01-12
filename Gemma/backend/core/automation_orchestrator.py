@@ -549,6 +549,9 @@ class AutomationOrchestrator:
             game_launcher = GameLauncher(network)
 
             # ===== Steam Account Login =====
+            # Track if we performed a Steam login (for post-login delay)
+            steam_login_performed = False
+
             # Skip Steam login if user pre-logged in manually (skip_steam_login flag)
             if run.skip_steam_login:
                 if timeline:
@@ -683,6 +686,7 @@ class AutomationOrchestrator:
                             if self.storage:
                                 self.storage.complete_iteration(run.run_id, iteration_num, success=False, error_message=error_msg)
                             return False, None, False
+                        steam_login_performed = True  # Mark that we switched accounts
                 else:
                     # No user logged in or Steam not running - login
                     logger.info(f"Steam not logged in, initiating login for: {steam_username}")
@@ -697,8 +701,19 @@ class AutomationOrchestrator:
                         if self.storage:
                             self.storage.complete_iteration(run.run_id, iteration_num, success=False, error_message=error_msg)
                         return False, None, False
+                    steam_login_performed = True  # Mark that we logged in
             else:
                 logger.debug(f"No credentials returned for SUT {run.sut_ip}, using existing Steam session")
+
+            # ===== Post-Login Delay =====
+            # Wait after Steam login/switch to let Steam settle (sync library, cloud saves, etc.)
+            if steam_login_performed:
+                post_login_delay = int(os.environ.get("STEAM_POST_LOGIN_DELAY", "10"))
+                if post_login_delay > 0:
+                    if timeline:
+                        timeline.info(f"Waiting {post_login_delay}s for Steam to settle after login...")
+                    logger.info(f"Waiting {post_login_delay}s for Steam to settle after login...")
+                    time.sleep(post_login_delay)
 
             # Use the run's stop_event (created in execute_run) so stop_run() can interrupt us
             # This is critical - if we create a new one here, stop_run() can't cancel us!
@@ -722,15 +737,106 @@ class AutomationOrchestrator:
                 progress_callback=progress_callback,
             )
 
-            # ===== Preset Sync =====
-            if timeline:
-                timeline.preset_syncing(game_config.name)
-            preset_result = self._sync_preset_to_sut(game_config, device, run.quality, run.resolution)
-            if timeline:
-                if preset_result:
-                    timeline.preset_synced(game_config.name)
+            # ===== Pre-launch Game Kill + Preset Sync (Parallel) =====
+            # Kill any running game and apply preset simultaneously for efficiency
+            process_name = game_config.process_id or game_config.name
+            game_was_killed = False
+            kill_start_time = None
+            preset_result = False
+
+            if process_name and network.check_process(process_name):
+                # Game is running - kill it and run preset sync in parallel
+                if timeline:
+                    timeline.info(f"Found running {process_name}, terminating...")
+                logger.info(f"Found running game process {process_name}, killing it")
+
+                kill_result = network.kill_process(process_name)
+                if kill_result.get("killed"):
+                    game_was_killed = True
+                    kill_start_time = time.time()
+                    logger.info(f"Kill command sent for {process_name}")
+
+                    # Start preset sync in parallel thread
+                    preset_thread_result = {"result": False, "error": None}
+
+                    def sync_preset_thread():
+                        try:
+                            preset_thread_result["result"] = self._sync_preset_to_sut(
+                                game_config, device, run.quality, run.resolution
+                            )
+                        except Exception as e:
+                            preset_thread_result["error"] = str(e)
+                            logger.error(f"Preset sync error in thread: {e}")
+
+                    if timeline:
+                        timeline.preset_syncing(game_config.name, parallel_info="while game terminates")
+
+                    preset_thread = threading.Thread(target=sync_preset_thread, daemon=True)
+                    preset_thread.start()
+
+                    # While preset syncs, verify game termination (up to 15s)
+                    kill_verify_timeout = 15
+                    process_terminated = False
+
+                    for i in range(kill_verify_timeout):
+                        if stop_event and stop_event.is_set():
+                            logger.info("Stop event set - aborting game kill wait")
+                            break
+                        time.sleep(1)
+                        if not network.check_process(process_name):
+                            process_terminated = True
+                            logger.info(f"Process {process_name} terminated after {i+1}s")
+                            if timeline:
+                                timeline.info(f"{process_name} terminated after {i+1}s")
+                            break
+
+                    if not process_terminated and not (stop_event and stop_event.is_set()):
+                        logger.warning(f"Process {process_name} may still be running after {kill_verify_timeout}s")
+
+                    # Wait for preset sync to complete
+                    preset_thread.join(timeout=30)  # Max 30s for preset sync
+                    preset_result = preset_thread_result["result"]
+
+                    if timeline:
+                        if preset_result:
+                            timeline.preset_synced(game_config.name)
+                        else:
+                            timeline.preset_skipped("Preset sync failed or not configured")
+
+                    # Ensure minimum 15s since kill for Steam reset (cloud sync, release locks, etc.)
+                    if kill_start_time:
+                        elapsed = time.time() - kill_start_time
+                        steam_reset_min = 15.0
+                        if elapsed < steam_reset_min:
+                            remaining = steam_reset_min - elapsed
+                            if timeline:
+                                timeline.info(f"Waiting {remaining:.1f}s more for Steam reset...")
+                            logger.info(f"Waiting {remaining:.1f}s more for Steam reset (elapsed: {elapsed:.1f}s)")
+                            time.sleep(remaining)
+                        else:
+                            logger.info(f"Steam reset time already satisfied ({elapsed:.1f}s elapsed)")
+
                 else:
-                    timeline.preset_skipped("No preset configured or sync failed")
+                    logger.warning(f"Failed to kill {process_name}: {kill_result.get('message', 'unknown error')}")
+                    # Still apply preset even if kill failed
+                    if timeline:
+                        timeline.preset_syncing(game_config.name)
+                    preset_result = self._sync_preset_to_sut(game_config, device, run.quality, run.resolution)
+                    if timeline:
+                        if preset_result:
+                            timeline.preset_synced(game_config.name)
+                        else:
+                            timeline.preset_skipped("No preset configured or sync failed")
+            else:
+                # No game running - just apply preset normally
+                if timeline:
+                    timeline.preset_syncing(game_config.name)
+                preset_result = self._sync_preset_to_sut(game_config, device, run.quality, run.resolution)
+                if timeline:
+                    if preset_result:
+                        timeline.preset_synced(game_config.name)
+                    else:
+                        timeline.preset_skipped("No preset configured or sync failed")
 
             # ===== Resolution Switching =====
             # Priority: run.resolution > game_config.resolution
@@ -857,7 +963,8 @@ class AutomationOrchestrator:
                             game_config=game_config,
                             account_pool=account_pool,
                             timeline=timeline,
-                            enabled=True
+                            enabled=True,
+                            stop_event=stop_event
                         )
 
                         if dialog_result == "retry_with_alt_account":
@@ -881,6 +988,11 @@ class AutomationOrchestrator:
                             process_found = False
 
                             while time.time() - start_time < post_dialog_timeout:
+                                # CHECK STOP EVENT - critical for cancellation to work
+                                if stop_event and stop_event.is_set():
+                                    logger.info("Stop event set - aborting process wait loop")
+                                    break
+
                                 try:
                                     check_resp = network.session.post(
                                         f"{sut_base_url}/check_process",
@@ -901,6 +1013,11 @@ class AutomationOrchestrator:
                                 except Exception as poll_err:
                                     logger.warning(f"Error polling for process: {poll_err}")
 
+                                # CHECK STOP EVENT again before dialog check
+                                if stop_event and stop_event.is_set():
+                                    logger.info("Stop event set - aborting before dialog check")
+                                    break
+
                                 # Also check for additional dialogs while waiting
                                 additional_dialog = self._check_steam_dialogs(
                                     network=network,
@@ -909,7 +1026,8 @@ class AutomationOrchestrator:
                                     game_config=game_config,
                                     account_pool=account_pool,
                                     timeline=timeline,
-                                    enabled=True
+                                    enabled=True,
+                                    stop_event=stop_event
                                 )
                                 if additional_dialog == "retry_with_alt_account":
                                     raise RuntimeError("STEAM_ACCOUNT_CONFLICT")
@@ -982,6 +1100,11 @@ class AutomationOrchestrator:
                     start_wait = time.time()
 
                     while time.time() - start_wait < game_process_timeout:
+                        # CHECK STOP EVENT - critical for cancellation to work
+                        if stop_event and stop_event.is_set():
+                            logger.info("Stop event set - aborting game process wait")
+                            break
+
                         # Check if game process is running via SUT's /check_process endpoint
                         try:
                             check_resp = network.session.post(
@@ -1227,7 +1350,8 @@ class AutomationOrchestrator:
         game_config,
         account_pool,
         timeline=None,
-        enabled: bool = True
+        enabled: bool = True,
+        stop_event=None
     ) -> Optional[str]:
         """
         Check for Steam popup dialogs after game launch and handle them.
@@ -1301,6 +1425,11 @@ class AutomationOrchestrator:
             omniparser_timeout = settings.get('omniparser_timeout', 60)
 
             for attempt in range(max_attempts):
+                # CHECK STOP EVENT - critical for cancellation to work
+                if stop_event and stop_event.is_set():
+                    logger.info("Stop event set - aborting Steam dialog check")
+                    return None
+
                 logger.debug(f"Steam dialog check attempt {attempt + 1}/{max_attempts}")
 
                 # Focus Steam window before taking screenshot
