@@ -50,6 +50,7 @@ dev = [
 [project.scripts]
 sut-client = "sut_client:main"
 pml-sut = "sut_client:main"
+ssh-ops = "sut_client.ssh_ops:main"
 
 [project.urls]
 Homepage = "https://github.com/sivgaming/preset-manager"

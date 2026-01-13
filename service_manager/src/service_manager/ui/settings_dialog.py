@@ -147,8 +147,9 @@ class GeneralTab(QWidget):
         return self.omni_dir_edit.text().strip()
 
     def _install_dependencies(self):
-        """Install all services in editable mode"""
+        """Install all services in editable mode and set up SSH server"""
         from pathlib import Path
+        import sys
 
         project_dir = self.project_dir_edit.text().strip()
         if not project_dir:
@@ -179,21 +180,71 @@ class GeneralTab(QWidget):
             elif (omni_path.parent / "pyproject.toml").exists():
                 self._install_queue.append(("OmniParser Server", str(omni_path.parent)))
 
-        if not self._install_queue:
-            QMessageBox.information(self, "Info", "No services found with pyproject.toml files.")
-            return
-
         # Setup UI for installation
         self.install_btn.setEnabled(False)
         self.install_progress.setVisible(True)
-        self.install_progress.setMaximum(len(self._install_queue))
+        # +1 for SSH setup step
+        total_steps = len(self._install_queue) + 1 if sys.platform == "win32" else len(self._install_queue)
+        self.install_progress.setMaximum(total_steps)
         self.install_progress.setValue(0)
         self.install_output.setVisible(True)
         self.install_output.clear()
-        self.install_output.append(f"Installing {len(self._install_queue)} services...\n")
 
-        # Start installation
+        # Step 1: Setup SSH Server (Windows only)
+        if sys.platform == "win32":
+            self._setup_ssh_server()
+        else:
+            self.install_output.append("SSH setup skipped (Windows only)\n")
+
+        if not self._install_queue:
+            self.install_output.append("No services found with pyproject.toml files.")
+            self.install_btn.setEnabled(True)
+            self.install_progress.setVisible(False)
+            return
+
+        self.install_output.append(f"\nInstalling {len(self._install_queue)} services...\n")
+
+        # Start pip installations
         self._install_next()
+
+    def _setup_ssh_server(self):
+        """Set up OpenSSH Server on Windows for SUT update pull"""
+        self.install_output.append("=== Setting up OpenSSH Server ===\n")
+
+        try:
+            from ..ssh import SSHSetupManager
+            ssh_manager = SSHSetupManager()
+
+            # Set progress callback to update UI
+            def progress_callback(message: str):
+                self.install_output.append(f"  {message}")
+                # Scroll to bottom
+                scrollbar = self.install_output.verticalScrollBar()
+                scrollbar.setValue(scrollbar.maximum())
+                # Process events to keep UI responsive
+                from PySide6.QtCore import QCoreApplication
+                QCoreApplication.processEvents()
+
+            ssh_manager.set_progress_callback(progress_callback)
+
+            # Run SSH setup
+            success, message = ssh_manager.setup_ssh_server()
+
+            if success:
+                self.install_output.append(f"\n  OK - {message}")
+                status = ssh_manager.get_ssh_status()
+                self.install_output.append(f"  Authorized keys: {status['authorized_keys_count']} registered")
+            else:
+                self.install_output.append(f"\n  FAILED - {message}")
+
+        except ImportError as e:
+            self.install_output.append(f"  SKIPPED - SSH module not available: {e}")
+        except Exception as e:
+            self.install_output.append(f"  ERROR - {e}")
+
+        # Update progress
+        self.install_progress.setValue(1)
+        self.install_output.append("")  # Empty line before pip installs
 
     def _install_next(self):
         """Install the next service in the queue"""

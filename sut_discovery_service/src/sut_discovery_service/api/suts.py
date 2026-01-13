@@ -275,11 +275,28 @@ async def websocket_sut_endpoint(websocket: WebSocket, sut_id: str):
             display_name=init_data.get("display_name"),
         )
 
+        # Handle SSH key registration (lazy-load to avoid always loading SSH module)
+        ssh_registered = False
+        ssh_public_key = init_data.get("ssh_public_key")
+        if ssh_public_key:
+            try:
+                from ..ssh import get_key_store
+                key_store = get_key_store()
+                success, msg = key_store.add_key(ssh_public_key, sut_id)
+                ssh_registered = success
+                if success:
+                    logger.info(f"SSH key registered for {sut_id}")
+                else:
+                    logger.warning(f"SSH key registration failed for {sut_id}: {msg}")
+            except Exception as e:
+                logger.warning(f"SSH key registration skipped for {sut_id}: {e}")
+
         # Send registration acknowledgment (SUT client expects "register_ack")
         await websocket.send_json({
             "type": "register_ack",
             "message": f"SUT {sut_id} registered successfully",
             "sut_id": sut_id,
+            "ssh_registered": ssh_registered,
         })
 
         # Keep connection alive and handle messages
@@ -380,6 +397,45 @@ async def cleanup_stale_devices(request: Optional[CleanupRequest] = None):
         "removed_count": result["removed_count"],
         "removed_devices": result["removed_devices"],
         "timeout_used_seconds": result["timeout_used"]
+    }
+
+
+class BroadcastUpdateRequest(BaseModel):
+    """Request to broadcast update availability to SUTs"""
+    master_ip: str
+    version: Optional[str] = None
+    updated_at: Optional[str] = None
+    components: Optional[dict] = None
+
+
+@router.post("/suts/broadcast-update")
+async def broadcast_update(request: BroadcastUpdateRequest):
+    """
+    Broadcast update availability to all connected SUTs.
+
+    SUTs will receive a WebSocket message with type "update_available"
+    and can then pull updates from the master via SSH.
+    """
+    ws_manager = get_ws_manager()
+
+    message = {
+        "type": "update_available",
+        "master_ip": request.master_ip,
+        "version": request.version,
+        "updated_at": request.updated_at,
+        "components": request.components or {},
+    }
+
+    results = await ws_manager.broadcast(message)
+    notified = sum(1 for v in results.values() if v)
+
+    logger.info(f"Broadcast update notification to {notified}/{len(results)} SUTs")
+
+    return {
+        "status": "ok",
+        "notified": notified,
+        "total_connected": len(results),
+        "results": results,
     }
 
 

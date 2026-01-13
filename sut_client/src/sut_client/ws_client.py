@@ -76,8 +76,21 @@ class WebSocketClient:
             return "127.0.0.1"
 
     def _get_registration_info(self) -> Dict[str, Any]:
-        """Build registration payload"""
+        """Build registration payload with SSH key"""
         settings = get_settings()
+
+        # Lazy-load SSH key info for Master registration (only when needed)
+        ssh_public_key = None
+        ssh_fingerprint = None
+        try:
+            from .ssh_key_manager import get_key_manager
+            ssh_manager = get_key_manager()
+            ssh_manager.ensure_key_exists()
+            ssh_public_key = ssh_manager.get_public_key()
+            ssh_fingerprint = ssh_manager.get_key_fingerprint()
+        except Exception as e:
+            logger.warning(f"SSH key setup skipped: {e}")
+
         return {
             "type": "register",
             "sut_id": self.sut_id,
@@ -96,7 +109,10 @@ class WebSocketClient:
                 "text_input",
                 "pc_rename"
             ],
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
+            # SSH key for Master authentication (for updates)
+            "ssh_public_key": ssh_public_key,
+            "ssh_key_fingerprint": ssh_fingerprint,
         }
 
     def _get_reconnect_delay(self) -> float:
@@ -169,6 +185,10 @@ class WebSocketClient:
             # Send status
             await self._send_status()
 
+        elif msg_type == "update_available":
+            # Handle update notification from Master
+            await self._handle_update_available(message)
+
         elif msg_type == "rename_pc":
             # Handle PC rename command
             new_name = message.get("new_name")
@@ -193,6 +213,24 @@ class WebSocketClient:
 
         else:
             logger.warning(f"Unhandled message type: {msg_type}")
+
+    async def _handle_update_available(self, message: Dict[str, Any]):
+        """Handle update available notification from Master"""
+        new_version = message.get("version", "unknown")
+        master_ip = message.get("master_ip", self.master_ip)
+
+        logger.info(f"Update available: {new_version} from {master_ip}")
+
+        # Notify the update handler
+        try:
+            from .update_handler import get_update_handler
+            handler = get_update_handler()
+            if handler:
+                handler.notify_update_available(new_version, master_ip)
+            else:
+                logger.warning("Update handler not initialized")
+        except ImportError:
+            logger.warning("Update handler module not available")
 
     async def _send_status(self):
         """Send status to Master"""
