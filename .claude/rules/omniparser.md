@@ -4,7 +4,7 @@ Computer Vision service for screen parsing and UI element detection.
 
 ## Architecture
 
-- **Entry Point**: `Omniparser server/omnitool/omniparserserver/omniparserserver.py`
+- **Entry Point**: `omniparser-server/omnitool/omniparserserver/omniparserserver.py`
 - **Port**: 8000-8004 (configurable, use 8100 to avoid conflicts)
 - **Framework**: FastAPI with Uvicorn
 - **GPU**: CUDA support for faster inference
@@ -142,7 +142,7 @@ Use alternative port: `--port 8100`
 ### Model Not Found
 Run from correct directory:
 ```bash
-cd "Omniparser server/omnitool/omniparserserver"
+cd "omniparser-server/omnitool/omniparserserver"
 python omniparserserver.py --use_paddleocr
 ```
 

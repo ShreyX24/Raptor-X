@@ -117,7 +117,7 @@ Use these commands with `run_in_background: true` to start services without open
 
 ### OmniParser (Port 8100)
 ```bash
-cd "/c/Users/shrey/OneDrive/Documents/Code/Gemma/RPX/Omniparser server/omnitool/omniparserserver" && python -c "import uvicorn; from omniparserserver import app; uvicorn.run(app, host='0.0.0.0', port=8100)"
+cd "/c/Users/shrey/OneDrive/Documents/Code/Gemma/RPX/omniparser-server/omnitool/omniparserserver" && python -c "import uvicorn; from omniparserserver import app; uvicorn.run(app, host='0.0.0.0', port=8100)"
 ```
 
 ### Queue Service (Port 9000)

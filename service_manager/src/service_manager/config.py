@@ -8,7 +8,7 @@ from typing import Optional, List
 
 # Default paths (used if settings not configured)
 _DEFAULT_BASE_DIR = Path("C:/Users/shrey/OneDrive/Documents/Code/Gemma/Gemma-e2e")
-_DEFAULT_OMNIPARSER_DIR = Path("C:/Users/shrey/OneDrive/Documents/Code/Gemma/Gemma-e2e/Omniparser server/omnitool/omniparserserver")
+_DEFAULT_OMNIPARSER_DIR = Path("C:/Users/shrey/OneDrive/Documents/Code/Gemma/Gemma-e2e/omniparser-server/omnitool/omniparserserver")
 
 # OmniParser configuration
 OMNIPARSER_BASE_PORT = 8000

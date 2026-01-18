@@ -39,21 +39,23 @@ cd "%REPO_NAME%"
 
 :update_existing
 echo.
-echo [1/7] Pulling latest changes...
+echo [1/4] Pulling latest changes...
 git pull origin master
 if errorlevel 1 (
     echo [WARNING] Failed to pull, continuing anyway...
 )
 
 echo.
-echo [2/7] Initializing and updating submodules...
+echo [2/4] Initializing and updating submodules...
 git submodule init
 git submodule update --recursive
 
 :: Check if submodules exist, if not clone them
-if not exist "Omniparser server\.git" (
-    echo Cloning Omniparser server...
-    git clone https://github.com/YpS-YpS/OmniLocal.git "Omniparser server"
+if not exist "omniparser-server\.git" (
+    if not exist "Omniparser server\.git" (
+        echo Cloning omniparser-server...
+        git clone https://github.com/YpS-YpS/OmniLocal.git "omniparser-server"
+    )
 )
 
 if not exist "preset-manager\.git" (
@@ -62,8 +64,14 @@ if not exist "preset-manager\.git" (
 )
 
 echo.
-echo [3/7] Downloading OmniParser weights...
-if exist "Omniparser server\weights\icon_detect\model.pt" (
+echo [3/4] Downloading OmniParser weights...
+
+:: Check both possible locations
+set WEIGHTS_EXIST=0
+if exist "omniparser-server\weights\icon_detect\model.pt" set WEIGHTS_EXIST=1
+if exist "Omniparser server\weights\icon_detect\model.pt" set WEIGHTS_EXIST=1
+
+if %WEIGHTS_EXIST%==1 (
     echo [OK] Weights already exist, skipping download
     goto :skip_weights
 )
@@ -71,7 +79,15 @@ if exist "Omniparser server\weights\icon_detect\model.pt" (
 echo Downloading weights from Google Drive (~1.5GB)...
 echo This may take a few minutes...
 
-cd "Omniparser server"
+:: Determine which omniparser directory exists
+set OMNI_DIR=omniparser-server
+if not exist "omniparser-server" (
+    if exist "Omniparser server" (
+        set OMNI_DIR=Omniparser server
+    )
+)
+
+cd "%OMNI_DIR%"
 
 :: Google Drive large file download requires two steps:
 :: 1. First request gets a warning page with UUID
@@ -122,74 +138,21 @@ echo [WARNING] Failed to download weights
 echo Please download manually from:
 echo https://drive.google.com/file/d/%GDRIVE_FILE_ID%/view
 echo.
-echo After downloading, extract weights.zip into "Omniparser server" folder
+echo After downloading, extract weights.zip into "omniparser-server" folder
 cd ..
 
 :skip_weights
 
 echo.
-echo [4/7] Installing Gemma Admin dependencies...
-if exist "Gemma\admin\package.json" (
-    cd Gemma\admin
-    call npm install
-    if errorlevel 1 (
-        echo [WARNING] npm install failed for Gemma admin
-    ) else (
-        echo [OK] Gemma admin dependencies installed
-    )
-    cd ..\..
-) else (
-    echo [WARNING] Gemma/admin/package.json not found
-)
-
+echo [4/4] Running RPX Unified Installer...
 echo.
-echo [5/7] Installing Preset Manager Admin dependencies...
-if exist "preset-manager\admin\package.json" (
-    cd preset-manager\admin
-    call npm install
-    if errorlevel 1 (
-        echo [WARNING] npm install failed for preset-manager admin
-    ) else (
-        echo [OK] Preset Manager admin dependencies installed
-    )
-    cd ..\..
-) else (
-    echo [WARNING] preset-manager/admin/package.json not found
-)
 
-echo.
-echo [6/7] Installing Python services...
-
-echo Installing Gemma Backend...
-pip install -e Gemma\backend
+:: Run the Python installer (handles SSH, npm, pip installs)
+python rpx_installer.py
 if errorlevel 1 (
-    echo [WARNING] Failed to install Gemma backend
-) else (
-    echo [OK] Gemma backend installed
-)
-
-echo Installing SUT Discovery Service...
-pip install -e sut_discovery_service
-if errorlevel 1 (
-    echo [WARNING] Failed to install SUT Discovery
-) else (
-    echo [OK] SUT Discovery installed
-)
-
-echo Installing Queue Service...
-pip install -e queue_service
-if errorlevel 1 (
-    echo [WARNING] Failed to install Queue Service
-) else (
-    echo [OK] Queue Service installed
-)
-
-echo Installing Service Manager...
-pip install -e service_manager
-if errorlevel 1 (
-    echo [WARNING] Failed to install Service Manager
-) else (
-    echo [OK] Service Manager installed
+    echo.
+    echo [WARNING] Some components may have failed to install.
+    echo Check the output above for details.
 )
 
 echo.
@@ -198,5 +161,6 @@ echo   Setup Complete!
 echo ============================================
 echo.
 echo To start RPX, double-click: start-rpx.bat
+echo Or run: rpx-manager
 echo.
 pause

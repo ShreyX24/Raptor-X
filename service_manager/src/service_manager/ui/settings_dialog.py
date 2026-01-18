@@ -66,7 +66,7 @@ class GeneralTab(QWidget):
 
         omni_path_layout = QHBoxLayout()
         self.omni_dir_edit = QLineEdit()
-        self.omni_dir_edit.setPlaceholderText("e.g., C:/Code/Omniparser server/omnitool/omniparserserver")
+        self.omni_dir_edit.setPlaceholderText("e.g., C:/Code/omniparser-server/omnitool/omniparserserver")
         omni_path_layout.addWidget(self.omni_dir_edit)
 
         self.omni_browse_btn = QPushButton("Browse...")
@@ -176,9 +176,9 @@ class GeneralTab(QWidget):
             omni_path = Path(omni_dir)
             # Check for pyproject.toml in omniparser dir or parent
             if (omni_path / "pyproject.toml").exists():
-                self._install_queue.append(("OmniParser Server", str(omni_path)))
+                self._install_queue.append(("OmniParser", str(omni_path)))
             elif (omni_path.parent / "pyproject.toml").exists():
-                self._install_queue.append(("OmniParser Server", str(omni_path.parent)))
+                self._install_queue.append(("OmniParser", str(omni_path.parent)))
 
         # Setup UI for installation
         self.install_btn.setEnabled(False)
@@ -723,7 +723,7 @@ class OmniParserServersTab(QWidget):
         layout.addWidget(separator)
 
         # Remote servers section
-        remote_group = QGroupBox("Remote OmniParser Servers")
+        remote_group = QGroupBox("Remote OmniParsers")
         remote_layout = QVBoxLayout(remote_group)
 
         # Description
@@ -1158,7 +1158,7 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self.profiles_tab, "Profiles")
 
         self.omniparser_tab = OmniParserServersTab()
-        self.tabs.addTab(self.omniparser_tab, "OmniParser Servers")
+        self.tabs.addTab(self.omniparser_tab, "OmniParsers")
 
         self.steam_accounts_tab = SteamAccountsTab()
         self.tabs.addTab(self.steam_accounts_tab, "Steam Accounts")
