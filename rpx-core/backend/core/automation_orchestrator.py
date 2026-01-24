@@ -735,6 +735,8 @@ class AutomationOrchestrator:
                 stop_event=stop_event,
                 run_dir=run_dir,
                 progress_callback=progress_callback,
+                disable_tracing=getattr(run, 'disable_tracing', False),
+                run_id=run.run_id,
             )
 
             # ===== Pre-launch Game Kill + Preset Sync (Parallel) =====
@@ -1235,13 +1237,9 @@ class AutomationOrchestrator:
                         pass
                         
                 # Clean up automation object
-                if 'automation' in locals():
-                    try:
-                        # Set stop event to interrupt any running operations
-                        if hasattr(automation, 'stop_event'):
-                            automation.stop_event.set()
-                    except:
-                        pass
+                # NOTE: Do NOT set stop_event here - it's shared across iterations
+                # and setting it would cause subsequent iterations to immediately exit.
+                # The stop_event should only be set by stop_run() for user cancellation.
 
                 # NOTE: Resolution is restored at the RUN level (after all iterations),
                 # not here per-iteration. See the iteration loop in _execute_automation_run.

@@ -1196,6 +1196,7 @@ class APIRoutes:
                 quality = data.get('quality')  # 'low' | 'medium' | 'high' | 'ultra'
                 resolution = data.get('resolution')  # '720p' | '1080p' | '1440p' | '2160p'
                 skip_steam_login = data.get('skip_steam_login', False)  # If true, skip Steam account management
+                disable_tracing = data.get('disable_tracing', False)  # If true, disable SOCWatch/PTAT tracing
 
                 if not sut_ip or not game_name:
                     return jsonify({"error": "sut_ip and game_name are required"}), 400
@@ -1268,9 +1269,10 @@ class APIRoutes:
                         iterations=int(iterations),
                         quality=quality,
                         resolution=resolution,
-                        skip_steam_login=skip_steam_login
+                        skip_steam_login=skip_steam_login,
+                        disable_tracing=disable_tracing
                     )
-                    logger.info(f"Successfully queued run {run_id} (quality={quality}, resolution={resolution}, skip_steam={skip_steam_login})")
+                    logger.info(f"Successfully queued run {run_id} (quality={quality}, resolution={resolution}, skip_steam={skip_steam_login}, disable_tracing={disable_tracing})")
                     
                     return jsonify({
                         "status": "success",
@@ -1729,6 +1731,7 @@ class APIRoutes:
                 quality = data.get('quality')  # 'low' | 'medium' | 'high' | 'ultra'
                 resolution = data.get('resolution')  # '720p' | '1080p' | '1440p' | '2160p'
                 skip_steam_login = data.get('skip_steam_login', False)  # If true, skip Steam account management
+                disable_tracing = data.get('disable_tracing', False)  # If true, disable SOCWatch/PTAT tracing
 
                 if not sut_ip:
                     return jsonify({"error": "sut_ip is required"}), 400
@@ -1777,7 +1780,8 @@ class APIRoutes:
                     name=name,
                     quality=quality,
                     resolution=resolution,
-                    skip_steam_login=skip_steam_login
+                    skip_steam_login=skip_steam_login,
+                    disable_tracing=disable_tracing
                 )
 
                 logger.info(f"Campaign created: {campaign.campaign_id} with {len(campaign.run_ids)} runs")

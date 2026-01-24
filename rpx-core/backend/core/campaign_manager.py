@@ -317,7 +317,8 @@ class CampaignManager:
         name: Optional[str] = None,
         quality: Optional[str] = None,
         resolution: Optional[str] = None,
-        skip_steam_login: bool = False
+        skip_steam_login: bool = False,
+        disable_tracing: bool = False
     ) -> Campaign:
         """
         Create a new campaign and queue individual runs for each game.
@@ -330,6 +331,7 @@ class CampaignManager:
             name: Optional custom name for the campaign
             quality: Optional quality preset ('low', 'medium', 'high', 'ultra')
             resolution: Optional resolution preset ('720p', '1080p', '1440p', '2160p')
+            disable_tracing: If True, disable SOCWatch/PTAT tracing for all runs
 
         Returns:
             Created Campaign object
@@ -376,7 +378,8 @@ class CampaignManager:
                     campaign_id=campaign_id,
                     quality=quality,
                     resolution=resolution,
-                    skip_steam_login=skip_steam_login
+                    skip_steam_login=skip_steam_login,
+                    disable_tracing=disable_tracing
                 )
                 run_ids.append(run_id)
                 logger.info(f"Queued run {run_id} for game '{game}' in campaign {campaign_id[:8]} (preset: {quality}@{resolution})")

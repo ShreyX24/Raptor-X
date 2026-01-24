@@ -39,7 +39,7 @@ DEFAULT_TRACE_OUTPUT_DIR = r"C:\Documents\traces"
 class SimpleAutomation:
     """Fully modular step-by-step automation with comprehensive action support."""
     
-    def __init__(self, config_path, network, screenshot_mgr, vision_model, stop_event=None, run_dir=None, annotator=None, progress_callback=None):
+    def __init__(self, config_path, network, screenshot_mgr, vision_model, stop_event=None, run_dir=None, annotator=None, progress_callback=None, disable_tracing=False, run_id=None):
         """
         Initialize with all necessary components.
 
@@ -52,7 +52,10 @@ class SimpleAutomation:
             run_dir: Directory to save logs and screenshots
             annotator: Annotator instance for drawing bounding boxes
             progress_callback: Optional callback object to update step progress (sets completed_steps and total_steps)
+            disable_tracing: If True, disable SOCWatch/PTAT tracing regardless of config
+            run_id: Optional run ID for trace output organization
         """
+        self._disable_tracing_override = disable_tracing  # Store for later use
         self.config_path = config_path
         self.network = network
         self.screenshot_mgr = screenshot_mgr
@@ -104,15 +107,20 @@ class SimpleAutomation:
 
         # Tracing configuration
         self.tracing_config = self.config.get("metadata", {}).get("tracing", {})
-        self.tracing_enabled = self.tracing_config.get("enabled", False) if isinstance(self.tracing_config, dict) else bool(self.tracing_config)
+        config_tracing_enabled = self.tracing_config.get("enabled", False) if isinstance(self.tracing_config, dict) else bool(self.tracing_config)
+        # Override tracing if disable_tracing was passed
+        self.tracing_enabled = False if self._disable_tracing_override else config_tracing_enabled
         self.tracing_agents = self.tracing_config.get("agents", ["socwatch", "ptat"]) if isinstance(self.tracing_config, dict) else ["socwatch", "ptat"]
         self.trace_output_dir = self.tracing_config.get("output_dir", DEFAULT_TRACE_OUTPUT_DIR) if isinstance(self.tracing_config, dict) else DEFAULT_TRACE_OUTPUT_DIR
 
         # Track persistent processes (tracing agents, persistent hooks)
         self.persistent_processes: Dict[str, int] = {}  # {agent_name: pid}
 
-        # Run ID for trace output organization
-        self.run_id = self.config.get("metadata", {}).get("run_id") or datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Run ID for trace output organization (use passed run_id or generate one)
+        self.run_id = run_id or self.config.get("metadata", {}).get("run_id") or datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        if self._disable_tracing_override:
+            logger.info("Tracing disabled via run configuration")
 
         logger.info(f"SimpleAutomation initialized for {self.game_name}")
         if self.process_id:
