@@ -18,6 +18,36 @@ interface OcrConfig {
   box_threshold: number;
 }
 
+// Hook configuration for pre/post automation scripts
+interface HookConfig {
+  path: string;
+  args?: string[];
+  timeout?: number;
+  persistent?: boolean;  // If true, runs throughout automation
+  critical?: boolean;    // If true, automation fails if hook fails
+}
+
+// Hooks section for game metadata
+interface HooksConfig {
+  pre?: HookConfig[];
+  post?: HookConfig[];
+}
+
+// Tracing configuration
+interface TracingConfig {
+  enabled: boolean;
+  agents?: ('socwatch' | 'ptat')[];
+  output_dir?: string;
+}
+
+// Sideload configuration for per-step scripts
+interface SideloadConfig {
+  path: string;
+  args?: string[];
+  timeout?: number;
+  wait_for_completion?: boolean;
+}
+
 // Game metadata interface - matches YAML config structure
 interface GameMetadata {
   // Basic Info
@@ -41,6 +71,10 @@ interface GameMetadata {
   use_ocr_fallback: boolean;
   // OCR Config
   ocr_config: OcrConfig;
+  // Tracing Config (SOCWatch, PTAT)
+  tracing?: TracingConfig;
+  // Hooks Config (pre/post scripts)
+  hooks?: HooksConfig;
 }
 
 // Action types supported
@@ -99,6 +133,9 @@ interface DraftStep {
     box_threshold?: number;
   };
   useCustomOcr: boolean; // Toggle to enable per-step OCR config
+  // Sideload script (runs after step action)
+  sideload?: SideloadConfig;
+  useSideload: boolean; // Toggle to enable sideload for this step
 }
 
 // Screenshot canvas with bounding box overlay - 16:9 aspect ratio, fit-to-container zoom
@@ -600,6 +637,81 @@ function StepEditor({
         </div>
       )}
 
+      {/* Sideload Script (runs after step action) */}
+      <div className="p-2 bg-gray-800/30 rounded border border-gray-700">
+        <label className="flex items-center gap-2 cursor-pointer mb-2">
+          <input
+            type="checkbox"
+            checked={draft.useSideload}
+            onChange={(e) => onDraftChange({
+              ...draft,
+              useSideload: e.target.checked,
+              sideload: e.target.checked ? { path: '', timeout: 60, wait_for_completion: true } : undefined
+            })}
+            className="rounded border-gray-600 bg-gray-700 text-amber-500"
+          />
+          <span className="text-xs text-gray-400">Sideload script (run after this step)</span>
+        </label>
+
+        {draft.useSideload && draft.sideload && (
+          <div className="space-y-2 pl-4 border-l-2 border-amber-500/30">
+            <div>
+              <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">Script Path</label>
+              <input
+                type="text"
+                value={draft.sideload.path}
+                onChange={(e) => onDraftChange({
+                  ...draft,
+                  sideload: { ...draft.sideload!, path: e.target.value }
+                })}
+                placeholder="C:\Scripts\monitor.ps1"
+                className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-gray-200"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">Arguments</label>
+                <input
+                  type="text"
+                  value={draft.sideload.args?.join(' ') ?? ''}
+                  onChange={(e) => onDraftChange({
+                    ...draft,
+                    sideload: { ...draft.sideload!, args: e.target.value ? e.target.value.split(' ') : undefined }
+                  })}
+                  placeholder="-interval 1"
+                  className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-gray-200"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">Timeout (sec)</label>
+                <input
+                  type="number"
+                  value={draft.sideload.timeout ?? 60}
+                  onChange={(e) => onDraftChange({
+                    ...draft,
+                    sideload: { ...draft.sideload!, timeout: Number(e.target.value) }
+                  })}
+                  min={1}
+                  className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-gray-200"
+                />
+              </div>
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={draft.sideload.wait_for_completion ?? true}
+                onChange={(e) => onDraftChange({
+                  ...draft,
+                  sideload: { ...draft.sideload!, wait_for_completion: e.target.checked }
+                })}
+                className="rounded border-gray-600 bg-gray-700 text-amber-500"
+              />
+              <span className="text-[10px] text-gray-500">Wait for script completion</span>
+            </label>
+          </div>
+        )}
+      </div>
+
       {/* Editing indicator */}
       {isEditing && (
         <div className="flex items-center gap-2 px-2 py-1.5 bg-blue-900/30 rounded border border-blue-500/50">
@@ -976,6 +1088,273 @@ function MetadataPanel({
         </label>
       </div>
 
+      {/* Tracing Config */}
+      <div className="space-y-2">
+        <h4 className="text-xs font-medium text-gray-400 border-b border-gray-700 pb-1">
+          Tracing
+          <span className="ml-2 text-[10px] text-emerald-400/70">(SOCWatch + PTAT)</span>
+        </h4>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={metadata.tracing?.enabled ?? false}
+            onChange={(e) => onChange({
+              ...metadata,
+              tracing: {
+                ...metadata.tracing,
+                enabled: e.target.checked,
+                agents: metadata.tracing?.agents ?? ['socwatch', 'ptat'],
+              }
+            })}
+            className="rounded border-gray-600 bg-gray-700 text-emerald-500"
+          />
+          <span className="text-xs text-gray-400">Enable tracing on benchmark steps (wait ≥30s)</span>
+        </label>
+        {metadata.tracing?.enabled && (
+          <div className="pl-4 border-l-2 border-emerald-500/30 space-y-2">
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={metadata.tracing?.agents?.includes('socwatch') ?? true}
+                  onChange={(e) => {
+                    const agents = metadata.tracing?.agents ?? [];
+                    onChange({
+                      ...metadata,
+                      tracing: {
+                        ...metadata.tracing!,
+                        agents: e.target.checked
+                          ? [...agents.filter(a => a !== 'socwatch'), 'socwatch']
+                          : agents.filter(a => a !== 'socwatch')
+                      }
+                    });
+                  }}
+                  className="rounded border-gray-600 bg-gray-700 text-emerald-500"
+                />
+                <span className="text-[11px] text-gray-400">SOCWatch</span>
+              </label>
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={metadata.tracing?.agents?.includes('ptat') ?? true}
+                  onChange={(e) => {
+                    const agents = metadata.tracing?.agents ?? [];
+                    onChange({
+                      ...metadata,
+                      tracing: {
+                        ...metadata.tracing!,
+                        agents: e.target.checked
+                          ? [...agents.filter(a => a !== 'ptat'), 'ptat']
+                          : agents.filter(a => a !== 'ptat')
+                      }
+                    });
+                  }}
+                  className="rounded border-gray-600 bg-gray-700 text-emerald-500"
+                />
+                <span className="text-[11px] text-gray-400">Intel PTAT</span>
+              </label>
+            </div>
+            <div>
+              <label className={labelClass}>Output Directory (on SUT)</label>
+              <input
+                type="text"
+                value={metadata.tracing?.output_dir ?? ''}
+                onChange={(e) => onChange({
+                  ...metadata,
+                  tracing: { ...metadata.tracing!, output_dir: e.target.value || undefined }
+                })}
+                placeholder="C:\Documents\traces\{run_id}"
+                className={inputClass}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Hooks Config */}
+      <details className="group">
+        <summary className="text-xs font-medium text-gray-400 cursor-pointer hover:text-gray-300 flex items-center gap-1">
+          <svg className="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+          Hooks
+          <span className="ml-1 text-[10px] text-purple-400/70">(pre/post scripts)</span>
+        </summary>
+        <div className="mt-2 space-y-3 pl-4 border-l border-gray-700">
+          {/* Pre-hooks */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className={labelClass}>Pre-Hooks (run before automation)</label>
+              <button
+                onClick={() => {
+                  const preHooks = metadata.hooks?.pre ?? [];
+                  onChange({
+                    ...metadata,
+                    hooks: {
+                      ...metadata.hooks,
+                      pre: [...preHooks, { path: '', args: [], timeout: 30, persistent: false }]
+                    }
+                  });
+                }}
+                className="text-[10px] text-purple-400 hover:text-purple-300"
+              >
+                + Add Hook
+              </button>
+            </div>
+            {(metadata.hooks?.pre ?? []).map((hook, idx) => (
+              <div key={idx} className="p-2 bg-gray-800/50 rounded border border-gray-700 space-y-1.5">
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    value={hook.path}
+                    onChange={(e) => {
+                      const preHooks = [...(metadata.hooks?.pre ?? [])];
+                      preHooks[idx] = { ...preHooks[idx], path: e.target.value };
+                      onChange({ ...metadata, hooks: { ...metadata.hooks, pre: preHooks } });
+                    }}
+                    placeholder="C:\Scripts\setup.bat"
+                    className={`${inputClass} flex-1`}
+                  />
+                  <button
+                    onClick={() => {
+                      const preHooks = (metadata.hooks?.pre ?? []).filter((_, i) => i !== idx);
+                      onChange({ ...metadata, hooks: { ...metadata.hooks, pre: preHooks.length > 0 ? preHooks : undefined } });
+                    }}
+                    className="px-1.5 text-red-400 hover:text-red-300"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={hook.args?.join(' ') ?? ''}
+                    onChange={(e) => {
+                      const preHooks = [...(metadata.hooks?.pre ?? [])];
+                      preHooks[idx] = { ...preHooks[idx], args: e.target.value ? e.target.value.split(' ') : [] };
+                      onChange({ ...metadata, hooks: { ...metadata.hooks, pre: preHooks } });
+                    }}
+                    placeholder="--arg1 value"
+                    className={`${inputClass} flex-1`}
+                  />
+                  <input
+                    type="number"
+                    value={hook.timeout ?? 30}
+                    onChange={(e) => {
+                      const preHooks = [...(metadata.hooks?.pre ?? [])];
+                      preHooks[idx] = { ...preHooks[idx], timeout: Number(e.target.value) };
+                      onChange({ ...metadata, hooks: { ...metadata.hooks, pre: preHooks } });
+                    }}
+                    className={`${inputClass} w-16`}
+                    title="Timeout (sec)"
+                  />
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={hook.persistent ?? false}
+                      onChange={(e) => {
+                        const preHooks = [...(metadata.hooks?.pre ?? [])];
+                        preHooks[idx] = { ...preHooks[idx], persistent: e.target.checked };
+                        onChange({ ...metadata, hooks: { ...metadata.hooks, pre: preHooks } });
+                      }}
+                      className="rounded border-gray-600 bg-gray-700 text-purple-500"
+                    />
+                    <span className="text-[10px] text-gray-500">Persistent</span>
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={hook.critical ?? false}
+                      onChange={(e) => {
+                        const preHooks = [...(metadata.hooks?.pre ?? [])];
+                        preHooks[idx] = { ...preHooks[idx], critical: e.target.checked };
+                        onChange({ ...metadata, hooks: { ...metadata.hooks, pre: preHooks } });
+                      }}
+                      className="rounded border-gray-600 bg-gray-700 text-red-500"
+                    />
+                    <span className="text-[10px] text-gray-500">Critical</span>
+                  </label>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Post-hooks */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className={labelClass}>Post-Hooks (run after automation)</label>
+              <button
+                onClick={() => {
+                  const postHooks = metadata.hooks?.post ?? [];
+                  onChange({
+                    ...metadata,
+                    hooks: {
+                      ...metadata.hooks,
+                      post: [...postHooks, { path: '', args: [], timeout: 60 }]
+                    }
+                  });
+                }}
+                className="text-[10px] text-purple-400 hover:text-purple-300"
+              >
+                + Add Hook
+              </button>
+            </div>
+            {(metadata.hooks?.post ?? []).map((hook, idx) => (
+              <div key={idx} className="p-2 bg-gray-800/50 rounded border border-gray-700 space-y-1.5">
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    value={hook.path}
+                    onChange={(e) => {
+                      const postHooks = [...(metadata.hooks?.post ?? [])];
+                      postHooks[idx] = { ...postHooks[idx], path: e.target.value };
+                      onChange({ ...metadata, hooks: { ...metadata.hooks, post: postHooks } });
+                    }}
+                    placeholder="C:\Scripts\collect_results.py"
+                    className={`${inputClass} flex-1`}
+                  />
+                  <button
+                    onClick={() => {
+                      const postHooks = (metadata.hooks?.post ?? []).filter((_, i) => i !== idx);
+                      onChange({ ...metadata, hooks: { ...metadata.hooks, post: postHooks.length > 0 ? postHooks : undefined } });
+                    }}
+                    className="px-1.5 text-red-400 hover:text-red-300"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={hook.args?.join(' ') ?? ''}
+                    onChange={(e) => {
+                      const postHooks = [...(metadata.hooks?.post ?? [])];
+                      postHooks[idx] = { ...postHooks[idx], args: e.target.value ? e.target.value.split(' ') : [] };
+                      onChange({ ...metadata, hooks: { ...metadata.hooks, post: postHooks } });
+                    }}
+                    placeholder="--arg1 value"
+                    className={`${inputClass} flex-1`}
+                  />
+                  <input
+                    type="number"
+                    value={hook.timeout ?? 60}
+                    onChange={(e) => {
+                      const postHooks = [...(metadata.hooks?.post ?? [])];
+                      postHooks[idx] = { ...postHooks[idx], timeout: Number(e.target.value) };
+                      onChange({ ...metadata, hooks: { ...metadata.hooks, post: postHooks } });
+                    }}
+                    className={`${inputClass} w-16`}
+                    title="Timeout (sec)"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </details>
+
       {/* Technical */}
       <details className="group">
         <summary className="text-xs font-medium text-gray-400 cursor-pointer hover:text-gray-300 flex items-center gap-1">
@@ -1065,6 +1444,7 @@ export function WorkflowBuilder() {
     optional: false,
     description: '',
     useCustomOcr: false,
+    useSideload: false,
   });
   const [selectedStepIndex, setSelectedStepIndex] = useState<number | null>(null);
   const [isTestingStep, setIsTestingStep] = useState<number | null>(null);
@@ -1089,6 +1469,11 @@ export function WorkflowBuilder() {
       text_threshold: 0.5,
       box_threshold: 0.05,
     },
+    tracing: {
+      enabled: false,
+      agents: ['socwatch', 'ptat'],
+    },
+    hooks: undefined,
   });
   const [showYaml, setShowYaml] = useState(false);
   const [lastOcrTestResult, setLastOcrTestResult] = useState<{ found: boolean; elementCount: number } | null>(null);
@@ -1185,6 +1570,11 @@ export function WorkflowBuilder() {
           text_threshold: 0.5,
           box_threshold: 0.05,
         },
+        tracing: {
+          enabled: false,
+          agents: ['socwatch', 'ptat'],
+        },
+        hooks: undefined,
       };
 
       let currentStep: Partial<WorkflowStep> | null = null;
@@ -1192,6 +1582,7 @@ export function WorkflowBuilder() {
       let inFind = false;
       let inAction = false;
       let inStepOcrConfig = false;
+      let inStepSideload = false;
 
       const parseValue = (line: string): string => {
         const colonIdx = line.indexOf(':');
@@ -1285,6 +1676,7 @@ export function WorkflowBuilder() {
             inFind = false;
             inAction = false;
             inStepOcrConfig = false;
+            inStepSideload = false;
             continue;
           }
 
@@ -1311,8 +1703,19 @@ export function WorkflowBuilder() {
             inStepOcrConfig = true;
             inAction = false;
             inFind = false;
+            inStepSideload = false;
             if (currentStep) {
               currentStep.ocr_config = {};
+            }
+            continue;
+          }
+          if (trimmed === 'sideload:') {
+            inStepSideload = true;
+            inAction = false;
+            inFind = false;
+            inStepOcrConfig = false;
+            if (currentStep) {
+              currentStep.sideload = { path: '', timeout: 60, wait_for_completion: true };
             }
             continue;
           }
@@ -1361,6 +1764,26 @@ export function WorkflowBuilder() {
                     break;
                   case 'box_threshold':
                     currentStep.ocr_config.box_threshold = parseFloat(value);
+                    break;
+                }
+              } else if (inStepSideload && currentStep.sideload) {
+                // Parse per-step sideload fields
+                switch (key) {
+                  case 'path':
+                    currentStep.sideload.path = value;
+                    break;
+                  case 'args':
+                    // Parse array format [arg1, arg2]
+                    const argsMatch = value.match(/\[(.*)\]/);
+                    if (argsMatch) {
+                      currentStep.sideload.args = argsMatch[1].split(',').map(s => s.trim().replace(/["']/g, ''));
+                    }
+                    break;
+                  case 'timeout':
+                    currentStep.sideload.timeout = parseInt(value, 10);
+                    break;
+                  case 'wait_for_completion':
+                    currentStep.sideload.wait_for_completion = value === 'true';
                     break;
                 }
               } else {
@@ -1462,6 +1885,53 @@ export function WorkflowBuilder() {
     yaml += `  text_threshold: ${metadata.ocr_config.text_threshold}\n`;
     yaml += `  box_threshold: ${metadata.ocr_config.box_threshold}\n`;
 
+    // Tracing config section (if enabled)
+    if (metadata.tracing?.enabled) {
+      yaml += `\ntracing:\n`;
+      yaml += `  enabled: true\n`;
+      if (metadata.tracing.agents && metadata.tracing.agents.length > 0) {
+        yaml += `  agents: [${metadata.tracing.agents.join(', ')}]\n`;
+      }
+      if (metadata.tracing.output_dir) {
+        yaml += `  output_dir: '${metadata.tracing.output_dir}'\n`;
+      }
+    }
+
+    // Hooks section (if any)
+    if (metadata.hooks?.pre?.length || metadata.hooks?.post?.length) {
+      yaml += `\nhooks:\n`;
+      if (metadata.hooks.pre?.length) {
+        yaml += `  pre:\n`;
+        metadata.hooks.pre.forEach((hook) => {
+          yaml += `    - path: '${hook.path}'\n`;
+          if (hook.args?.length) {
+            yaml += `      args: [${hook.args.map(a => `"${a}"`).join(', ')}]\n`;
+          }
+          if (hook.timeout && hook.timeout !== 30) {
+            yaml += `      timeout: ${hook.timeout}\n`;
+          }
+          if (hook.persistent) {
+            yaml += `      persistent: true\n`;
+          }
+          if (hook.critical) {
+            yaml += `      critical: true\n`;
+          }
+        });
+      }
+      if (metadata.hooks.post?.length) {
+        yaml += `  post:\n`;
+        metadata.hooks.post.forEach((hook) => {
+          yaml += `    - path: '${hook.path}'\n`;
+          if (hook.args?.length) {
+            yaml += `      args: [${hook.args.map(a => `"${a}"`).join(', ')}]\n`;
+          }
+          if (hook.timeout && hook.timeout !== 60) {
+            yaml += `      timeout: ${hook.timeout}\n`;
+          }
+        });
+      }
+    }
+
     // Build steps section
     yaml += `\nsteps:\n`;
     steps.forEach((step, index) => {
@@ -1514,6 +1984,21 @@ export function WorkflowBuilder() {
         }
         if (step.ocr_config.box_threshold !== undefined) {
           yaml += `      box_threshold: ${step.ocr_config.box_threshold}\n`;
+        }
+      }
+
+      // Per-step sideload script
+      if (step.sideload?.path) {
+        yaml += `    sideload:\n`;
+        yaml += `      path: '${step.sideload.path}'\n`;
+        if (step.sideload.args?.length) {
+          yaml += `      args: [${step.sideload.args.map(a => `"${a}"`).join(', ')}]\n`;
+        }
+        if (step.sideload.timeout && step.sideload.timeout !== 60) {
+          yaml += `      timeout: ${step.sideload.timeout}\n`;
+        }
+        if (step.sideload.wait_for_completion === false) {
+          yaml += `      wait_for_completion: false\n`;
         }
       }
 
@@ -1680,6 +2165,16 @@ export function WorkflowBuilder() {
       };
     }
 
+    // Add per-step sideload if enabled
+    if (draft.useSideload && draft.sideload?.path) {
+      newStep.sideload = {
+        path: draft.sideload.path,
+        args: draft.sideload.args,
+        timeout: draft.sideload.timeout,
+        wait_for_completion: draft.sideload.wait_for_completion,
+      };
+    }
+
     setSteps([...steps, newStep]);
 
     // Reset draft
@@ -1691,6 +2186,7 @@ export function WorkflowBuilder() {
       optional: false,
       description: '',
       useCustomOcr: false,
+      useSideload: false,
     });
     selectElement(null);
   }, [draft, steps, selectElement]);
@@ -1722,6 +2218,7 @@ export function WorkflowBuilder() {
         optional: false,
         description: '',
         useCustomOcr: false,
+        useSideload: false,
       });
       selectElement(null);
       return;
@@ -1735,6 +2232,7 @@ export function WorkflowBuilder() {
         step.ocr_config?.text_threshold !== undefined ||
         step.ocr_config?.box_threshold !== undefined);
 
+      const hasSideload = !!step.sideload?.path;
       setDraft({
         actionType: step.action_type,
         element: step.find ? {
@@ -1754,6 +2252,8 @@ export function WorkflowBuilder() {
         description: step.description || '',
         useCustomOcr: hasCustomOcr,
         ocrConfig: hasCustomOcr ? step.ocr_config : undefined,
+        useSideload: hasSideload,
+        sideload: hasSideload ? step.sideload : undefined,
       });
     }
   }, [steps, selectElement]);
@@ -1806,6 +2306,16 @@ export function WorkflowBuilder() {
       };
     }
 
+    // Add per-step sideload if enabled
+    if (draft.useSideload && draft.sideload?.path) {
+      updatedStep.sideload = {
+        path: draft.sideload.path,
+        args: draft.sideload.args,
+        timeout: draft.sideload.timeout,
+        wait_for_completion: draft.sideload.wait_for_completion,
+      };
+    }
+
     const newSteps = [...steps];
     newSteps[selectedStepIndex] = updatedStep;
     setSteps(newSteps);
@@ -1820,6 +2330,7 @@ export function WorkflowBuilder() {
       optional: false,
       description: '',
       useCustomOcr: false,
+      useSideload: false,
     });
     selectElement(null);
   }, [selectedStepIndex, draft, steps, selectElement]);

@@ -30,6 +30,7 @@ interface LastRunSettings {
   resolution: Resolution | null;
   iterations: number;
   skipSteamLogin: boolean;
+  disableTracing: boolean;  // If true, disable SOCWatch/PTAT tracing
   timestamp: number;  // When the run was started
 }
 
@@ -167,6 +168,7 @@ export function QuickLaunchPanel({
   const [selectedResolution, setSelectedResolution] = useState<Resolution | null>(null);
   const [iterations, setIterations] = useState(1);
   const [skipSteamLogin, setSkipSteamLogin] = useState(false);  // Manual login mode
+  const [disableTracing, setDisableTracing] = useState(false);  // Disable SOCWatch/PTAT tracing
 
   // Status
   const [launchState, setLaunchState] = useState<LaunchState>('idle');
@@ -395,6 +397,7 @@ export function QuickLaunchPanel({
         resolution: selectedResolution,
         iterations,
         skipSteamLogin,
+        disableTracing,
         timestamp: Date.now(),
       };
       localStorage.setItem(LAST_RUN_STORAGE_KEY, JSON.stringify(settings));
@@ -413,7 +416,8 @@ export function QuickLaunchPanel({
           undefined, // auto-generate name
           selectedQuality || undefined,
           selectedResolution || undefined,
-          skipSteamLogin
+          skipSteamLogin,
+          disableTracing
         );
         // Set back to 'ready' so button stays enabled for another run
         // (game availability was just verified, no need to re-check)
@@ -427,7 +431,8 @@ export function QuickLaunchPanel({
           iterations,
           selectedQuality || undefined,
           selectedResolution || undefined,
-          skipSteamLogin
+          skipSteamLogin,
+          disableTracing
         );
         // Set back to 'ready' so button stays enabled for another run
         setLaunchState('ready');
@@ -465,6 +470,7 @@ export function QuickLaunchPanel({
     setSelectedResolution(lastRunSettings.resolution);
     setIterations(lastRunSettings.iterations);
     setSkipSteamLogin(lastRunSettings.skipSteamLogin);
+    setDisableTracing(lastRunSettings.disableTracing ?? false);
   }, [lastRunSettings, devices, onSelectSut, onSelectGames]);
 
   // Check if last run can be loaded (SUT still exists and at least one game still exists)
@@ -600,6 +606,29 @@ export function QuickLaunchPanel({
               />
               <span className={`text-xs font-medium ${skipSteamLogin ? 'text-warning' : 'text-text-secondary'}`}>
                 {skipSteamLogin ? 'Manual' : 'Auto'}
+              </span>
+            </label>
+          </div>
+
+          {/* Disable Tracing toggle */}
+          <div className="flex-shrink-0">
+            <div className="text-[10px] text-text-muted uppercase mb-1">Tracing</div>
+            <label
+              className={`flex items-center gap-1.5 px-2 py-1.5 rounded cursor-pointer transition-colors ${
+                disableTracing
+                  ? 'bg-error/20 border border-error/50'
+                  : 'bg-primary/20 border border-primary/50'
+              }`}
+              title={disableTracing ? 'Tracing disabled: SOCWatch/PTAT will not run' : 'Tracing enabled: SOCWatch/PTAT will capture benchmark data'}
+            >
+              <input
+                type="checkbox"
+                checked={disableTracing}
+                onChange={(e) => setDisableTracing(e.target.checked)}
+                className="sr-only"
+              />
+              <span className={`text-xs font-medium ${disableTracing ? 'text-error' : 'text-primary'}`}>
+                {disableTracing ? 'Off' : 'On'}
               </span>
             </label>
           </div>
@@ -961,6 +990,27 @@ export function QuickLaunchPanel({
             <span className="text-[10px] text-text-muted uppercase">Steam</span>
             <span className={`text-xs font-medium ${skipSteamLogin ? 'text-warning' : 'text-text-secondary'}`}>
               {skipSteamLogin ? 'Manual' : 'Auto'}
+            </span>
+          </label>
+
+          {/* Disable Tracing toggle */}
+          <label
+            className={`flex items-center gap-2 px-3 py-1.5 rounded cursor-pointer transition-colors ${
+              disableTracing
+                ? 'bg-error/20 border border-error/50'
+                : 'bg-primary/20 border border-primary/50'
+            }`}
+            title={disableTracing ? 'Tracing disabled: SOCWatch/PTAT will not run' : 'Tracing enabled: SOCWatch/PTAT will capture benchmark data'}
+          >
+            <input
+              type="checkbox"
+              checked={disableTracing}
+              onChange={(e) => setDisableTracing(e.target.checked)}
+              className="sr-only"
+            />
+            <span className="text-[10px] text-text-muted uppercase">Trace</span>
+            <span className={`text-xs font-medium ${disableTracing ? 'text-error' : 'text-primary'}`}>
+              {disableTracing ? 'Off' : 'On'}
             </span>
           </label>
 

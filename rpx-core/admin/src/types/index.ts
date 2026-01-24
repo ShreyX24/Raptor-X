@@ -420,6 +420,13 @@ export interface WorkflowStep {
     text_threshold?: number;
     box_threshold?: number;
   };
+  // Per-step sideload script (runs after step action)
+  sideload?: {
+    path: string;
+    args?: string[];
+    timeout?: number;
+    wait_for_completion?: boolean;
+  };
 }
 
 export interface Workflow {

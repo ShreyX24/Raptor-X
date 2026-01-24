@@ -170,7 +170,8 @@ export async function startRun(
   iterations: number = 1,
   quality?: string,   // 'low' | 'medium' | 'high' | 'ultra'
   resolution?: string, // '720p' | '1080p' | '1440p' | '2160p'
-  skipSteamLogin: boolean = false  // If true, skip Steam account management (user pre-logged in)
+  skipSteamLogin: boolean = false,  // If true, skip Steam account management (user pre-logged in)
+  disableTracing: boolean = false   // If true, disable SOCWatch/PTAT tracing for this run
 ): Promise<{ status: string; run_id: string; message: string }> {
   return fetchJson<{ status: string; run_id: string; message: string }>(`${API_BASE}/runs`, {
     method: 'POST',
@@ -181,6 +182,7 @@ export async function startRun(
       quality,
       resolution,
       skip_steam_login: skipSteamLogin,
+      disable_tracing: disableTracing,
     }),
   });
 }
@@ -464,7 +466,8 @@ export async function createCampaign(
   name?: string,
   quality?: string,    // 'low' | 'medium' | 'high' | 'ultra'
   resolution?: string, // '720p' | '1080p' | '1440p' | '2160p'
-  skipSteamLogin: boolean = false  // If true, skip Steam account management (user pre-logged in)
+  skipSteamLogin: boolean = false,  // If true, skip Steam account management (user pre-logged in)
+  disableTracing: boolean = false   // If true, disable SOCWatch/PTAT tracing for this run
 ): Promise<CreateCampaignResponse> {
   return fetchJson<CreateCampaignResponse>(`${API_BASE}/campaigns`, {
     method: 'POST',
@@ -476,6 +479,7 @@ export async function createCampaign(
       quality,
       resolution,
       skip_steam_login: skipSteamLogin,
+      disable_tracing: disableTracing,
     }),
   });
 }
