@@ -171,6 +171,13 @@ class MainWindow(QMainWindow):
         self.settings_action.triggered.connect(self._show_settings)
         toolbar.addAction(self.settings_action)
 
+        toolbar.addSeparator()
+
+        self.update_action = QAction("Check for Updates", self)
+        self.update_action.setShortcut(QKeySequence("Ctrl+U"))
+        self.update_action.triggered.connect(self._show_update_dialog)
+        toolbar.addAction(self.update_action)
+
         # Add spacer to push SUT Client to the right
         spacer = QWidget()
         spacer.setSizePolicy(spacer.sizePolicy().horizontalPolicy(), spacer.sizePolicy().verticalPolicy())
@@ -367,6 +374,24 @@ class MainWindow(QMainWindow):
 
         dialog = SettingsDialog(self)
         dialog.settings_changed.connect(lambda: self._on_settings_changed(old_omniparser_urls))
+        dialog.exec()
+
+    def _show_update_dialog(self):
+        """Show the update dialog"""
+        from .update_dialog import UpdateDialog
+
+        settings = get_settings_manager()
+        base_dir = settings.get_project_dir()
+
+        if not base_dir:
+            QMessageBox.warning(
+                self,
+                "Configuration Required",
+                "Please set the Project Directory in Settings before checking for updates."
+            )
+            return
+
+        dialog = UpdateDialog(base_dir, self.process_manager, self)
         dialog.exec()
 
     def _on_settings_changed(self, old_omniparser_urls: str = ""):

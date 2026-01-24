@@ -58,6 +58,7 @@ steps:
 
   4:
     description: "Click Exit Benchmark button"
+    focus_before: true  # Re-focus game after benchmark (window loses focus)
     find:
       type: "any"
       text: "Exit Benchmark"
@@ -69,9 +70,9 @@ steps:
       click_delay: 0.7
     verify_success:
       - type: "any"
-        text: "OPTIONS"
+        text: "3RDPARTY"
         text_match: "contains"
-    expected_delay: 10  # Increased from 5 (loading transition needs more time)
+    expected_delay: 10
     timeout: 15
 
   5:

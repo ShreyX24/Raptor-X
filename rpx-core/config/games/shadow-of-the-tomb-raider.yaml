@@ -30,6 +30,30 @@ steps:
     expected_delay: 25
     timeout: 30
   2:
+    description: dismiss privacy notice agreement (press Enter to continue)
+    find:
+      type: any
+      text: Privacy Notice
+      text_match: contains
+    action:
+      type: key
+      key: enter
+    optional: true
+    expected_delay: 5
+    timeout: 15
+  3:
+    description: choose character (press Enter to continue)
+    find:
+      type: any
+      text: THANKS FOR PURCHASING
+      text_match: contains
+    action:
+      type: key
+      key: enter
+    optional: true
+    expected_delay: 5
+    timeout: 15
+  4:
     description: click options in game menu
     find:
       type: any
@@ -42,7 +66,7 @@ steps:
       click_delay: 0.5
     expected_delay: 5
     timeout: 30
-  3:
+  5:
     description: click on display and graphics
     find:
       type: any
@@ -55,7 +79,7 @@ steps:
       click_delay: 0.5
     expected_delay: 5
     timeout: 30
-  4:
+  6:
     description: click on Run Benchmark to start the benchmark
     find:
       type: any
@@ -68,14 +92,14 @@ steps:
       click_delay: 0.3
     expected_delay: 4
     timeout: 20
-  5:
+  7:
     description: wait post benchmark - 210 seconds
     action:
       type: wait
       duration: 210
     expected_delay: 4
     timeout: 20
-  6:
+  8:
     description: 'Click on Close to go back'
     find:
       type: any
@@ -88,7 +112,7 @@ steps:
       click_delay: 0.3
     expected_delay: 4
     timeout: 20
-  7:
+  9:
     description: Click on quit game
     find:
       type: any
@@ -101,7 +125,7 @@ steps:
       click_delay: 0.3
     expected_delay: 6
     timeout: 20
-  8:
+  10:
     description: confirm quit game
     find:
       type: any

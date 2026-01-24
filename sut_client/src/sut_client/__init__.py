@@ -301,11 +301,45 @@ def main():
         help="Remove the Windows Scheduled Task"
     )
     parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Update SUT client from Master server via SSH"
+    )
+    parser.add_argument(
+        "--master-ip",
+        type=str,
+        metavar="IP",
+        help="Master server IP for updates (used with --update)"
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"sut-client {__version__}"
     )
     args = parser.parse_args()
+
+    # Handle update command
+    if args.update:
+        # Enable ANSI colors on Windows
+        _enable_windows_ansi()
+        print_banner(__version__)
+
+        # Get master IP from args or try to extract from --master
+        master_ip = args.master_ip
+        if not master_ip and args.master:
+            master_ip = args.master.split(':')[0]
+
+        if not master_ip:
+            print("\033[91mError: --master-ip or --master required for updates\033[0m")
+            print()
+            print("Usage: sut-client --update --master-ip 192.168.0.100")
+            print("   or: sut-client --update --master 192.168.0.100:5001")
+            sys.exit(1)
+
+        from .update_handler import UpdateHandler
+        handler = UpdateHandler(__version__)
+        success = handler.execute_update(master_ip)
+        sys.exit(0 if success else 1)
 
     # Handle install/uninstall service commands (requires admin)
     if args.install_service:
