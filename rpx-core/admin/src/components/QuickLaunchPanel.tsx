@@ -136,6 +136,64 @@ function roundRamToEven(gb: number): number {
   return rounded % 2 === 0 ? rounded : rounded + 1;
 }
 
+// ETA Calculation constants
+const OVERHEAD_PER_GAME_SECONDS = 30; // Network delays, screenshot/parsing, clicks
+const STEAM_LOGIN_SECONDS = 180; // Steam login for first game (when not manual mode)
+
+// Calculate estimated duration for selected games
+function calculateEstimatedDuration(
+  games: GameConfig[],
+  iterations: number,
+  skipSteamLogin: boolean
+): number {
+  if (games.length === 0 || iterations <= 0) return 0;
+
+  let totalSeconds = 0;
+
+  games.forEach((game, index) => {
+    // Get timing values from game config (with defaults)
+    const startupWait = (game as unknown as { startup_wait?: number }).startup_wait || 60;
+    const benchmarkDuration = (game as unknown as { benchmark_duration?: number }).benchmark_duration || 120;
+    const initWait = (game as unknown as { init_wait?: number }).init_wait || 0;
+
+    // Per-game duration: startup + benchmark + init + overhead
+    const perGameDuration = startupWait + benchmarkDuration + initWait + OVERHEAD_PER_GAME_SECONDS;
+
+    // Multiply by iterations
+    totalSeconds += perGameDuration * iterations;
+
+    // Add Steam login time for first game only (if not manual mode)
+    if (index === 0 && !skipSteamLogin) {
+      totalSeconds += STEAM_LOGIN_SECONDS;
+    }
+  });
+
+  return totalSeconds;
+}
+
+// Format duration: > 60 min = hours, <= 60 min = minutes
+function formatDuration(totalSeconds: number): string {
+  if (totalSeconds <= 0) return '0m';
+
+  const totalMinutes = Math.ceil(totalSeconds / 60);
+
+  if (totalMinutes > 60) {
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+
+  return `${totalMinutes}m`;
+}
+
+// Format ETA as time (e.g., "3:45 PM")
+function formatETA(totalSeconds: number): string {
+  if (totalSeconds <= 0) return '--:--';
+
+  const eta = new Date(Date.now() + totalSeconds * 1000);
+  return eta.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
 // Get max supported resolution from SUT resolutions
 function getMaxResolution(resolutions: SutDisplayResolution[]): SutDisplayResolution | null {
   if (resolutions.length === 0) return null;
@@ -496,6 +554,15 @@ export function QuickLaunchPanel({
     return 'just now';
   }, [lastRunSettings]);
 
+  // Calculate estimated duration and ETA
+  const estimatedDuration = useMemo(() =>
+    calculateEstimatedDuration(selectedGames, iterations, skipSteamLogin),
+    [selectedGames, iterations, skipSteamLogin]
+  );
+
+  const formattedDuration = useMemo(() => formatDuration(estimatedDuration), [estimatedDuration]);
+  const formattedETA = useMemo(() => formatETA(estimatedDuration), [estimatedDuration]);
+
   // Determine if launch is possible
   const isReady = launchState === 'ready';
   const isLaunching = launchState === 'launching';
@@ -666,6 +733,20 @@ export function QuickLaunchPanel({
             </button>
           </div>
         </div>
+
+        {/* ETA Display - below start button */}
+        {selectedGames.length > 0 && (
+          <div className="flex items-center justify-end gap-3 mt-1 text-xs text-text-muted">
+            <span>
+              <span className="text-text-secondary font-medium">{formattedDuration}</span>
+              {' '}est. duration
+            </span>
+            <span className="text-border">|</span>
+            <span>
+              ETA <span className="text-text-secondary font-medium">{formattedETA}</span>
+            </span>
+          </div>
+        )}
 
         {/* Row 2: System Info + Preflight - horizontal layout */}
         <div className="mt-auto pt-2 border-t border-border/50">
@@ -1051,6 +1132,20 @@ export function QuickLaunchPanel({
             )}
           </button>
         </div>
+
+        {/* ETA Display - below start button */}
+        {selectedGames.length > 0 && (
+          <div className="flex items-center justify-end gap-3 text-xs text-text-muted">
+            <span>
+              <span className="text-text-secondary font-medium">{formattedDuration}</span>
+              {' '}est. duration
+            </span>
+            <span className="text-border">|</span>
+            <span>
+              ETA <span className="text-text-secondary font-medium">{formattedETA}</span>
+            </span>
+          </div>
+        )}
 
         {/* Error message */}
         {errorMessage && launchState === 'error' && (

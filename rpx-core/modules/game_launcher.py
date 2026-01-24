@@ -23,7 +23,7 @@ class GameLauncher:
         self.network_manager = network_manager
         logger.info("GameLauncher initialized")
     
-    def launch(self, game_path: str, process_id: str = '', startup_wait: int = 15, launch_args: str = None) -> bool:
+    def launch(self, game_path: str, process_id: str = '', startup_wait: int = 15, launch_args: str = None, use_direct_exe: bool = False) -> bool:
         """
         Launch a game on the SUT.
 
@@ -32,6 +32,9 @@ class GameLauncher:
             process_id: Optional process name to wait for after launch (e.g., 'Launcher', 'Game')
             startup_wait: Maximum seconds to wait for process to appear (default: 15)
             launch_args: Optional command-line arguments for the game (e.g., "-benchmark test.xml")
+            use_direct_exe: If True and game_path is a Steam App ID, SUT will resolve
+                           the exe path and launch directly instead of via Steam protocol.
+                           Use this for games that need direct exe launch (e.g., Cyberpunk)
 
         Returns:
             True if the game was successfully launched
@@ -43,10 +46,10 @@ class GameLauncher:
 
         try:
             # Log launch parameters at debug level
-            logger.debug(f"Launch request - path: {game_path}, process_id: {process_id}, startup_wait: {startup_wait}, args: {launch_args}")
+            logger.debug(f"Launch request - path: {game_path}, process_id: {process_id}, startup_wait: {startup_wait}, args: {launch_args}, direct_exe: {use_direct_exe}")
 
             # Send launch command to SUT with process tracking metadata
-            response = self.network_manager.launch_game(game_path, process_id, startup_wait, launch_args)
+            response = self.network_manager.launch_game(game_path, process_id, startup_wait, launch_args, use_direct_exe)
 
             # Log full response at debug level
             logger.debug(f"SUT launch response: {response}")

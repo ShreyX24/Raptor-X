@@ -18,6 +18,29 @@ from ..core.game_manager import GameConfigManager
 logger = logging.getLogger(__name__)
 
 
+def safe_emit(socketio: SocketIO, event: str, data: Any, room: str = None, **kwargs) -> bool:
+    """
+    Safely emit a SocketIO event, catching disconnection errors.
+
+    Flask-SocketIO/engineio can throw KeyError: 'Session is disconnected' when
+    a client disconnects mid-request. This wrapper catches those errors.
+
+    Returns:
+        True if emit succeeded, False if client was disconnected
+    """
+    try:
+        socketio.emit(event, data, room=room, **kwargs)
+        return True
+    except KeyError as e:
+        if 'disconnected' in str(e).lower():
+            logger.debug(f"Client disconnected during emit to room={room}: {e}")
+            return False
+        raise
+    except Exception as e:
+        logger.warning(f"Error emitting {event} to room={room}: {e}")
+        return False
+
+
 class WebSocketHandler:
     """Handles WebSocket connections and real-time updates for frontend"""
     
@@ -152,19 +175,19 @@ class WebSocketHandler:
         try:
             # Send current device list
             devices_data = self._get_devices_data()
-            self.socketio.emit('initial_devices', devices_data, room=client_id)
-            
+            safe_emit(self.socketio, 'initial_devices', devices_data, room=client_id)
+
             # Send discovery status
             discovery_status = self._get_discovery_status()
-            self.socketio.emit('discovery_status', discovery_status, room=client_id)
-            
+            safe_emit(self.socketio, 'discovery_status', discovery_status, room=client_id)
+
             # Send game configurations
             if self.game_manager:
                 games_data = self._get_games_data()
-                self.socketio.emit('games_update', games_data, room=client_id)
-            
+                safe_emit(self.socketio, 'games_update', games_data, room=client_id)
+
             logger.debug(f"Sent initial data to client {client_id}")
-            
+
         except Exception as e:
             logger.error(f"Error sending initial data to {client_id}: {e}")
             
@@ -216,7 +239,7 @@ class WebSocketHandler:
     def _send_device_list(self):
         """Send current device list to all clients"""
         devices_data = self._get_devices_data()
-        self.socketio.emit('devices_update', devices_data, room='general_updates')
+        safe_emit(self.socketio, 'devices_update', devices_data, room='general_updates')
         logger.debug("Sent device list update to all clients")
         
     # Event handlers for system events
@@ -224,54 +247,54 @@ class WebSocketHandler:
         """Handle SUT discovered event"""
         device_id = event.data.get('device_id')
         device = self.registry.get_device_by_id(device_id)
-        
+
         if device:
             update_data = {
                 'event': 'device_discovered',
                 'device': self._serialize_device(device),
                 'timestamp': event.timestamp.isoformat()
             }
-            
-            self.socketio.emit('device_event', update_data, room='general_updates')
+
+            safe_emit(self.socketio, 'device_event', update_data, room='general_updates')
             logger.debug(f"Sent device discovered event for {device_id}")
             
     def _on_sut_online(self, event: Event):
         """Handle SUT online event"""
         device_id = event.data.get('device_id')
         device = self.registry.get_device_by_id(device_id)
-        
+
         if device:
             update_data = {
                 'event': 'device_online',
                 'device': self._serialize_device(device),
                 'timestamp': event.timestamp.isoformat()
             }
-            
-            self.socketio.emit('device_event', update_data, room='general_updates')
-            self.socketio.emit('device_event', update_data, room=f'device_{device_id}')
+
+            safe_emit(self.socketio, 'device_event', update_data, room='general_updates')
+            safe_emit(self.socketio, 'device_event', update_data, room=f'device_{device_id}')
             logger.debug(f"Sent device online event for {device_id}")
             
     def _on_sut_offline(self, event: Event):
         """Handle SUT offline event"""
         device_id = event.data.get('device_id')
         device = self.registry.get_device_by_id(device_id)
-        
+
         if device:
             update_data = {
                 'event': 'device_offline',
                 'device': self._serialize_device(device),
                 'timestamp': event.timestamp.isoformat()
             }
-            
-            self.socketio.emit('device_event', update_data, room='general_updates')
-            self.socketio.emit('device_event', update_data, room=f'device_{device_id}')
+
+            safe_emit(self.socketio, 'device_event', update_data, room='general_updates')
+            safe_emit(self.socketio, 'device_event', update_data, room=f'device_{device_id}')
             logger.debug(f"Sent device offline event for {device_id}")
             
     def _on_sut_status_changed(self, event: Event):
         """Handle SUT status change event"""
         device_id = event.data.get('device_id')
         device = self.registry.get_device_by_id(device_id)
-        
+
         if device:
             update_data = {
                 'event': 'device_status_changed',
@@ -280,9 +303,9 @@ class WebSocketHandler:
                 'new_status': event.data.get('new_status'),
                 'timestamp': event.timestamp.isoformat()
             }
-            
-            self.socketio.emit('device_event', update_data, room='general_updates')
-            self.socketio.emit('device_event', update_data, room=f'device_{device_id}')
+
+            safe_emit(self.socketio, 'device_event', update_data, room='general_updates')
+            safe_emit(self.socketio, 'device_event', update_data, room=f'device_{device_id}')
             logger.debug(f"Sent device status change event for {device_id}")
             
     def _on_automation_started(self, event: Event):
@@ -292,9 +315,9 @@ class WebSocketHandler:
             'data': event.data,
             'timestamp': event.timestamp.isoformat()
         }
-        
-        self.socketio.emit('automation_event', automation_data, room='general_updates')
-        
+
+        safe_emit(self.socketio, 'automation_event', automation_data, room='general_updates')
+
     def _on_automation_completed(self, event: Event):
         """Handle automation completed event"""
         automation_data = {
@@ -302,9 +325,9 @@ class WebSocketHandler:
             'data': event.data,
             'timestamp': event.timestamp.isoformat()
         }
-        
-        self.socketio.emit('automation_event', automation_data, room='general_updates')
-        
+
+        safe_emit(self.socketio, 'automation_event', automation_data, room='general_updates')
+
     def _on_automation_failed(self, event: Event):
         """Handle automation failed event"""
         automation_data = {
@@ -313,7 +336,7 @@ class WebSocketHandler:
             'timestamp': event.timestamp.isoformat()
         }
 
-        self.socketio.emit('automation_event', automation_data, room='general_updates')
+        safe_emit(self.socketio, 'automation_event', automation_data, room='general_updates')
 
     def _on_step_started(self, event: Event):
         """Handle automation step started event"""
@@ -324,11 +347,11 @@ class WebSocketHandler:
             'timestamp': event.timestamp.isoformat()
         }
 
-        self.socketio.emit('automation_step', step_data, room='general_updates')
+        safe_emit(self.socketio, 'automation_step', step_data, room='general_updates')
         # Also emit to run-specific room if subscribed
         run_id = event.data.get('run_id')
         if run_id:
-            self.socketio.emit('automation_step', step_data, room=f'run_{run_id}')
+            safe_emit(self.socketio, 'automation_step', step_data, room=f'run_{run_id}')
 
     def _on_step_completed(self, event: Event):
         """Handle automation step completed event"""
@@ -339,10 +362,10 @@ class WebSocketHandler:
             'timestamp': event.timestamp.isoformat()
         }
 
-        self.socketio.emit('automation_step', step_data, room='general_updates')
+        safe_emit(self.socketio, 'automation_step', step_data, room='general_updates')
         run_id = event.data.get('run_id')
         if run_id:
-            self.socketio.emit('automation_step', step_data, room=f'run_{run_id}')
+            safe_emit(self.socketio, 'automation_step', step_data, room=f'run_{run_id}')
 
     def _on_step_failed(self, event: Event):
         """Handle automation step failed event"""
@@ -353,10 +376,10 @@ class WebSocketHandler:
             'timestamp': event.timestamp.isoformat()
         }
 
-        self.socketio.emit('automation_step', step_data, room='general_updates')
+        safe_emit(self.socketio, 'automation_step', step_data, room='general_updates')
         run_id = event.data.get('run_id')
         if run_id:
-            self.socketio.emit('automation_step', step_data, room=f'run_{run_id}')
+            safe_emit(self.socketio, 'automation_step', step_data, room=f'run_{run_id}')
 
     def _on_automation_progress(self, event: Event):
         """Handle automation progress update event"""
@@ -367,10 +390,10 @@ class WebSocketHandler:
             'timestamp': event.timestamp.isoformat()
         }
 
-        self.socketio.emit('automation_progress', progress_data, room='general_updates')
+        safe_emit(self.socketio, 'automation_progress', progress_data, room='general_updates')
         run_id = event.data.get('run_id')
         if run_id:
-            self.socketio.emit('automation_progress', progress_data, room=f'run_{run_id}')
+            safe_emit(self.socketio, 'automation_progress', progress_data, room=f'run_{run_id}')
 
     def _on_sut_paired(self, event: Event):
         """Handle SUT paired event"""
@@ -386,8 +409,8 @@ class WebSocketHandler:
                 'timestamp': event.timestamp.isoformat()
             }
 
-            self.socketio.emit('pairing_event', pairing_data, room='general_updates')
-            self.socketio.emit('device_event', pairing_data, room=f'device_{device_id}')
+            safe_emit(self.socketio, 'pairing_event', pairing_data, room='general_updates')
+            safe_emit(self.socketio, 'device_event', pairing_data, room=f'device_{device_id}')
             logger.info(f"Sent device paired event for {device_id}")
 
     def _on_sut_unpaired(self, event: Event):
@@ -402,8 +425,8 @@ class WebSocketHandler:
                 'timestamp': event.timestamp.isoformat()
             }
 
-            self.socketio.emit('pairing_event', unpairing_data, room='general_updates')
-            self.socketio.emit('device_event', unpairing_data, room=f'device_{device_id}')
+            safe_emit(self.socketio, 'pairing_event', unpairing_data, room='general_updates')
+            safe_emit(self.socketio, 'device_event', unpairing_data, room=f'device_{device_id}')
             logger.info(f"Sent device unpaired event for {device_id}")
 
     def _serialize_device_with_pairing(self, device: SUTDevice) -> Dict[str, Any]:
@@ -427,12 +450,12 @@ class WebSocketHandler:
             'timestamp': event.timestamp.isoformat()
         }
 
-        self.socketio.emit('campaign_event', campaign_data, room='general_updates')
+        safe_emit(self.socketio, 'campaign_event', campaign_data, room='general_updates')
         logger.debug(f"Sent campaign event: {event.event_type.value}")
 
     def broadcast_message(self, event_name: str, data: Dict[str, Any], room: str = 'general_updates'):
         """Broadcast a message to specified room"""
-        self.socketio.emit(event_name, data, room=room)
+        safe_emit(self.socketio, event_name, data, room=room)
         
     def get_connected_clients_count(self) -> int:
         """Get number of connected clients"""
