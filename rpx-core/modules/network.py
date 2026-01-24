@@ -269,7 +269,7 @@ class NetworkManager:
 
         return False
 
-    def launch_game(self, game_path: str, process_id: str = '', startup_wait: int = 15, launch_args: str = None) -> Dict[str, Any]:
+    def launch_game(self, game_path: str, process_id: str = '', startup_wait: int = 15, launch_args: str = None, use_direct_exe: bool = False) -> Dict[str, Any]:
         """
         Request the SUT to launch a game.
 
@@ -278,6 +278,8 @@ class NetworkManager:
             process_id: Optional process name to wait for after launch (e.g., 'Launcher', 'Game')
             startup_wait: Maximum seconds to wait for process to appear (default: 15)
             launch_args: Optional command-line arguments to pass to the game (e.g., "-benchmark test.xml")
+            use_direct_exe: If True and game_path is a Steam App ID, SUT will resolve
+                           the exe path and launch directly instead of via Steam protocol
 
         Returns:
             Response from the SUT as a dictionary
@@ -300,7 +302,12 @@ class NetworkManager:
                     "startup_wait": startup_wait,
                     "force_relaunch": True  # Kill existing game before launching
                 }
-                logger.info(f"Launching via Steam App ID: {game_path}")
+                # If use_direct_exe, tell SUT to resolve exe path and launch directly
+                if use_direct_exe:
+                    payload["use_direct_exe"] = True
+                    logger.info(f"Launching via Steam App ID {game_path} -> direct exe (SUT will resolve path)")
+                else:
+                    logger.info(f"Launching via Steam App ID: {game_path}")
             else:
                 # Use path field for executable launches (legacy)
                 payload = {

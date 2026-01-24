@@ -138,7 +138,7 @@ steps:
     description: "Click Confirm to exit to desktop"
     find:
       type: "any"
-      text: ["quit to desktop", "quit to the desktop"]
+      text: ["quit to desktop", "are you sure you"]
       text_match: "contains"
     action:
       type: "key"

@@ -282,6 +282,7 @@ def launch_game(
     force_relaunch: bool = False,
     settings: Optional[Any] = None,
     launch_args: Optional[str] = None,  # Command-line arguments for the game
+    use_direct_exe: bool = False,  # If True, resolve steam_app_id to exe and launch directly
     # Legacy parameters for backwards compatibility
     game_path: Optional[str] = None,
     process_id: str = '',
@@ -303,6 +304,9 @@ def launch_game(
         force_relaunch: Kill existing game before launch
         settings: SUTSettings instance for timeouts
         launch_args: Command-line arguments to pass to the game (e.g., "-benchmark test.xml")
+        use_direct_exe: If True and steam_app_id is provided, resolve to exe path and
+                       launch directly instead of via Steam protocol. Used for games
+                       like Cyberpunk that need direct exe launch.
         game_path: Legacy param - Path to executable or Steam App ID
         process_id: Legacy param - Expected process name
         visible_timeout: Timeout for window visibility detection
@@ -400,9 +404,9 @@ def launch_game(
             logger.info(f"Extracted Steam App ID from URL: {game_path}")
 
     # Resolve Steam App ID to Executable
-    steam_app_id = None
+    original_steam_app_id = None
     if is_steam_id:
-        steam_app_id = game_path
+        original_steam_app_id = game_path
         logger.info(f"Resolving Steam App ID: {game_path}")
         resolved_path, error = resolve_steam_app_path(game_path, process_id)
         if resolved_path:
@@ -415,7 +419,16 @@ def launch_game(
         else:
             logger.error(f"Failed to resolve Steam ID: {error}")
             return {"status": "error", "error": f"Failed to resolve Steam ID: {error}"}
+
+        # Determine if we should use Steam protocol or direct exe launch
+        # use_direct_exe=True means: resolve path from Steam but launch exe directly
+        if use_direct_exe:
+            logger.info(f"Direct exe mode: Will launch {game_path} directly (not via Steam protocol)")
+            steam_app_id = None  # Clear so we fall through to direct exe launch
+        else:
+            steam_app_id = original_steam_app_id  # Keep for Steam protocol launch
     else:
+        steam_app_id = None  # Not a Steam game
         if not os.path.exists(game_path):
             logger.error(f"Game path not found: {game_path}")
             return {"status": "error", "error": "Game executable not found"}

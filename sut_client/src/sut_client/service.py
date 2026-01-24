@@ -788,7 +788,8 @@ def create_app() -> Flask:
             "path": "C:/path/to/game.exe",  # Optional: Legacy Gemma NetworkManager format
             "process_name": "game.exe",  # Optional: Process to detect
             "force_relaunch": false,  # Optional: Kill existing and relaunch
-            "launch_args": "-benchmark test.xml"  # Optional: Command-line args for game
+            "launch_args": "-benchmark test.xml",  # Optional: Command-line args for game
+            "use_direct_exe": false  # Optional: Resolve steam_app_id to exe and launch directly
         }
         """
         try:
@@ -803,6 +804,8 @@ def create_app() -> Flask:
             force_relaunch = data.get('force_relaunch', False)
             startup_wait = data.get('startup_wait', 30)  # Post-launch initialization wait
             launch_args = data.get('launch_args')  # Command-line arguments for game
+            # If True, resolve steam_app_id to exe path and launch directly (not via Steam protocol)
+            use_direct_exe = data.get('use_direct_exe', False)
             # Process detection timeout - how long to wait for game process to appear
             # This is separate from startup_wait (which is for post-launch initialization)
             process_timeout = data.get('process_detection_timeout', 90)  # Default 90s for process to spawn
@@ -825,6 +828,8 @@ def create_app() -> Flask:
 
             if launch_args:
                 logger.info(f"Launch args provided: {launch_args}")
+            if use_direct_exe:
+                logger.info(f"Direct exe mode: Will resolve Steam App ID to exe and launch directly")
 
             # Foreground detection retry settings (reduced from 10s intervals)
             # With fast path check, retries are less critical - most launches skip this
@@ -843,6 +848,7 @@ def create_app() -> Flask:
                 force_relaunch=force_relaunch,
                 settings=settings,
                 launch_args=launch_args,
+                use_direct_exe=use_direct_exe,
                 retry_count=retry_count,
                 retry_interval=retry_interval,
                 process_detection_timeout=process_timeout  # Time to wait for process to appear (default 90s)
