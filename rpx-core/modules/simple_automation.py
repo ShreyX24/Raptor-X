@@ -12,34 +12,29 @@ from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 
 from modules.gemma_client import BoundingBox
+from modules.tracing_config import get_tracing_config, get_tracing_agents_dict
 
 logger = logging.getLogger(__name__)
 
-# Default tracing agent configurations
-DEFAULT_TRACING_AGENTS = {
-    "socwatch": {
-        "path": r"C:\OWR\socwatch\64\socwatch64.exe",
-        "args": [
-            "-f", "sys", "-f", "bw", "-f", "cpu", "-f", "power",
-            "-f", "gfx", "-f", "temp", "-o", "trace"
-        ],
-        "runs_indefinitely": True,  # SOCWatch runs until terminated
-    },
-    "ptat": {
-        "path": r"C:\OWR\PTAT\PTAT.exe",
-        "args": ["-log", "-csv", "-l=1", "-ts", "-i=1000"],
-        "runs_indefinitely": False,  # PTAT needs -t=<duration>
-        "duration_arg": "-t=",  # Arg format for duration
-    },
-}
 
-# Default trace output directory on SUT
-DEFAULT_TRACE_OUTPUT_DIR = r"C:\Documents\traces"
+def _get_tracing_agents():
+    """Get tracing agents from centralized config (lazy load)."""
+    return get_tracing_agents_dict()
+
+
+def _get_default_trace_output_dir():
+    """Get default trace output directory from centralized config."""
+    return get_tracing_config().output_dir
+
+
+def _get_post_trace_buffer():
+    """Get post-trace buffer time from centralized config."""
+    return get_tracing_config().post_trace_buffer
 
 class SimpleAutomation:
     """Fully modular step-by-step automation with comprehensive action support."""
     
-    def __init__(self, config_path, network, screenshot_mgr, vision_model, stop_event=None, run_dir=None, annotator=None, progress_callback=None, disable_tracing=False, run_id=None):
+    def __init__(self, config_path, network, screenshot_mgr, vision_model, stop_event=None, run_dir=None, annotator=None, progress_callback=None, disable_tracing=False, run_id=None, tracing_agents_override=None):
         """
         Initialize with all necessary components.
 
@@ -54,8 +49,10 @@ class SimpleAutomation:
             progress_callback: Optional callback object to update step progress (sets completed_steps and total_steps)
             disable_tracing: If True, disable SOCWatch/PTAT tracing regardless of config
             run_id: Optional run ID for trace output organization
+            tracing_agents_override: Optional list of tracing agents to use (overrides YAML config), e.g. ["ptat"] or ["socwatch"]
         """
         self._disable_tracing_override = disable_tracing  # Store for later use
+        self._tracing_agents_override = tracing_agents_override  # Override agents list
         self.config_path = config_path
         self.network = network
         self.screenshot_mgr = screenshot_mgr
@@ -110,8 +107,14 @@ class SimpleAutomation:
         config_tracing_enabled = self.tracing_config.get("enabled", False) if isinstance(self.tracing_config, dict) else bool(self.tracing_config)
         # Override tracing if disable_tracing was passed
         self.tracing_enabled = False if self._disable_tracing_override else config_tracing_enabled
-        self.tracing_agents = self.tracing_config.get("agents", ["socwatch", "ptat"]) if isinstance(self.tracing_config, dict) else ["socwatch", "ptat"]
-        self.trace_output_dir = self.tracing_config.get("output_dir", DEFAULT_TRACE_OUTPUT_DIR) if isinstance(self.tracing_config, dict) else DEFAULT_TRACE_OUTPUT_DIR
+        # Use override agents if provided, otherwise use enabled agents from centralized config
+        if self._tracing_agents_override is not None:
+            self.tracing_agents = self._tracing_agents_override
+        else:
+            # Get enabled agents from centralized tracing config
+            self.tracing_agents = list(_get_tracing_agents().keys())
+        # Always use centralized output directory (game configs no longer override this)
+        self.trace_output_dir = _get_default_trace_output_dir()
 
         # Track persistent processes (tracing agents, persistent hooks)
         self.persistent_processes: Dict[str, int] = {}  # {agent_name: pid}
@@ -121,6 +124,10 @@ class SimpleAutomation:
 
         if self._disable_tracing_override:
             logger.info("Tracing disabled via run configuration")
+        elif self._tracing_agents_override is not None:
+            logger.info(f"Tracing agents override: {self._tracing_agents_override}")
+        elif self.tracing_enabled:
+            logger.info(f"Tracing enabled with agents: {self.tracing_agents}")
 
         logger.info(f"SimpleAutomation initialized for {self.game_name}")
         if self.process_id:
@@ -199,31 +206,81 @@ class SimpleAutomation:
 
         logger.info(f"Starting tracing agents: {agents}")
 
+        # Kill any existing tracing processes to avoid conflicts
+        # (leftover processes from previous runs can cause 0KB output files)
+        tracing_agents = _get_tracing_agents()
+        for agent_name in agents:
+            if agent_name in tracing_agents:
+                agent_exe = os.path.basename(tracing_agents[agent_name].get("path", ""))
+                if agent_exe:
+                    try:
+                        logger.info(f"Killing any existing {agent_exe} processes...")
+                        self.network.execute_command(
+                            path="cmd.exe",
+                            args=["/c", "taskkill", "/F", "/IM", agent_exe],
+                            async_exec=False
+                        )
+                    except Exception as e:
+                        logger.debug(f"No existing {agent_exe} to kill (or error): {e}")
+
         # Create run-specific trace directory path on SUT
         trace_dir = f"{self.trace_output_dir}\\{self.run_id}"
 
+        # Create the trace directory on SUT first
+        try:
+            logger.info(f"Creating trace directory on SUT: {trace_dir}")
+            mkdir_result = self.network.execute_command(
+                path="cmd.exe",
+                args=["/c", "mkdir", trace_dir],
+                async_exec=False
+            )
+            if mkdir_result.get("status") == "error" and "already exists" not in str(mkdir_result.get("message", "")):
+                logger.warning(f"mkdir returned: {mkdir_result}")
+        except Exception as e:
+            logger.warning(f"Could not create trace directory (may already exist): {e}")
+
+        # Generate trace filename components
+        # Format: {sut_ip}_{date}_{trace_type}_{game_name}
+        sut_ip = self.network.sut_ip.replace(".", "-") if hasattr(self.network, 'sut_ip') else "unknown"
+        date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        game_slug = self.game_name.lower().replace(" ", "-").replace(":", "").replace("'", "")
+
         success = True
         for agent_name in agents:
-            if agent_name not in DEFAULT_TRACING_AGENTS:
+            if agent_name not in tracing_agents:
                 logger.warning(f"Unknown tracing agent: {agent_name}")
                 continue
 
-            agent_config = DEFAULT_TRACING_AGENTS[agent_name]
+            agent_config = tracing_agents[agent_name]
             path = config.get(f"{agent_name}_path", agent_config["path"])
-            args = list(agent_config.get("args", []))
+            args = list(agent_config.get("base_args", []))
 
-            # Add duration argument for PTAT
-            if not agent_config.get("runs_indefinitely") and agent_config.get("duration_arg"):
+            # Generate trace filename: {sut_ip}_{date}_{trace_type}_{game_name}
+            trace_filename = f"{sut_ip}_{date_str}_{agent_name}_{game_slug}"
+
+            # Add duration argument
+            if agent_config.get("duration_arg"):
                 duration_arg = agent_config["duration_arg"]
-                args.insert(0, f"{duration_arg}{duration}")
+                if duration_arg.endswith("="):
+                    # Equals-style: -t=120
+                    args.append(f"{duration_arg}{duration}")
+                else:
+                    # Space-separated: -t 120
+                    args.extend([duration_arg, str(duration)])
 
-            # Add output directory
-            if agent_name == "socwatch":
-                # SOCWatch: -r <output_dir>
-                args.extend(["-r", trace_dir])
-            elif agent_name == "ptat":
-                # PTAT: -logdir=<output_dir>
-                args.append(f"-logdir={trace_dir}")
+            # Add output filename/prefix (includes path for trace files)
+            if agent_config.get("output_arg"):
+                output_arg = agent_config["output_arg"]
+                # Use full path: trace_dir\trace_filename
+                output_path = f"{trace_dir}\\{trace_filename}"
+                if output_arg.endswith("="):
+                    # Equals-style: -m=filename
+                    args.append(f"{output_arg}{output_path}")
+                else:
+                    # Space-separated: -o filename
+                    args.extend([output_arg, output_path])
+
+            logger.info(f"Starting {agent_name}: {path} {' '.join(args)}")
 
             try:
                 result = self.network.execute_command(
@@ -235,13 +292,24 @@ class SimpleAutomation:
                 if result.get("status") == "started":
                     pid = result.get("pid")
                     self.persistent_processes[agent_name] = pid
-                    logger.info(f"Started {agent_name} with PID {pid}")
+                    logger.info(f"Started {agent_name} with PID {pid}, output: {trace_filename}")
+                    # Notify progress callback of successful tracing start
+                    if self.progress_callback and hasattr(self.progress_callback, 'on_tracing_started'):
+                        self.progress_callback.on_tracing_started(agent_name, pid, output_path)
                 else:
-                    logger.error(f"Failed to start {agent_name}: {result.get('message')}")
+                    error_msg = f"Failed to start {agent_name}: {result.get('message')}"
+                    logger.error(error_msg)
+                    # Notify progress callback of tracing error
+                    if self.progress_callback and hasattr(self.progress_callback, 'on_tracing_error'):
+                        self.progress_callback.on_tracing_error(agent_name, error_msg)
                     success = False
 
             except Exception as e:
-                logger.error(f"Error starting {agent_name}: {e}")
+                error_msg = f"Error starting {agent_name}: {e}"
+                logger.error(error_msg)
+                # Notify progress callback of tracing error
+                if self.progress_callback and hasattr(self.progress_callback, 'on_tracing_error'):
+                    self.progress_callback.on_tracing_error(agent_name, str(e))
                 success = False
 
         return success
@@ -249,6 +317,17 @@ class SimpleAutomation:
     def _stop_tracing(self) -> bool:
         """
         Stop all running tracing agents.
+
+        For agents with a duration_arg (like socwatch, ptat), we let them complete
+        naturally since they will exit on their own after the specified duration.
+        Terminating them early results in 0KB output files.
+
+        SOCWatch has two phases:
+        1. Data collection (runs for -t duration)
+        2. Post-processing (can take 10+ minutes for OS tracing with large ETL files)
+
+        We poll for the process to exit rather than using a fixed buffer time,
+        ensuring the CSV file is fully written before proceeding.
 
         Returns:
             True if all agents stopped successfully
@@ -258,8 +337,34 @@ class SimpleAutomation:
 
         logger.info("Stopping tracing agents...")
 
-        success = True
+        # Separate agents by whether they have a duration (will exit naturally)
+        agents_with_duration = []
+        agents_to_terminate = []
+        tracing_agents = _get_tracing_agents()
+
         for agent_name, pid in list(self.persistent_processes.items()):
+            # Check if this is a known tracing agent with duration support
+            agent_config = tracing_agents.get(agent_name, {})
+            if agent_config.get("duration_arg"):
+                agents_with_duration.append((agent_name, pid))
+            else:
+                agents_to_terminate.append((agent_name, pid))
+
+        success = True
+
+        # For agents with duration: let them complete naturally
+        # They were started with -t <duration> and will exit on their own
+        for agent_name, pid in agents_with_duration:
+            logger.info(f"Letting {agent_name} (PID {pid}) complete naturally (has duration, will exit on its own)")
+            del self.persistent_processes[agent_name]
+
+        # Wait for duration-based agents to finish by polling for process exit
+        # This handles SOCWatch's post-processing phase which can take 10+ minutes
+        if agents_with_duration:
+            self._wait_for_tracing_completion(agents_with_duration, tracing_agents)
+
+        # For agents without duration: terminate them
+        for agent_name, pid in agents_to_terminate:
             try:
                 result = self.network.terminate_process_by_pid(pid)
                 if result.get("terminated"):
@@ -273,6 +378,86 @@ class SimpleAutomation:
                 success = False
 
         return success
+
+    def _wait_for_tracing_completion(self, agents: list, tracing_agents: dict) -> None:
+        """
+        Wait for tracing agents to complete post-processing by polling for process exit.
+
+        SOCWatch writes the CSV file only at the END of post-processing, which can take
+        10+ minutes for OS tracing with large ETL files. We poll for the process to exit
+        rather than using a fixed buffer time.
+
+        Args:
+            agents: List of (agent_name, pid) tuples
+            tracing_agents: Dict of tracing agent configurations
+        """
+        # Configuration for polling
+        poll_interval = 15  # Check every 15 seconds
+        max_wait_time = 30 * 60  # Maximum 30 minutes wait for post-processing
+        min_wait_time = _get_post_trace_buffer()  # Minimum wait from config
+
+        # Get process names for polling
+        agent_processes = {}
+        for agent_name, pid in agents:
+            agent_config = tracing_agents.get(agent_name, {})
+            agent_path = agent_config.get("path", "")
+            # Extract executable name from path
+            process_name = os.path.basename(agent_path) if agent_path else f"{agent_name}.exe"
+            agent_processes[agent_name] = process_name
+
+        if not agent_processes:
+            logger.info(f"No tracing processes to wait for, sleeping {min_wait_time}s...")
+            time.sleep(min_wait_time)
+            return
+
+        logger.info(f"Waiting for tracing agents to complete post-processing (max {max_wait_time//60} min)...")
+        logger.info(f"Monitoring processes: {list(agent_processes.values())}")
+
+        start_time = time.time()
+        elapsed = 0
+        all_completed = False
+
+        # Wait at least the minimum buffer time before starting to poll
+        if min_wait_time > 0:
+            logger.info(f"Initial wait of {min_wait_time}s before polling...")
+            time.sleep(min_wait_time)
+            elapsed = time.time() - start_time
+
+        while elapsed < max_wait_time:
+            # Check if all agent processes have exited
+            all_completed = True
+            for agent_name, process_name in agent_processes.items():
+                try:
+                    is_running = self.network.check_process(process_name)
+                    if is_running:
+                        all_completed = False
+                        logger.debug(f"{agent_name} ({process_name}) still running...")
+                    else:
+                        logger.info(f"{agent_name} ({process_name}) has completed")
+                except Exception as e:
+                    logger.warning(f"Error checking {agent_name} process: {e}")
+                    # Assume still running on error
+                    all_completed = False
+
+            if all_completed:
+                logger.info(f"All tracing agents completed post-processing in {int(elapsed)}s")
+                break
+
+            # Log progress every minute
+            if int(elapsed) % 60 == 0 and elapsed > 0:
+                remaining = max_wait_time - elapsed
+                logger.info(f"Still waiting for tracing post-processing... ({int(elapsed)}s elapsed, {int(remaining)}s remaining)")
+
+            time.sleep(poll_interval)
+            elapsed = time.time() - start_time
+
+        if not all_completed:
+            logger.warning(f"Tracing post-processing timed out after {max_wait_time//60} minutes")
+            logger.warning("Some trace files may be incomplete. Consider increasing max_wait_time or using lighter tracing features.")
+        else:
+            # Give a small buffer for file system sync
+            logger.info("Waiting 5s for file system sync...")
+            time.sleep(5)
 
     def _is_benchmark_step(self, action_config: Dict, step: Dict) -> bool:
         """
@@ -402,8 +587,9 @@ class SimpleAutomation:
         """
         # persistent_processes contains both tracing agents and hooks
         # _stop_tracing handles tracing agents, this handles hooks
+        tracing_agents = _get_tracing_agents()
         hooks_to_stop = [name for name in self.persistent_processes.keys()
-                        if name.startswith("hook_") or name not in DEFAULT_TRACING_AGENTS]
+                        if name.startswith("hook_") or name not in tracing_agents]
 
         if not hooks_to_stop:
             return True
@@ -646,7 +832,7 @@ class SimpleAutomation:
                 retry_suffix = f"_retry{retries}" if retries > 0 else ""
                 screenshot_path = f"{self.run_dir}/screenshots/screenshot_{current_step}{retry_suffix}.png"
                 try:
-                    self.screenshot_mgr.capture(screenshot_path)
+                    self.screenshot_mgr.capture(screenshot_path, process_name=self.process_id)
                 except Exception as e:
                     logger.error(f"Failed to capture screenshot: {str(e)}")
                     # Handle optional step failure - skip instead of failing automation
@@ -1362,7 +1548,7 @@ class SimpleAutomation:
         try:
             # Capture current screenshot for optional step checking
             optional_screenshot = f"{self.run_dir}/screenshots/optional_check.png"
-            self.screenshot_mgr.capture(optional_screenshot)
+            self.screenshot_mgr.capture(optional_screenshot, process_name=self.process_id)
             optional_boxes = self.vision_model.detect_ui_elements(optional_screenshot)
             
             # Check each optional step
@@ -1467,7 +1653,7 @@ class SimpleAutomation:
         retry_suffix = f"_retry{retries}" if retries > 0 else ""
         verify_path = f"{self.run_dir}/screenshots/verify_{step_num}{retry_suffix}.png"
         try:
-            self.screenshot_mgr.capture(verify_path)
+            self.screenshot_mgr.capture(verify_path, process_name=self.process_id)
             verify_boxes = self.vision_model.detect_ui_elements(verify_path)
 
             if self.annotator:

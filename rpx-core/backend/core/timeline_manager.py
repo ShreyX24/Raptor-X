@@ -404,14 +404,30 @@ class TimelineManager:
                 if event.status == TimelineEventStatus.FAILED:
                     self._notify(event)
 
-    def iteration_started(self, iteration: int, total: int):
-        """Log iteration started"""
+    def iteration_started(self, iteration: int, total: int, iteration_type: str = "performance"):
+        """Log iteration started
+
+        Args:
+            iteration: Current iteration number (1-indexed)
+            total: Total number of iterations
+            iteration_type: Type of iteration - "performance", "tracing-ptat", "tracing-socwatch"
+        """
+        # Format message based on iteration type
+        if iteration_type == "performance":
+            type_label = "Performance"
+        elif iteration_type.startswith("tracing-"):
+            agent = iteration_type.replace("tracing-", "").upper()
+            type_label = f"Tracing ({agent})"
+        else:
+            type_label = iteration_type.capitalize()
+
         return self.add_event(
             f"iteration_{iteration}",
             TimelineEventType.ITERATION_STARTED,
-            f"Starting iteration {iteration}/{total}",
+            f"Starting iteration {iteration}/{total} - {type_label}",
             status=TimelineEventStatus.IN_PROGRESS,
-            group="iteration"
+            group="iteration",
+            metadata={"iteration_type": iteration_type}
         )
 
     def iteration_completed(self, iteration: int, success: bool):

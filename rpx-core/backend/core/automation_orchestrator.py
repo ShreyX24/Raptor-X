@@ -196,6 +196,16 @@ class StepProgressCallback:
             }
         })
 
+    def on_tracing_started(self, agent_name: str, pid: int, output_path: str):
+        """Called when a tracing agent starts successfully"""
+        if self.timeline:
+            self.timeline.info(f"Tracing agent {agent_name.upper()} started (PID: {pid})")
+
+    def on_tracing_error(self, agent_name: str, error_message: str):
+        """Called when a tracing agent fails to start"""
+        if self.timeline:
+            self.timeline.error(f"Tracing agent {agent_name.upper()} failed: {error_message}")
+
 
 class AutomationOrchestrator:
     """Orchestrates automation execution using the existing engine from modules/"""
@@ -342,17 +352,71 @@ class AutomationOrchestrator:
                 return False, None, f"SUT {run.sut_ip} not found"
 
             # Execute multiple iterations
+            # Check if game has tracing enabled in YAML config
+            game_tracing_enabled = False
+            game_tracing_agents = []
+            try:
+                with open(game_config.yaml_path, 'r') as f:
+                    yaml_config = yaml.safe_load(f)
+                    tracing_config = yaml_config.get("metadata", {}).get("tracing", {})
+                    if isinstance(tracing_config, dict):
+                        game_tracing_enabled = tracing_config.get("enabled", False)
+                        game_tracing_agents = tracing_config.get("agents", ["socwatch", "ptat"])
+                    elif tracing_config:
+                        game_tracing_enabled = bool(tracing_config)
+                        game_tracing_agents = ["socwatch", "ptat"]
+            except Exception as e:
+                logger.warning(f"Could not read tracing config from YAML: {e}")
+
+            # Override with run-specific tracing agents if provided
+            if run.tracing_agents is not None:
+                game_tracing_agents = run.tracing_agents
+                game_tracing_enabled = len(run.tracing_agents) > 0
+                logger.info(f"Using run-specific tracing agents: {run.tracing_agents}")
+
+            # Determine iteration structure based on tracing settings
+            # If tracing enabled AND not disabled by user:
+            #   - First N iterations: pure performance (no tracing)
+            #   - Then 1 iteration per tracing agent (PTAT, socwatch)
+            # This ensures pure performance metrics without tracing overhead
+            performance_iterations = run.iterations
+            tracing_iterations = []  # List of (agent_name, agents_list) tuples
+
+            if game_tracing_enabled and not run.disable_tracing and game_tracing_agents:
+                # Add dedicated tracing iterations for each agent
+                for agent in game_tracing_agents:
+                    tracing_iterations.append((agent, [agent]))
+                logger.info(f"Tracing pattern: {performance_iterations} performance iterations + {len(tracing_iterations)} tracing iterations ({[t[0] for t in tracing_iterations]})")
+                if timeline:
+                    timeline.info(f"Run pattern: {performance_iterations} performance + {len(tracing_iterations)} tracing iterations")
+
+            total_runs = performance_iterations + len(tracing_iterations)
             successful_runs = 0
-            total_runs = run.iterations
             error_logs = []
 
             # Run-level state for resolution (only change once, restore at end)
             run_resolution_changed = False
             run_original_resolution = None  # Will store (width, height) from first iteration
 
-            for iteration in range(run.iterations):
-                logger.info(f"Starting iteration {iteration + 1}/{run.iterations} for run {run.run_id}")
-                timeline.iteration_started(iteration + 1, run.iterations)
+            for iteration in range(total_runs):
+                # Determine iteration type and tracing config
+                if iteration < performance_iterations:
+                    # Performance iteration - no tracing
+                    iteration_type = "performance"
+                    iter_disable_tracing = True
+                    iter_tracing_agents = None
+                    iteration_label = f"Performance {iteration + 1}/{performance_iterations}"
+                else:
+                    # Tracing iteration
+                    tracing_idx = iteration - performance_iterations
+                    agent_name, agents_list = tracing_iterations[tracing_idx]
+                    iteration_type = f"tracing-{agent_name}"
+                    iter_disable_tracing = False
+                    iter_tracing_agents = agents_list
+                    iteration_label = f"Tracing ({agent_name.upper()})"
+
+                logger.info(f"Starting iteration {iteration + 1}/{total_runs} [{iteration_label}] for run {run.run_id}")
+                timeline.iteration_started(iteration + 1, total_runs, iteration_type=iteration_type)
                 
                 # Check if run was stopped
                 if run.status != RunStatus.RUNNING:
@@ -362,9 +426,13 @@ class AutomationOrchestrator:
                 try:
                     # Execute single iteration (pass timeline for detailed events)
                     # Pass run-level resolution state to avoid changing per iteration
+                    # Pass tracing config based on iteration type
                     iteration_success, iter_original_res, iter_res_changed = self._execute_single_iteration(
                         run, game_config, device, iteration + 1, timeline,
-                        skip_resolution_change=run_resolution_changed
+                        skip_resolution_change=run_resolution_changed,
+                        disable_tracing=iter_disable_tracing,
+                        tracing_agents_override=iter_tracing_agents,
+                        iteration_type=iteration_type
                     )
                     # Store original resolution and state from first iteration
                     if iteration == 0 and iter_res_changed:
@@ -403,6 +471,16 @@ class AutomationOrchestrator:
                     logger.error(error_msg, exc_info=True)
                     timeline.error(error_msg, str(e))
                     timeline.iteration_completed(iteration + 1, success=False)
+
+                # Cooldown between iterations (if configured and not last iteration)
+                if run.cooldown_seconds > 0 and iteration < total_runs - 1:
+                    # Check if run was stopped during iteration
+                    if run.status == RunStatus.RUNNING:
+                        cooldown_mins = run.cooldown_seconds / 60
+                        logger.info(f"Cooldown: waiting {run.cooldown_seconds}s ({cooldown_mins:.1f}min) before next iteration...")
+                        timeline.info(f"Cooldown: {run.cooldown_seconds}s before next iteration", metadata={"cooldown_seconds": run.cooldown_seconds, "countdown_total": run.cooldown_seconds})
+                        time.sleep(run.cooldown_seconds)
+                        logger.info("Cooldown complete, continuing to next iteration")
 
             # Check if run was cancelled by user
             was_cancelled = run.status == RunStatus.STOPPED
@@ -454,6 +532,51 @@ class AutomationOrchestrator:
                 else:
                     timeline.run_failed(f"All {total_runs} iterations failed")
 
+            # Pull trace files from SUT if tracing was enabled
+            if game_tracing_enabled and not run.disable_tracing and len(tracing_iterations) > 0:
+                try:
+                    from .trace_puller import pull_run_traces
+
+                    # Get trace output directory from YAML config
+                    trace_output_dir = tracing_config.get("output_dir", r"C:\Traces")
+
+                    # Get SSH settings from config
+                    ssh_config = tracing_config.get("ssh", {})
+                    ssh_user = ssh_config.get("user") or None
+                    ssh_timeout = ssh_config.get("timeout", 60)
+                    max_retries = ssh_config.get("max_retries", 3)
+
+                    # Get run storage directory
+                    run_storage_dir = self._get_run_directory(run)
+
+                    logger.info(f"Pulling trace files from SUT {device.ip} (timeout={ssh_timeout}s, retries={max_retries})...")
+                    timeline.info("Pulling trace files from SUT...")
+
+                    pull_results = pull_run_traces(
+                        sut_ip=device.ip,
+                        run_id=run.run_id,
+                        game_name=run.game_name,
+                        trace_output_dir=trace_output_dir,
+                        local_storage_dir=run_storage_dir,
+                        trace_agents=[t[0] for t in tracing_iterations],  # Only pull agents that were used
+                        ssh_user=ssh_user,
+                        ssh_timeout=ssh_timeout,
+                        max_retries=max_retries
+                    )
+
+                    if pull_results.get("success"):
+                        total_files = pull_results.get("total_files", 0)
+                        logger.info(f"Successfully pulled {total_files} trace files")
+                        timeline.info(f"Pulled {total_files} trace files from SUT")
+                    else:
+                        error_msg = pull_results.get("error", "Unknown error")
+                        logger.warning(f"Failed to pull trace files: {error_msg}")
+                        timeline.warning(f"Could not pull trace files: {error_msg}")
+
+                except Exception as trace_err:
+                    logger.warning(f"Error pulling trace files: {trace_err}")
+                    timeline.warning(f"Error pulling traces: {trace_err}")
+
             return overall_success, results, None
 
         except Exception as e:
@@ -481,8 +604,19 @@ class AutomationOrchestrator:
                 account_pool.release_account_pair(run.sut_ip)
                 logger.info(f"Released Steam account pair for SUT {run.sut_ip}")
 
-    def _execute_single_iteration(self, run: AutomationRun, game_config, device, iteration_num: int, timeline: TimelineManager = None, skip_resolution_change: bool = False) -> tuple:
+    def _execute_single_iteration(self, run: AutomationRun, game_config, device, iteration_num: int, timeline: TimelineManager = None, skip_resolution_change: bool = False, disable_tracing: bool = False, tracing_agents_override: list = None, iteration_type: str = "performance") -> tuple:
         """Execute a single automation iteration
+
+        Args:
+            run: The automation run object
+            game_config: Game configuration
+            device: SUT device
+            iteration_num: Current iteration number (1-indexed)
+            timeline: TimelineManager for events
+            skip_resolution_change: If True, skip resolution change (already done in previous iteration)
+            disable_tracing: If True, disable all tracing for this iteration
+            tracing_agents_override: List of tracing agents to use (e.g., ["ptat"] or ["socwatch"])
+            iteration_type: Type of iteration ("performance", "tracing-ptat", "tracing-socwatch")
 
         Returns:
             tuple: (success: bool, original_resolution: tuple or None, resolution_changed: bool)
@@ -503,7 +637,7 @@ class AutomationOrchestrator:
                 self.storage.start_iteration(run.run_id, iteration_num)
 
             # Create run directory (use storage path if available)
-            run_dir = self._create_run_directory(run, iteration_num)
+            run_dir = self._create_run_directory(run, iteration_num, iteration_type)
 
             # Setup blackbox logging for this run
             self._setup_blackbox_logging(run_dir, game_config.name, run.run_id, iteration_num)
@@ -727,6 +861,7 @@ class AutomationOrchestrator:
             )
 
             # Initialize SimpleAutomation
+            # Use iteration-level tracing params (for performance vs tracing iterations)
             automation = SimpleAutomation(
                 config_path=game_config.yaml_path,
                 network=network,
@@ -735,9 +870,12 @@ class AutomationOrchestrator:
                 stop_event=stop_event,
                 run_dir=run_dir,
                 progress_callback=progress_callback,
-                disable_tracing=getattr(run, 'disable_tracing', False),
+                disable_tracing=disable_tracing,  # Per-iteration tracing control
                 run_id=run.run_id,
+                tracing_agents_override=tracing_agents_override,  # Per-iteration agent selection
             )
+            tracing_status = "disabled" if disable_tracing else f"enabled with {tracing_agents_override or 'all agents'}"
+            logger.info(f"Iteration {iteration_num} type: {iteration_type}, tracing: {tracing_status}")
 
             # ===== Pre-launch Game Kill + Preset Sync (Parallel) =====
             # Kill any running game and apply preset simultaneously for efficiency
@@ -929,13 +1067,14 @@ class AutomationOrchestrator:
                     use_direct_exe = launch_method == 'exe'
                     logger.info(f"Launch params - process_id: {process_id}, startup_wait: {startup_wait}s, args: {launch_args}, direct_exe: {use_direct_exe}")
                     game_launcher.launch(game_path, process_id=process_id, startup_wait=startup_wait, launch_args=launch_args, use_direct_exe=use_direct_exe)
-                    logger.info(f"Game launched successfully: {game_path}")
+                    logger.info(f"Game process detected: {game_path}")
                     if timeline:
-                        # Mark process as detected (replaces process wait event)
+                        # Mark process as detected (game is starting but not ready yet)
                         timeline.game_process_detected(
                             process_name=game_config.process_id or game_config.name
                         )
-                        timeline.game_launched(game_config.name)
+                        # NOTE: game_launched is emitted AFTER init_wait, not here
+                        # This ensures "Game Launched" only shows when game is actually ready
 
                     # NOTE: Steam dialog check is NOT run after successful launch.
                     # If the game process was detected within 60s, we assume no blocking
@@ -1013,7 +1152,7 @@ class AutomationOrchestrator:
                                                 timeline.game_process_detected(
                                                     process_name=game_config.process_id or game_config.name
                                                 )
-                                                timeline.game_launched(game_config.name)
+                                                # NOTE: game_launched is emitted AFTER init_wait, not here
                                             break
                                 except Exception as poll_err:
                                     logger.warning(f"Error polling for process: {poll_err}")
@@ -1146,6 +1285,9 @@ class AutomationOrchestrator:
                 time.sleep(init_wait)
                 if timeline:
                     timeline.game_ready()
+                    # NOW the game is actually launched and ready for input
+                    timeline.game_launched(game_config.name)
+                logger.info(f"Game fully initialized and ready: {game_config.name}")
 
             # Check if run was stopped during initialization
             if run.status != RunStatus.RUNNING:
@@ -1254,13 +1396,21 @@ class AutomationOrchestrator:
                 logger.warning(f"Error during cleanup: {cleanup_error}")
                 pass
     
-    def _create_run_directory(self, run: AutomationRun, iteration_num: int) -> str:
-        """Create directory structure for run outputs"""
+    def _create_run_directory(self, run: AutomationRun, iteration_num: int, iteration_type: str = "performance") -> str:
+        """Create directory structure for run outputs
+
+        Args:
+            run: The automation run
+            iteration_num: Iteration number (1-indexed)
+            iteration_type: Type of iteration - "performance", "tracing-socwatch", "tracing-ptat", etc.
+        """
         # Use storage path if available (new persistent structure)
         if self.storage:
-            iter_dir = self.storage.get_iteration_dir(run.run_id, iteration_num)
-            if iter_dir and iter_dir.exists():
-                # Create screenshots subdirectory if not exists
+            iter_dir = self.storage.get_iteration_dir(run.run_id, iteration_num, iteration_type)
+            if iter_dir:
+                # Create the iteration directory if it doesn't exist
+                iter_dir.mkdir(parents=True, exist_ok=True)
+                # Create screenshots subdirectory
                 (iter_dir / "screenshots").mkdir(exist_ok=True)
                 logger.info(f"Using storage iteration directory: {iter_dir}")
                 return str(iter_dir)
@@ -1807,7 +1957,14 @@ class AutomationOrchestrator:
         return None
 
     def _get_run_directory(self, run: AutomationRun) -> str:
-        """Get the base run directory path"""
+        """Get the base run directory path from storage manager"""
+        # Use storage manager if available (proper logs/runs/ structure)
+        if self.storage:
+            run_dir = self.storage.get_run_dir(run.run_id)
+            if run_dir and run_dir.exists():
+                return str(run_dir)
+
+        # Fallback to old structure (should rarely be used)
         return f"logs/{run.game_name.replace(' ', '_')}/run_{run.run_id}"
 
     def _sync_preset_to_sut(self, game_config, device, run_quality: str = None, run_resolution: str = None) -> bool:

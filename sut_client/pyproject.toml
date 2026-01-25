@@ -38,6 +38,8 @@ dependencies = [
     "wmi>=1.5.1",
     # Window detection
     "pywinauto>=0.6.8",
+    # Screenshot capture - mss uses DXGI for better game capture
+    "mss>=9.0.0",
 ]
 
 [project.optional-dependencies]

@@ -1472,7 +1472,9 @@ class WorkflowBuilderGUI:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             screenshot_path = f"workflow_builder_temp/screenshot_{timestamp}.png"
 
-            self.screenshot_mgr.capture(screenshot_path)
+            # Focus game window before capture if process_id is set
+            process_id = self.process_id.get() or None
+            self.screenshot_mgr.capture(screenshot_path, process_name=process_id)
             self.current_screenshot = screenshot_path
 
             # Add to history (parsed will be added later)
@@ -1953,12 +1955,13 @@ class WorkflowBuilderGUI:
                         self.status_text.set(f"Step {i + 1}: Capturing screenshot...")
                         self.root.update()
                         
-                        # Capture screenshot
+                        # Capture screenshot (focus game window first)
                         import os
                         os.makedirs("workflow_builder_temp", exist_ok=True)
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                         screenshot_path = f"workflow_builder_temp/flow_step_{i+1}_{timestamp}.png"
-                        self.screenshot_mgr.capture(screenshot_path)
+                        process_id = self.process_id.get() or None
+                        self.screenshot_mgr.capture(screenshot_path, process_name=process_id)
                         
                         if self.flow_stop_requested:
                             stopped = True

@@ -24,33 +24,35 @@ class ScreenshotManager:
         self.network_manager = network_manager
         logger.info("ScreenshotManager initialized")
     
-    def capture(self, output_path: str) -> bool:
+    def capture(self, output_path: str, process_name: str = None) -> bool:
         """
         Capture a screenshot from the SUT and save it to the specified path.
-        
+
         Args:
             output_path: Path where the screenshot should be saved
-        
+            process_name: Optional process name to focus before capture (e.g., 'RDR2.exe').
+                         Ensures the game window is in foreground for valid screenshots.
+
         Returns:
             True if the screenshot was successfully captured and saved
-        
+
         Raises:
             IOError: If there's an error saving the screenshot
         """
         try:
             # Ensure the directory exists
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            
-            # Get screenshot from the SUT
-            screenshot_data = self.network_manager.get_screenshot()
-            
+
+            # Get screenshot from the SUT (with optional window focus)
+            screenshot_data = self.network_manager.get_screenshot(process_name=process_name)
+
             # Save the screenshot
             with open(output_path, 'wb') as f:
                 f.write(screenshot_data)
-            
+
             logger.info(f"Screenshot saved to {output_path}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to capture or save screenshot: {str(e)}")
             raise IOError(f"Screenshot capture failed: {str(e)}")

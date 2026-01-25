@@ -1163,7 +1163,7 @@ function MetadataPanel({
                   ...metadata,
                   tracing: { ...metadata.tracing!, output_dir: e.target.value || undefined }
                 })}
-                placeholder="C:\Documents\traces\{run_id}"
+                placeholder="C:\Traces\{run_id}"
                 className={inputClass}
               />
             </div>

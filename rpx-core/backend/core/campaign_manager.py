@@ -190,6 +190,9 @@ class CampaignManager:
                 return
 
             restored_count = 0
+            skipped_count = 0
+            stale_threshold_hours = 24  # Campaigns older than 24 hours are considered stale
+
             for campaign_id, campaign_data in campaigns_data.items():
                 try:
                     # Parse created_at
@@ -200,6 +203,25 @@ class CampaignManager:
                         except Exception:
                             pass
 
+                    # Skip stale campaigns (older than threshold)
+                    age_hours = (datetime.now() - created_at).total_seconds() / 3600
+                    if age_hours > stale_threshold_hours:
+                        logger.info(f"Skipping stale campaign {campaign_id[:8]}: {campaign_data.get('name', 'Unknown')} (age: {age_hours:.1f}h)")
+                        skipped_count += 1
+                        continue
+
+                    # Skip campaigns that are already completed/stopped/failed
+                    status_str = campaign_data.get('status', 'queued')
+                    if status_str in ('completed', 'stopped', 'failed', 'partially_completed'):
+                        logger.info(f"Skipping {status_str} campaign {campaign_id[:8]}: {campaign_data.get('name', 'Unknown')}")
+                        skipped_count += 1
+                        continue
+
+                    # Mark "running" campaigns as "stopped" since they can't still be running after restart
+                    if status_str == 'running':
+                        logger.warning(f"Campaign {campaign_id[:8]} was 'running' at shutdown - marking as 'stopped'")
+                        status_str = 'stopped'
+
                     # Recreate the Campaign object
                     campaign = Campaign(
                         campaign_id=campaign_data['campaign_id'],
@@ -208,7 +230,7 @@ class CampaignManager:
                         sut_device_id=campaign_data.get('sut_device_id', ''),
                         games=campaign_data['games'],
                         iterations_per_game=campaign_data.get('iterations_per_game', 1),
-                        status=CampaignStatus(campaign_data.get('status', 'queued')),
+                        status=CampaignStatus(status_str),
                         run_ids=campaign_data.get('run_ids', []),
                         quality=campaign_data.get('quality'),
                         resolution=campaign_data.get('resolution'),
@@ -238,9 +260,11 @@ class CampaignManager:
                 except Exception as e:
                     logger.error(f"Failed to restore campaign {campaign_id}: {e}")
 
-            logger.info(f"Restored {restored_count} active campaigns from disk")
+            logger.info(f"Restored {restored_count} active campaigns from disk (skipped {skipped_count} stale/completed)")
 
-            # Don't clear the file - we'll update it as state changes
+            # Save the cleaned-up state (removes stale campaigns from file)
+            if skipped_count > 0:
+                self._save_active_campaigns()
 
         except Exception as e:
             logger.error(f"Failed to load active campaigns from storage: {e}")
@@ -318,7 +342,9 @@ class CampaignManager:
         quality: Optional[str] = None,
         resolution: Optional[str] = None,
         skip_steam_login: bool = False,
-        disable_tracing: bool = False
+        disable_tracing: bool = False,
+        cooldown_seconds: int = 120,
+        tracing_agents: Optional[List[str]] = None
     ) -> Campaign:
         """
         Create a new campaign and queue individual runs for each game.
@@ -332,6 +358,8 @@ class CampaignManager:
             quality: Optional quality preset ('low', 'medium', 'high', 'ultra')
             resolution: Optional resolution preset ('720p', '1080p', '1440p', '2160p')
             disable_tracing: If True, disable SOCWatch/PTAT tracing for all runs
+            cooldown_seconds: Cooldown between iterations (default 120s, 0 to disable)
+            tracing_agents: Specific tracing agents to use (e.g., ['socwatch', 'ptat'])
 
         Returns:
             Created Campaign object
@@ -379,7 +407,9 @@ class CampaignManager:
                     quality=quality,
                     resolution=resolution,
                     skip_steam_login=skip_steam_login,
-                    disable_tracing=disable_tracing
+                    disable_tracing=disable_tracing,
+                    cooldown_seconds=cooldown_seconds,
+                    tracing_agents=tracing_agents
                 )
                 run_ids.append(run_id)
                 logger.info(f"Queued run {run_id} for game '{game}' in campaign {campaign_id[:8]} (preset: {quality}@{resolution})")

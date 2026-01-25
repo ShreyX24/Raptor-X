@@ -171,7 +171,9 @@ export async function startRun(
   quality?: string,   // 'low' | 'medium' | 'high' | 'ultra'
   resolution?: string, // '720p' | '1080p' | '1440p' | '2160p'
   skipSteamLogin: boolean = false,  // If true, skip Steam account management (user pre-logged in)
-  disableTracing: boolean = false   // If true, disable SOCWatch/PTAT tracing for this run
+  disableTracing: boolean = false,  // If true, disable SOCWatch/PTAT tracing for this run
+  cooldownSeconds: number = 120,    // Cooldown between iterations in seconds (0 to disable)
+  tracingAgents?: string[]          // Specific tracing agents to use (e.g., ['socwatch', 'ptat'])
 ): Promise<{ status: string; run_id: string; message: string }> {
   return fetchJson<{ status: string; run_id: string; message: string }>(`${API_BASE}/runs`, {
     method: 'POST',
@@ -183,6 +185,8 @@ export async function startRun(
       resolution,
       skip_steam_login: skipSteamLogin,
       disable_tracing: disableTracing,
+      cooldown_seconds: cooldownSeconds,
+      tracing_agents: tracingAgents,
     }),
   });
 }
@@ -467,7 +471,9 @@ export async function createCampaign(
   quality?: string,    // 'low' | 'medium' | 'high' | 'ultra'
   resolution?: string, // '720p' | '1080p' | '1440p' | '2160p'
   skipSteamLogin: boolean = false,  // If true, skip Steam account management (user pre-logged in)
-  disableTracing: boolean = false   // If true, disable SOCWatch/PTAT tracing for this run
+  disableTracing: boolean = false,  // If true, disable SOCWatch/PTAT tracing for this run
+  cooldownSeconds: number = 120,    // Cooldown between iterations/runs in seconds (0 to disable)
+  tracingAgents?: string[]          // Specific tracing agents to use (e.g., ['socwatch', 'ptat'])
 ): Promise<CreateCampaignResponse> {
   return fetchJson<CreateCampaignResponse>(`${API_BASE}/campaigns`, {
     method: 'POST',
@@ -480,6 +486,8 @@ export async function createCampaign(
       resolution,
       skip_steam_login: skipSteamLogin,
       disable_tracing: disableTracing,
+      cooldown_seconds: cooldownSeconds,
+      tracing_agents: tracingAgents,
     }),
   });
 }

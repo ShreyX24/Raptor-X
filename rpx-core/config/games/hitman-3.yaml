@@ -20,6 +20,9 @@ metadata:
   ocr_config:  # Game-level OCR defaults (Hitman 3 has stylized fonts - try EasyOCR)
     use_paddleocr: false  # EasyOCR handles stylized fonts better
     text_threshold: 0.6   # Lower threshold for stylized text
+  tracing:
+    enabled: true
+    agents: ["socwatch", "ptat"]
 steps:
   1:
     description: Click OPTIONS button in game menu

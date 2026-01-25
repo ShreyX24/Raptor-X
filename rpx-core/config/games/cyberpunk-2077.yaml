@@ -16,6 +16,9 @@ metadata:
   preset: High
   engine: Red Engine 4.0
   graphics_api: DirectX 11
+  tracing:
+    enabled: true
+    agents: ["socwatch", "ptat"]
 steps:
   1:
     description: PRESS SPACE TO CONTINUE

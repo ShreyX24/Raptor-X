@@ -20,6 +20,9 @@ metadata:
   # or OneDrive: %USERPROFILE%\OneDrive\Documents\My Games\F1 24\benchmark\Benchmark_*.xml
   results_folder: "My Games\\F1 24\\benchmark"
   results_pattern: "Benchmark_*.xml"
+  tracing:
+    enabled: true
+    agents: ["socwatch", "ptat"]
 
 steps:
   1:

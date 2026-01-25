@@ -13,6 +13,9 @@ metadata:
   resolution: 1920x1080
   preset: High
   graphics_api: Vulkan
+  tracing:
+    enabled: true
+    agents: ["socwatch", "ptat"]
 steps:
   1:
     description: Press Z to open Settings from main menu

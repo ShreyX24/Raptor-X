@@ -10,6 +10,9 @@ metadata:
   startup_wait: 90  # HZD has long initial load with launcher
   resolution: "1920x1080"
   preset: "High"
+  tracing:
+    enabled: true
+    agents: ["socwatch", "ptat"]
 
 # Simple step-by-step workflow
 steps:

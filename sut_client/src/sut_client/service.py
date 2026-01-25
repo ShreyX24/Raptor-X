@@ -20,7 +20,14 @@ from datetime import datetime
 
 from flask import Flask, request, jsonify, send_file
 from waitress import serve as waitress_serve
-from PIL import ImageGrab
+from PIL import Image, ImageGrab
+
+# Try to import mss for better game screenshot capture (uses DXGI)
+try:
+    import mss
+    MSS_AVAILABLE = True
+except ImportError:
+    MSS_AVAILABLE = False
 
 from .config import get_settings
 from .backup import BackupService
@@ -1126,21 +1133,47 @@ def create_app() -> Flask:
             logger.error(f"Action error: {e}")
             return jsonify({"status": "error", "message": str(e)}), 500
 
-    @app.route('/screenshot', methods=['GET'])
+    @app.route('/screenshot', methods=['GET', 'POST'])
     def screenshot():
         """
         Take a screenshot and return as PNG image.
 
-        Query params:
+        Query params (GET) or JSON body (POST):
         - region: x,y,width,height (optional, full screen if not provided)
         - format: png|base64 (default: png)
+        - process_name: Focus this process before screenshot (optional, e.g., "RDR2.exe")
         """
         try:
-            region_str = request.args.get('region')
-            output_format = request.args.get('format', 'png')
+            # Get params from query string (GET) or JSON body (POST)
+            if request.method == 'POST' and request.is_json:
+                data = request.get_json()
+                region_str = data.get('region')
+                output_format = data.get('format', 'png')
+                process_name = data.get('process_name')
+            else:
+                region_str = request.args.get('region')
+                output_format = request.args.get('format', 'png')
+                process_name = request.args.get('process_name')
+
+            # Focus window before screenshot if process_name specified
+            if process_name:
+                try:
+                    from .system import find_process_by_name
+                    proc = find_process_by_name(process_name)
+                    if proc:
+                        logger.info(f"Focusing {process_name} (PID: {proc.pid}) before screenshot")
+                        ensure_window_foreground_v2(proc.pid, timeout=3, use_pywinauto=False)
+                        time.sleep(0.3)  # Brief delay for window to render
+                    else:
+                        logger.warning(f"Process {process_name} not found for focus")
+                except Exception as focus_err:
+                    logger.warning(f"Failed to focus {process_name}: {focus_err}")
 
             if region_str:
-                parts = [int(x) for x in region_str.split(',')]
+                if isinstance(region_str, str):
+                    parts = [int(x) for x in region_str.split(',')]
+                else:
+                    parts = region_str
                 if len(parts) == 4:
                     x, y, w, h = parts
                     region = (x, y, x + w, y + h)
@@ -1149,8 +1182,28 @@ def create_app() -> Flask:
             else:
                 region = None
 
-            # Capture screenshot
-            img = ImageGrab.grab(bbox=region)
+            # Capture screenshot using mss (DXGI) for better game capture, fallback to ImageGrab
+            img = None
+            if MSS_AVAILABLE:
+                try:
+                    with mss.mss() as sct:
+                        if region:
+                            monitor = {"left": region[0], "top": region[1],
+                                      "width": region[2] - region[0], "height": region[3] - region[1]}
+                        else:
+                            monitor = sct.monitors[1]  # Primary monitor
+                        sct_img = sct.grab(monitor)
+                        # Convert to PIL Image
+                        img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+                        logger.debug("Screenshot captured using mss (DXGI)")
+                except Exception as mss_err:
+                    logger.warning(f"mss capture failed, falling back to ImageGrab: {mss_err}")
+                    img = None
+
+            if img is None:
+                # Fallback to ImageGrab
+                img = ImageGrab.grab(bbox=region)
+                logger.debug("Screenshot captured using ImageGrab")
 
             if output_format == 'base64':
                 # Return as base64 JSON

@@ -118,6 +118,8 @@ class AutomationRun:
     resolution: Optional[str] = None  # '720p' | '1080p' | '1440p' | '2160p'
     skip_steam_login: bool = False  # If True, skip Steam account management (user pre-logged in)
     disable_tracing: bool = False  # If True, disable SOCWatch/PTAT tracing
+    cooldown_seconds: int = 120  # Cooldown between iterations in seconds (default 2 minutes, 0 to disable)
+    tracing_agents: Optional[List[str]] = None  # Specific tracing agents to use (e.g., ['socwatch', 'ptat'])
     # Runtime references (not serialized)
     stop_event: Optional[Any] = field(default=None, repr=False)  # threading.Event for cancellation
     timeline: Optional[Any] = field(default=None, repr=False)  # TimelineManager reference
@@ -162,6 +164,7 @@ class AutomationRun:
             'campaign_name': self.campaign_name,
             'quality': self.quality,
             'resolution': self.resolution,
+            'tracing_agents': self.tracing_agents,
         }
 
 
@@ -426,7 +429,8 @@ class RunManager:
     def queue_run(self, game_name: str, sut_ip: str, sut_device_id: str, iterations: int = 1,
                   campaign_id: Optional[str] = None, quality: Optional[str] = None,
                   resolution: Optional[str] = None, skip_steam_login: bool = False,
-                  disable_tracing: bool = False) -> str:
+                  disable_tracing: bool = False, cooldown_seconds: int = 120,
+                  tracing_agents: Optional[List[str]] = None) -> str:
         """Queue a new automation run
 
         Args:
@@ -439,6 +443,8 @@ class RunManager:
             resolution: Optional resolution preset ('720p', '1080p', '1440p', '2160p')
             skip_steam_login: If True, skip Steam account management (user pre-logged in manually)
             disable_tracing: If True, disable SOCWatch/PTAT tracing for this run
+            cooldown_seconds: Cooldown between iterations in seconds (default 120, 0 to disable)
+            tracing_agents: Specific tracing agents to use (e.g., ['socwatch', 'ptat'])
         """
         campaign_info = f" (campaign: {campaign_id[:8]}...)" if campaign_id else ""
         preset_info = f" (preset: {quality}@{resolution})" if quality and resolution else ""
@@ -463,7 +469,9 @@ class RunManager:
                 quality=quality,
                 resolution=resolution,
                 skip_steam_login=skip_steam_login,
-                disable_tracing=disable_tracing
+                disable_tracing=disable_tracing,
+                cooldown_seconds=cooldown_seconds,
+                tracing_agents=tracing_agents
             )
             run.progress.total_iterations = iterations
             logger.info(f"Created AutomationRun object for {run_id}")
@@ -966,6 +974,13 @@ class RunManager:
 
             # Collect service logs for correlation
             self._collect_run_logs(run)
+
+            # Cooldown between runs (for campaign runs, wait before next run)
+            if run.campaign_id and run.cooldown_seconds > 0:
+                cooldown_mins = run.cooldown_seconds / 60
+                logger.info(f"Campaign run cooldown: waiting {run.cooldown_seconds}s ({cooldown_mins:.1f}min) before next run...")
+                time.sleep(run.cooldown_seconds)
+                logger.info("Campaign run cooldown complete")
 
         except Exception as e:
             logger.error(f"Critical error executing run {run.run_id}: {e}", exc_info=True)

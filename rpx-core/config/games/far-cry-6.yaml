@@ -10,6 +10,9 @@ metadata:
   startup_wait: 180
   resolution: "1920x1080"
   preset: "High"
+  tracing:
+    enabled: true
+    agents: ["socwatch", "ptat"]
 
 steps:
   1:

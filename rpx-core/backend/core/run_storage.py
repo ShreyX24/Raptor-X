@@ -454,13 +454,47 @@ class RunStorageManager:
         manifest = self._run_cache.get(run_id)
         if manifest:
             return self.base_dir / manifest.folder_name
+
+        # Try to find run on disk if not in cache
+        # This handles cases where cache might be out of sync
+        try:
+            for manifest_path in self.base_dir.rglob("manifest.json"):
+                if manifest_path.name != "manifest.json":
+                    continue
+                try:
+                    with open(manifest_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    if data.get('run_id') == run_id:
+                        # Found it - load into cache and return
+                        loaded_manifest = RunManifest.from_dict(data)
+                        self._run_cache[run_id] = loaded_manifest
+                        logger.debug(f"Loaded run {run_id} from disk into cache")
+                        return manifest_path.parent
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.warning(f"Error searching for run {run_id} on disk: {e}")
+
         return None
 
-    def get_iteration_dir(self, run_id: str, iteration: int) -> Optional[Path]:
-        """Get the iteration directory path"""
+    def get_iteration_dir(self, run_id: str, iteration: int, iteration_type: str = "performance") -> Optional[Path]:
+        """Get the iteration directory path
+
+        Args:
+            run_id: Run ID
+            iteration: Iteration number (1-indexed)
+            iteration_type: Type of iteration - "performance", "tracing-socwatch", "tracing-ptat", etc.
+        """
         run_dir = self.get_run_dir(run_id)
         if run_dir:
-            return run_dir / f"perf-run-{iteration}"
+            # Determine folder name based on iteration type
+            if iteration_type.startswith("tracing-"):
+                # Tracing iterations: trace-run-{agent}
+                agent = iteration_type.replace("tracing-", "")
+                return run_dir / f"trace-run-{agent}"
+            else:
+                # Performance iterations: perf-run-{iteration}
+                return run_dir / f"perf-run-{iteration}"
         return None
 
     def start_iteration(self, run_id: str, iteration: int) -> bool:

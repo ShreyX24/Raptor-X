@@ -31,6 +31,8 @@ interface LastRunSettings {
   iterations: number;
   skipSteamLogin: boolean;
   disableTracing: boolean;  // If true, disable SOCWatch/PTAT tracing
+  tracingAgents?: string[];  // Selected tracing agents (default: all)
+  cooldownSeconds: number;  // Cooldown between iterations/runs (0 to disable)
   timestamp: number;  // When the run was started
 }
 
@@ -144,9 +146,14 @@ const STEAM_LOGIN_SECONDS = 180; // Steam login for first game (when not manual 
 function calculateEstimatedDuration(
   games: GameConfig[],
   iterations: number,
-  skipSteamLogin: boolean
+  skipSteamLogin: boolean,
+  tracingAgents: string[] = []
 ): number {
-  if (games.length === 0 || iterations <= 0) return 0;
+  // Total iterations = performance iterations + tracing iterations (1 per agent)
+  const tracingIterations = tracingAgents.length;
+  const totalIterations = iterations + tracingIterations;
+
+  if (games.length === 0 || totalIterations <= 0) return 0;
 
   let totalSeconds = 0;
 
@@ -159,8 +166,8 @@ function calculateEstimatedDuration(
     // Per-game duration: startup + benchmark + init + overhead
     const perGameDuration = startupWait + benchmarkDuration + initWait + OVERHEAD_PER_GAME_SECONDS;
 
-    // Multiply by iterations
-    totalSeconds += perGameDuration * iterations;
+    // Multiply by total iterations (performance + tracing)
+    totalSeconds += perGameDuration * totalIterations;
 
     // Add Steam login time for first game only (if not manual mode)
     if (index === 0 && !skipSteamLogin) {
@@ -227,6 +234,14 @@ export function QuickLaunchPanel({
   const [iterations, setIterations] = useState(1);
   const [skipSteamLogin, setSkipSteamLogin] = useState(false);  // Manual login mode
   const [disableTracing, setDisableTracing] = useState(false);  // Disable SOCWatch/PTAT tracing
+  const [tracingAgents, setTracingAgents] = useState<string[]>(['socwatch', 'ptat']);  // Selected tracing agents
+  const [cooldownSeconds, setCooldownSeconds] = useState(120);  // Cooldown between iterations/runs (0 to disable)
+
+  // Available tracing agents
+  const AVAILABLE_TRACING_AGENTS = [
+    { id: 'socwatch', label: 'SOCWatch', description: 'Intel power/thermal tracing' },
+    { id: 'ptat', label: 'PTAT', description: 'Platform thermal analysis' },
+  ];
 
   // Status
   const [launchState, setLaunchState] = useState<LaunchState>('idle');
@@ -456,6 +471,8 @@ export function QuickLaunchPanel({
         iterations,
         skipSteamLogin,
         disableTracing,
+        tracingAgents,
+        cooldownSeconds,
         timestamp: Date.now(),
       };
       localStorage.setItem(LAST_RUN_STORAGE_KEY, JSON.stringify(settings));
@@ -475,7 +492,9 @@ export function QuickLaunchPanel({
           selectedQuality || undefined,
           selectedResolution || undefined,
           skipSteamLogin,
-          disableTracing
+          tracingAgents.length === 0, // disableTracing if no agents selected
+          cooldownSeconds,
+          tracingAgents.length > 0 ? tracingAgents : undefined
         );
         // Set back to 'ready' so button stays enabled for another run
         // (game availability was just verified, no need to re-check)
@@ -490,7 +509,9 @@ export function QuickLaunchPanel({
           selectedQuality || undefined,
           selectedResolution || undefined,
           skipSteamLogin,
-          disableTracing
+          tracingAgents.length === 0, // disableTracing if no agents selected
+          cooldownSeconds,
+          tracingAgents.length > 0 ? tracingAgents : undefined
         );
         // Set back to 'ready' so button stays enabled for another run
         setLaunchState('ready');
@@ -529,6 +550,8 @@ export function QuickLaunchPanel({
     setIterations(lastRunSettings.iterations);
     setSkipSteamLogin(lastRunSettings.skipSteamLogin);
     setDisableTracing(lastRunSettings.disableTracing ?? false);
+    setTracingAgents(lastRunSettings.tracingAgents ?? ['socwatch', 'ptat']);
+    setCooldownSeconds(lastRunSettings.cooldownSeconds ?? 120);
   }, [lastRunSettings, devices, onSelectSut, onSelectGames]);
 
   // Check if last run can be loaded (SUT still exists and at least one game still exists)
@@ -556,8 +579,8 @@ export function QuickLaunchPanel({
 
   // Calculate estimated duration and ETA
   const estimatedDuration = useMemo(() =>
-    calculateEstimatedDuration(selectedGames, iterations, skipSteamLogin),
-    [selectedGames, iterations, skipSteamLogin]
+    calculateEstimatedDuration(selectedGames, iterations, skipSteamLogin, tracingAgents),
+    [selectedGames, iterations, skipSteamLogin, tracingAgents]
   );
 
   const formattedDuration = useMemo(() => formatDuration(estimatedDuration), [estimatedDuration]);
@@ -566,11 +589,13 @@ export function QuickLaunchPanel({
   // Determine if launch is possible
   const isReady = launchState === 'ready';
   const isLaunching = launchState === 'launching';
+  // Allow iterations=0 for tracing-only runs (when tracing agents selected)
+  const hasValidIterations = iterations > 0 || (iterations === 0 && tracingAgents.length > 0);
   const canLaunch = isReady &&
     selectedSut &&
     selectedGames.length > 0 &&
     (isCampaign || gameAvailable === true) &&
-    iterations > 0;
+    hasValidIterations;
 
   // Compact mode - horizontal layout with system info and preflight
   if (compact) {
@@ -641,16 +666,19 @@ export function QuickLaunchPanel({
             </>
           )}
 
-          {/* Iterations */}
+          {/* Iterations - allow 0 for tracing-only runs */}
           <div className="w-16 flex-shrink-0">
-            <div className="text-[10px] text-text-muted uppercase mb-1">Iterations</div>
+            <div className="text-[10px] text-text-muted uppercase mb-1">
+              {iterations === 0 ? 'Trace Only' : 'Iterations'}
+            </div>
             <input
               type="number"
-              min={1}
+              min={tracingAgents.length > 0 ? 0 : 1}
               max={100}
               value={iterations}
-              onChange={(e) => setIterations(Math.max(1, parseInt(e.target.value) || 1))}
+              onChange={(e) => setIterations(Math.max(tracingAgents.length > 0 ? 0 : 1, parseInt(e.target.value) || 0))}
               className="w-full px-2 py-1.5 text-sm bg-surface-elevated border border-border rounded text-center"
+              title={iterations === 0 ? 'Tracing-only run (no performance iterations)' : `${iterations} performance iteration(s) + tracing`}
             />
           </div>
 
@@ -677,27 +705,56 @@ export function QuickLaunchPanel({
             </label>
           </div>
 
-          {/* Disable Tracing toggle */}
+          {/* Tracing Agents Selection */}
           <div className="flex-shrink-0">
             <div className="text-[10px] text-text-muted uppercase mb-1">Tracing</div>
-            <label
-              className={`flex items-center gap-1.5 px-2 py-1.5 rounded cursor-pointer transition-colors ${
-                disableTracing
-                  ? 'bg-error/20 border border-error/50'
-                  : 'bg-primary/20 border border-primary/50'
-              }`}
-              title={disableTracing ? 'Tracing disabled: SOCWatch/PTAT will not run' : 'Tracing enabled: SOCWatch/PTAT will capture benchmark data'}
-            >
+            <div className="flex items-center gap-1">
+              {AVAILABLE_TRACING_AGENTS.map(agent => (
+                <label
+                  key={agent.id}
+                  className={`flex items-center gap-1 px-2 py-1.5 rounded cursor-pointer transition-colors ${
+                    tracingAgents.includes(agent.id)
+                      ? 'bg-primary/20 border border-primary/50'
+                      : 'bg-surface-elevated border border-border opacity-50'
+                  }`}
+                  title={`${agent.label}: ${agent.description}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={tracingAgents.includes(agent.id)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setTracingAgents([...tracingAgents, agent.id]);
+                      } else {
+                        setTracingAgents(tracingAgents.filter(a => a !== agent.id));
+                      }
+                    }}
+                    className="sr-only"
+                  />
+                  <span className={`text-xs font-medium ${tracingAgents.includes(agent.id) ? 'text-primary' : 'text-text-muted'}`}>
+                    {agent.label}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Cooldown between iterations/runs */}
+          <div className="flex-shrink-0">
+            <div className="text-[10px] text-text-muted uppercase mb-1">Cooldown</div>
+            <div className="flex items-center gap-1">
               <input
-                type="checkbox"
-                checked={disableTracing}
-                onChange={(e) => setDisableTracing(e.target.checked)}
-                className="sr-only"
+                type="number"
+                value={cooldownSeconds}
+                onChange={(e) => setCooldownSeconds(Math.max(0, parseInt(e.target.value) || 0))}
+                min={0}
+                max={600}
+                step={30}
+                className="w-14 px-1.5 py-1 bg-surface-elevated border border-border rounded text-xs text-text-primary text-center"
+                title="Cooldown between iterations/runs in seconds (0 to disable)"
               />
-              <span className={`text-xs font-medium ${disableTracing ? 'text-error' : 'text-primary'}`}>
-                {disableTracing ? 'Off' : 'On'}
-              </span>
-            </label>
+              <span className="text-xs text-text-muted">s</span>
+            </div>
           </div>
 
           {/* Load Last Run button */}
@@ -1039,17 +1096,20 @@ export function QuickLaunchPanel({
 
         {/* Iterations + Launch - Compact row */}
         <div className="flex items-center gap-3 pt-2 border-t border-border/50">
-          {/* Iterations */}
+          {/* Iterations - allow 0 for tracing-only runs */}
           <div className="flex items-center gap-2">
-            <label className="text-[10px] font-medium text-text-muted uppercase">Iter</label>
+            <label className="text-[10px] font-medium text-text-muted uppercase">
+              {iterations === 0 ? 'Trace' : 'Iter'}
+            </label>
             <input
               type="number"
-              min={1}
+              min={tracingAgents.length > 0 ? 0 : 1}
               max={100}
               value={iterations}
-              onChange={(e) => setIterations(Math.max(1, parseInt(e.target.value) || 1))}
+              onChange={(e) => setIterations(Math.max(tracingAgents.length > 0 ? 0 : 1, parseInt(e.target.value) || 0))}
               className="w-14 px-2 py-1.5 text-xs bg-surface-elevated border border-border rounded
                 focus:outline-none focus:border-primary text-text-primary font-numbers text-center"
+              title={iterations === 0 ? 'Tracing-only run (no performance iterations)' : `${iterations} performance iteration(s) + tracing`}
             />
           </div>
 
@@ -1074,26 +1134,55 @@ export function QuickLaunchPanel({
             </span>
           </label>
 
-          {/* Disable Tracing toggle */}
-          <label
-            className={`flex items-center gap-2 px-3 py-1.5 rounded cursor-pointer transition-colors ${
-              disableTracing
-                ? 'bg-error/20 border border-error/50'
-                : 'bg-primary/20 border border-primary/50'
-            }`}
-            title={disableTracing ? 'Tracing disabled: SOCWatch/PTAT will not run' : 'Tracing enabled: SOCWatch/PTAT will capture benchmark data'}
-          >
+          {/* Tracing Agents Selection */}
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-elevated border border-border rounded">
+            <span className="text-[10px] text-text-muted uppercase">Tracing</span>
+            <div className="flex items-center gap-1">
+              {AVAILABLE_TRACING_AGENTS.map(agent => (
+                <label
+                  key={agent.id}
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded cursor-pointer transition-colors ${
+                    tracingAgents.includes(agent.id)
+                      ? 'bg-primary/20 border border-primary/50'
+                      : 'bg-surface border border-border opacity-50'
+                  }`}
+                  title={`${agent.label}: ${agent.description}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={tracingAgents.includes(agent.id)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setTracingAgents([...tracingAgents, agent.id]);
+                      } else {
+                        setTracingAgents(tracingAgents.filter(a => a !== agent.id));
+                      }
+                    }}
+                    className="sr-only"
+                  />
+                  <span className={`text-xs font-medium ${tracingAgents.includes(agent.id) ? 'text-primary' : 'text-text-muted'}`}>
+                    {agent.label}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Cooldown between iterations/runs */}
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-elevated border border-border rounded">
+            <span className="text-[10px] text-text-muted uppercase">Cooldown</span>
             <input
-              type="checkbox"
-              checked={disableTracing}
-              onChange={(e) => setDisableTracing(e.target.checked)}
-              className="sr-only"
+              type="number"
+              value={cooldownSeconds}
+              onChange={(e) => setCooldownSeconds(Math.max(0, parseInt(e.target.value) || 0))}
+              min={0}
+              max={600}
+              step={30}
+              className="w-14 px-1.5 py-0.5 bg-surface border border-border rounded text-xs text-text-primary text-center"
+              title="Cooldown between iterations/runs in seconds (0 to disable)"
             />
-            <span className="text-[10px] text-text-muted uppercase">Trace</span>
-            <span className={`text-xs font-medium ${disableTracing ? 'text-error' : 'text-primary'}`}>
-              {disableTracing ? 'Off' : 'On'}
-            </span>
-          </label>
+            <span className="text-xs text-text-muted">s</span>
+          </div>
 
           {/* Load Last Run Button */}
           {canLoadLastRun && (

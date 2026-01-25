@@ -1,0 +1,89 @@
+# =============================================================================
+# RPX Tracing Configuration - Single Source of Truth
+# =============================================================================
+# This file defines all tracing agent configurations used during automation.
+# Game configs only need to set `tracing.enabled: true` to use these defaults.
+#
+# Frontend can modify this file to:
+#   - Enable/disable agents
+#   - Change executable paths
+#   - Modify command-line arguments
+#   - Add new tracing agents
+# =============================================================================
+
+# Base output directory on SUTs where trace files are saved
+# Run-specific subdirectories are created: {output_dir}/{run_id}/
+output_dir: "C:\\Traces"
+
+# Minimum buffer time (seconds) before starting to poll for agent completion
+# The automation will poll for the tracing process to exit (up to 30 min max)
+# This is just the initial wait before polling begins
+post_trace_buffer: 30
+
+# SSH configuration for pulling trace files from SUTs
+# Requires SSH key-based authentication: ssh-copy-id user@sut-ip
+ssh:
+  # Connection timeout in seconds (how long to wait for initial connection)
+  timeout: 60
+  # Maximum retry attempts on connection failure
+  max_retries: 3
+  # Initial delay between retries (uses exponential backoff: 5s, 10s, 20s)
+  retry_delay: 5
+  # SSH username (leave empty to use current Windows username)
+  user: ""
+
+# Tracing agents configuration
+agents:
+  socwatch:
+    enabled: true
+    description: "Intel SoC Watch - Full System/CPU metrics with OS tracing"
+    path: "C:\\OWR\\socwatch\\64\\socwatch.exe"
+    # Full tracing features including OS event tracing
+    # Note: OS tracing generates large ETL files (2GB+) and requires 10+ min post-processing
+    # The automation will poll for socwatch.exe to exit before proceeding
+    args:
+      - "-f"
+      - "sys"             # System state (includes OS tracing - large ETL files)
+      - "-f"
+      - "cpu"             # CPU C/P states (includes OS event tracing)
+      - "-f"
+      - "power"           # Power metrics
+      - "-f"
+      - "temp"            # Thermal data
+    # How duration is passed to the agent
+    # "space" = -t 60, "equals" = -t=60
+    duration_arg: "-t"
+    duration_style: "space"
+    # How output path is passed to the agent
+    output_arg: "-o"
+    output_style: "space"
+    # If true, agent exits after duration; if false, runs until terminated
+    has_duration: true
+
+  ptat:
+    enabled: false
+    description: "Intel PTAT - Performance/Thermal Analysis Tool"
+    path: "C:\\OWR\\PTAT\\PTAT.exe"
+    args:
+      - "-p=100"    # 100ms polling rate
+      - "-l=r"      # Remove old and create new file
+    duration_arg: "-t="
+    duration_style: "equals"
+    output_arg: "-m="
+    output_style: "equals"
+    has_duration: true
+
+# Template for adding new agents:
+#
+#   new_agent:
+#     enabled: true
+#     description: "Description of what this agent captures"
+#     path: "C:\\path\\to\\agent.exe"
+#     args:
+#       - "--flag1"
+#       - "--flag2"
+#     duration_arg: "-d"        # or "-d=" for equals style
+#     duration_style: "space"   # "space" or "equals"
+#     output_arg: "-o"
+#     output_style: "space"
+#     has_duration: true        # false if agent runs indefinitely

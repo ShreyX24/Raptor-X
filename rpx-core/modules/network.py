@@ -196,9 +196,13 @@ class NetworkManager:
             logger.error(f"Failed to send action {action}: {str(e)}")
             raise
     
-    def get_screenshot(self) -> bytes:
+    def get_screenshot(self, process_name: str = None) -> bytes:
         """
         Request a screenshot from the SUT.
+
+        Args:
+            process_name: Optional process name to focus before capturing (e.g., 'RDR2.exe').
+                         This ensures the game window is in foreground for a valid screenshot.
 
         Returns:
             Raw screenshot data as bytes
@@ -207,12 +211,22 @@ class NetworkManager:
             RequestException: If the request fails
         """
         try:
-            response = self.session.get(
-                f"{self.base_url}/screenshot",
-                timeout=15
-            )
+            # Use POST with JSON body if process_name specified, else simple GET
+            if process_name:
+                logger.info(f"Requesting screenshot with focus on {process_name}")
+                response = self.session.post(
+                    f"{self.base_url}/screenshot",
+                    json={"process_name": process_name, "format": "png"},
+                    timeout=15
+                )
+            else:
+                logger.info("Requesting screenshot without process focus")
+                response = self.session.get(
+                    f"{self.base_url}/screenshot",
+                    timeout=15
+                )
             response.raise_for_status()
-            logger.debug("Screenshot retrieved successfully")
+            logger.info(f"Screenshot retrieved: {len(response.content)} bytes")
             return response.content
         except requests.RequestException as e:
             logger.error(f"Failed to get screenshot: {str(e)}")
