@@ -125,9 +125,13 @@ def _run_as_admin() -> bool:
     return ret > 32
 
 
-def _setup_ssh_server() -> bool:
+def _setup_ssh_server(master_url: str = None) -> bool:
     """
     Setup OpenSSH Server for bidirectional SSH with Master.
+
+    Args:
+        master_url: Optional Master server URL (e.g., "192.168.50.100:5000")
+                   Used to fetch and install the Master's public SSH key.
 
     Returns:
         True if setup was successful
@@ -140,9 +144,10 @@ def _setup_ssh_server() -> bool:
 
     try:
         from .ssh_setup import get_ssh_setup
-        ssh_setup = get_ssh_setup()
+        ssh_setup = get_ssh_setup(master_url=master_url)
 
-        result = ssh_setup.run_full_setup()
+        # Pass master_url to run_full_setup for key fetching
+        result = ssh_setup.run_full_setup(master_url=master_url)
 
         # Print results
         for step in result.get("steps", []):
@@ -156,6 +161,8 @@ def _setup_ssh_server() -> bool:
             status = result.get("status", {})
             print(f"  sshd running: {status.get('sshd_running', False)}")
             print(f"  sshd enabled: {status.get('sshd_enabled', False)}")
+            print(f"  authorized_keys: {status.get('authorized_keys_path', 'N/A')}")
+            print(f"  keys installed: {status.get('authorized_keys_count', 0)}")
             return True
         else:
             print(f"\033[93mSSH setup had issues: {result.get('error', 'Unknown')}\033[0m")
@@ -190,7 +197,12 @@ def _install_scheduled_task(master_override: str = None) -> bool:
     task_name = "SUT-Client"
 
     # Step 1: Setup SSH Server (while we have admin privileges)
-    _setup_ssh_server()
+    # Convert master_override (IP:PORT format) to URL for SSH setup
+    master_url = None
+    if master_override:
+        # master_override is in IP:PORT format, convert to URL
+        master_url = f"http://{master_override}"
+    _setup_ssh_server(master_url=master_url)
 
     print()
     print("=" * 50)

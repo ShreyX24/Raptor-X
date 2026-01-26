@@ -2299,6 +2299,52 @@ class APIRoutes:
                 logger.error(f"Error reloading tracing config: {e}")
                 return jsonify({"error": str(e)}), 500
 
+        @app.route('/api/ssh/public-key', methods=['GET'])
+        def get_master_ssh_public_key():
+            """
+            Get the Master's SSH public key.
+
+            SUTs use this endpoint during setup to fetch and install the Master's
+            public key into their authorized_keys file, enabling passwordless SSH
+            access for trace file pulling.
+
+            The key is read from ~/.ssh/master_ed25519.pub by default, falling back
+            to other common key locations.
+            """
+            from pathlib import Path
+            import os
+
+            # List of potential public key paths (in order of preference)
+            key_paths = [
+                Path.home() / ".ssh" / "master_ed25519.pub",
+                Path.home() / ".ssh" / "id_ed25519.pub",
+                Path.home() / ".ssh" / "id_rsa.pub",
+            ]
+
+            # Try to find and read the public key
+            for key_path in key_paths:
+                if key_path.exists():
+                    try:
+                        public_key = key_path.read_text().strip()
+                        if public_key and (public_key.startswith("ssh-") or public_key.startswith("ecdsa-")):
+                            logger.info(f"Serving Master's public key from {key_path}")
+                            return jsonify({
+                                "status": "success",
+                                "public_key": public_key,
+                                "key_file": str(key_path)
+                            })
+                    except Exception as e:
+                        logger.warning(f"Could not read key from {key_path}: {e}")
+                        continue
+
+            # No key found - return error with instructions
+            logger.warning("No SSH public key found on Master")
+            return jsonify({
+                "status": "error",
+                "error": "No SSH public key found on Master",
+                "message": "Generate an SSH key with: ssh-keygen -t ed25519 -f ~/.ssh/master_ed25519"
+            }), 404
+
         @app.route('/api/tracing/ssh/diagnose/<sut_ip>', methods=['GET'])
         def diagnose_ssh_connection(sut_ip: str):
             """

@@ -247,12 +247,15 @@ class TracePuller:
         local_dir = Path(local_path).parent
         local_dir.mkdir(parents=True, exist_ok=True)
 
+        # Convert backslashes to forward slashes for SCP compatibility
+        scp_remote_path = remote_path.replace("\\", "/")
+
         for attempt in range(1, self.max_retries + 1):
             try:
                 # Use SCP to copy file
                 result = subprocess.run(
                     ["scp"] + self._get_ssh_options() + [
-                        f"{self.ssh_user}@{self.sut_ip}:{remote_path}",
+                        f"{self.ssh_user}@{self.sut_ip}:{scp_remote_path}",
                         local_path
                     ],
                     capture_output=True, text=True, timeout=file_timeout
@@ -292,12 +295,15 @@ class TracePuller:
         # Ensure local directory exists
         Path(local_dir).mkdir(parents=True, exist_ok=True)
 
+        # Convert backslashes to forward slashes for SCP compatibility
+        scp_remote_dir = remote_dir.replace("\\", "/")
+
         for attempt in range(1, self.max_retries + 1):
             try:
                 # Use SCP -r for recursive copy
                 result = subprocess.run(
                     ["scp", "-r"] + self._get_ssh_options() + [
-                        f"{self.ssh_user}@{self.sut_ip}:{remote_dir}/*",
+                        f"{self.ssh_user}@{self.sut_ip}:{scp_remote_dir}/*",
                         local_dir
                     ],
                     capture_output=True, text=True, timeout=dir_timeout
@@ -352,6 +358,10 @@ class TracePuller:
         traces_dir = Path(local_storage_dir) / "traces"
         traces_dir.mkdir(parents=True, exist_ok=True)
 
+        # Construct the run-specific trace directory on SUT
+        # simple_automation.py creates: {trace_output_dir}\{run_id}\
+        run_trace_dir = f"{trace_output_dir}\\{run_id}"
+
         # Pull traces for each agent
         for agent in trace_agents:
             agent_results = {"files": [], "success": False}
@@ -362,13 +372,14 @@ class TracePuller:
                 date_pattern = datetime.now().strftime("%Y%m%d")
 
                 if agent == "ptat":
-                    # PTAT files are in the output directory with .csv extension
+                    # PTAT files are in the run-specific directory with .csv extension
                     file_pattern = f"*{agent}*{game_name.replace('-', '')}*.csv"
-                    remote_search_dir = trace_output_dir or self.DEFAULT_TRACE_DIRS["ptat"]
+                    remote_search_dir = run_trace_dir
                 elif agent == "socwatch":
-                    # socwatch creates a directory with multiple files
-                    file_pattern = f"*{agent}*{game_name.replace('-', '')}*"
-                    remote_search_dir = trace_output_dir or self.DEFAULT_TRACE_DIRS["socwatch"]
+                    # socwatch creates .csv files (main data) and .etl files (raw traces)
+                    # Only pull .csv files - the .etl files are huge and rarely needed
+                    file_pattern = f"*{agent}*{game_name.replace('-', '')}*.csv"
+                    remote_search_dir = run_trace_dir
                 else:
                     logger.warning(f"Unknown trace agent: {agent}")
                     continue
@@ -380,7 +391,12 @@ class TracePuller:
 
                 if not files:
                     # Try broader pattern
-                    files = self.list_remote_files(remote_search_dir, f"*{agent}*")
+                    files = self.list_remote_files(remote_search_dir, f"*{agent}*.csv")
+
+                # Filter out unwanted files
+                if agent == "socwatch":
+                    # Only keep the main CSV, skip WakeupAnalysis and other auxiliary files
+                    files = [f for f in files if "WakeupAnalysis" not in f]
 
                 if files:
                     logger.info(f"Found {len(files)} {agent} trace files")

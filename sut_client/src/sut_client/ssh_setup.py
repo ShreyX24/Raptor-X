@@ -7,10 +7,21 @@ import subprocess
 import logging
 import sys
 import getpass
+import ctypes
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
+
+
+def _is_admin() -> bool:
+    """Check if running with administrator privileges."""
+    if sys.platform != "win32":
+        return False
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        return False
 
 
 class SSHSetup:
@@ -18,13 +29,70 @@ class SSHSetup:
     Windows OpenSSH Server setup and configuration for SUTs.
 
     Enables Master to connect to SUTs via SSH (for trace pulling, etc.).
-    Uses the current user's authorized_keys file (not admin).
+
+    For Administrator users on Windows, OpenSSH uses a special location:
+    C:\\ProgramData\\ssh\\administrators_authorized_keys
+
+    For regular users, it uses: ~/.ssh/authorized_keys
     """
 
-    def __init__(self):
-        """Initialize SSH Setup."""
-        self._ssh_dir = Path.home() / ".ssh"
-        self._authorized_keys_path = self._ssh_dir / "authorized_keys"
+    def __init__(self, master_url: Optional[str] = None):
+        """
+        Initialize SSH Setup.
+
+        Args:
+            master_url: Optional Master server URL (e.g., "http://192.168.50.100:5000")
+                       Used to fetch the Master's public SSH key.
+        """
+        self._master_url = master_url
+        self._username = getpass.getuser()
+
+        # Determine the correct authorized_keys path based on user type
+        # For admin users (like Administrator), Windows OpenSSH uses a special location
+        if self._is_admin_user():
+            self._ssh_dir = Path(r"C:\ProgramData\ssh")
+            self._authorized_keys_path = self._ssh_dir / "administrators_authorized_keys"
+            logger.info(f"Admin user detected, using: {self._authorized_keys_path}")
+        else:
+            self._ssh_dir = Path.home() / ".ssh"
+            self._authorized_keys_path = self._ssh_dir / "authorized_keys"
+            logger.info(f"Regular user, using: {self._authorized_keys_path}")
+
+    def _is_admin_user(self) -> bool:
+        """
+        Check if current user is an administrator account.
+
+        Windows OpenSSH treats members of the Administrators group specially,
+        using C:\\ProgramData\\ssh\\administrators_authorized_keys instead of
+        the user's home directory.
+        """
+        if sys.platform != "win32":
+            return False
+
+        username = self._username.lower()
+
+        # Check if username is "administrator"
+        if username == "administrator":
+            return True
+
+        # Check if user is in Administrators group
+        try:
+            result = subprocess.run(
+                ["net", "localgroup", "Administrators"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                # Parse output to find usernames
+                lines = result.stdout.lower().splitlines()
+                for line in lines:
+                    if username in line:
+                        return True
+        except Exception as e:
+            logger.debug(f"Could not check admin group: {e}")
+
+        return False
 
     @property
     def authorized_keys_path(self) -> Path:
@@ -231,11 +299,63 @@ class SSHSetup:
             logger.warning(f"Could not create firewall rule: {stderr}")
             return False, f"Failed to create firewall rule: {stderr}"
 
+    def fetch_master_public_key(self, master_url: str = None) -> Tuple[bool, str, str]:
+        """
+        Fetch the Master's public SSH key from the Master server.
+
+        Args:
+            master_url: Master server URL (e.g., "http://192.168.50.100:5000")
+                       If not provided, uses the URL from constructor.
+
+        Returns:
+            (success, public_key, message)
+        """
+        url = master_url or self._master_url
+        if not url:
+            return False, "", "No Master URL provided"
+
+        # Ensure URL has protocol
+        if not url.startswith("http"):
+            url = f"http://{url}"
+
+        # Try to fetch from Master's API endpoint
+        api_url = f"{url.rstrip('/')}/api/ssh/public-key"
+
+        try:
+            import urllib.request
+            import json
+
+            logger.info(f"Fetching Master's public key from {api_url}")
+
+            req = urllib.request.Request(api_url, method='GET')
+            req.add_header('Accept', 'application/json')
+
+            with urllib.request.urlopen(req, timeout=10) as response:
+                data = json.loads(response.read().decode('utf-8'))
+
+                if data.get("public_key"):
+                    public_key = data["public_key"].strip()
+                    logger.info(f"Got Master's public key: {public_key[:50]}...")
+                    return True, public_key, "Key fetched successfully"
+                else:
+                    return False, "", "No public key in response"
+
+        except urllib.error.HTTPError as e:
+            logger.warning(f"HTTP error fetching Master key: {e.code}")
+            return False, "", f"HTTP error: {e.code}"
+        except urllib.error.URLError as e:
+            logger.warning(f"URL error fetching Master key: {e.reason}")
+            return False, "", f"Connection error: {e.reason}"
+        except Exception as e:
+            logger.warning(f"Error fetching Master key: {e}")
+            return False, "", str(e)
+
     def add_authorized_key(self, public_key: str) -> Tuple[bool, str]:
         """
         Add a public key to authorized_keys file.
 
-        Uses the current user's ~/.ssh/authorized_keys.
+        For admin users, writes to C:\\ProgramData\\ssh\\administrators_authorized_keys
+        For regular users, writes to ~/.ssh/authorized_keys
 
         Args:
             public_key: Full public key line (ssh-ed25519 AAAA... comment)
@@ -253,8 +373,8 @@ class SSHSetup:
             return False, "Invalid public key format"
 
         try:
-            # Ensure .ssh directory exists with proper permissions
-            self._ssh_dir.mkdir(mode=0o700, exist_ok=True)
+            # Ensure directory exists
+            self._ssh_dir.mkdir(parents=True, exist_ok=True)
 
             # Check if key already exists
             if self._authorized_keys_path.exists():
@@ -266,22 +386,88 @@ class SSHSetup:
                     logger.info("Master's SSH key already in authorized_keys")
                     return True, "Key already registered"
 
-            # Append key to file
-            with open(self._authorized_keys_path, "a", encoding="utf-8", newline="\n") as f:
-                # Ensure we start on a new line
-                if self._authorized_keys_path.exists() and self._authorized_keys_path.stat().st_size > 0:
-                    # Read last char to check if we need newline
-                    content = self._authorized_keys_path.read_text()
-                    if content and not content.endswith("\n"):
-                        f.write("\n")
-                f.write(public_key + "\n")
+            # For admin users, we need to handle the file specially
+            # The administrators_authorized_keys file needs specific permissions
+            if self._is_admin_user():
+                # Write/append the key
+                mode = "a" if self._authorized_keys_path.exists() else "w"
+                with open(self._authorized_keys_path, mode, encoding="utf-8") as f:
+                    if mode == "a" and self._authorized_keys_path.stat().st_size > 0:
+                        # Check if we need a newline
+                        content = self._authorized_keys_path.read_text()
+                        if content and not content.endswith("\n"):
+                            f.write("\n")
+                    f.write(public_key + "\n")
 
-            logger.info(f"Added Master's SSH key to authorized_keys")
-            return True, "Key added successfully"
+                # Fix permissions for administrators_authorized_keys
+                # This file must be owned by Administrators/SYSTEM only
+                self._fix_admin_authorized_keys_permissions()
+
+                logger.info(f"Added Master's SSH key to {self._authorized_keys_path}")
+                return True, f"Key added to {self._authorized_keys_path}"
+            else:
+                # Regular user - use normal .ssh/authorized_keys
+                self._ssh_dir.mkdir(mode=0o700, exist_ok=True)
+
+                with open(self._authorized_keys_path, "a", encoding="utf-8", newline="\n") as f:
+                    if self._authorized_keys_path.exists() and self._authorized_keys_path.stat().st_size > 0:
+                        content = self._authorized_keys_path.read_text()
+                        if content and not content.endswith("\n"):
+                            f.write("\n")
+                    f.write(public_key + "\n")
+
+                logger.info(f"Added Master's SSH key to authorized_keys")
+                return True, "Key added successfully"
 
         except Exception as e:
             logger.error(f"Failed to add authorized key: {e}")
             return False, str(e)
+
+    def _fix_admin_authorized_keys_permissions(self) -> bool:
+        """
+        Fix permissions on administrators_authorized_keys file.
+
+        Windows OpenSSH requires this file to be owned by Administrators or SYSTEM,
+        with no other users having write access.
+
+        Returns:
+            True if permissions were fixed successfully
+        """
+        if not self._authorized_keys_path.exists():
+            return False
+
+        try:
+            # Use icacls to set proper permissions
+            # Remove inheritance and set explicit permissions for Administrators and SYSTEM only
+            file_path = str(self._authorized_keys_path)
+
+            # Disable inheritance
+            subprocess.run(
+                ["icacls", file_path, "/inheritance:r"],
+                capture_output=True,
+                check=False
+            )
+
+            # Grant full control to Administrators
+            subprocess.run(
+                ["icacls", file_path, "/grant", "Administrators:F"],
+                capture_output=True,
+                check=False
+            )
+
+            # Grant full control to SYSTEM
+            subprocess.run(
+                ["icacls", file_path, "/grant", "SYSTEM:F"],
+                capture_output=True,
+                check=False
+            )
+
+            logger.info(f"Fixed permissions on {file_path}")
+            return True
+
+        except Exception as e:
+            logger.warning(f"Could not fix permissions: {e}")
+            return False
 
     def remove_authorized_key(self, key_fingerprint: str) -> Tuple[bool, str]:
         """
@@ -373,7 +559,7 @@ class SSHSetup:
             "username": getpass.getuser(),
         }
 
-    def run_full_setup(self) -> Dict[str, Any]:
+    def run_full_setup(self, master_url: str = None) -> Dict[str, Any]:
         """
         Run complete SSH setup for SUT.
 
@@ -383,6 +569,11 @@ class SSHSetup:
         3. Enable sshd autostart
         4. Configure firewall rule
         5. Try to set network to Private (optional)
+        6. Fetch and install Master's public key (if master_url provided)
+
+        Args:
+            master_url: Optional Master server URL to fetch public key from.
+                       If not provided, uses URL from constructor or skips key installation.
 
         Returns:
             Dictionary with setup results
@@ -454,6 +645,34 @@ class SSHSetup:
             "message": "Network set to Private" if network_private else "Could not set network to Private (may need admin)"
         })
 
+        # Step 6: Fetch and install Master's public key
+        url = master_url or self._master_url
+        if url:
+            success, public_key, msg = self.fetch_master_public_key(url)
+            if success and public_key:
+                key_success, key_msg = self.add_authorized_key(public_key)
+                results["steps"].append({
+                    "step": "install_master_key",
+                    "success": key_success,
+                    "message": key_msg
+                })
+                if not key_success:
+                    logger.warning(f"Failed to install Master's key (non-fatal): {key_msg}")
+            else:
+                results["steps"].append({
+                    "step": "install_master_key",
+                    "success": False,
+                    "message": f"Could not fetch Master's key: {msg}"
+                })
+                logger.warning(f"Could not fetch Master's key (non-fatal): {msg}")
+        else:
+            results["steps"].append({
+                "step": "install_master_key",
+                "success": False,
+                "message": "No Master URL provided - skipping key installation"
+            })
+            logger.info("No Master URL provided, skipping key installation")
+
         # Get final status
         results["status"] = self.get_status()
 
@@ -488,9 +707,24 @@ class SSHSetup:
 _ssh_setup: Optional[SSHSetup] = None
 
 
-def get_ssh_setup() -> SSHSetup:
-    """Get or create the singleton SSHSetup instance."""
+def get_ssh_setup(master_url: str = None) -> SSHSetup:
+    """
+    Get or create the singleton SSHSetup instance.
+
+    Args:
+        master_url: Optional Master server URL for fetching public key.
+                   Only used when creating a new instance.
+
+    Returns:
+        SSHSetup instance
+    """
     global _ssh_setup
     if _ssh_setup is None:
-        _ssh_setup = SSHSetup()
+        _ssh_setup = SSHSetup(master_url=master_url)
     return _ssh_setup
+
+
+def reset_ssh_setup() -> None:
+    """Reset the singleton instance (useful for testing or reconfiguration)."""
+    global _ssh_setup
+    _ssh_setup = None
