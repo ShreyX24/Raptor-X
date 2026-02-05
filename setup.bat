@@ -307,6 +307,28 @@ if errorlevel 1 (
 )
 
 echo.
+echo ----------------------------------------
+echo   OmniParser Setup (Optional)
+echo ----------------------------------------
+echo.
+echo OmniParser requires Python 3.12 + CUDA 12.8 + PyTorch 2.8.0
+echo It will install ~2GB of dependencies + flash-attention wheel.
+echo.
+set /p INSTALL_OMNI="Install OmniParser dependencies? (y/n) [n]: "
+if /i "!INSTALL_OMNI!"=="y" (
+    if exist "omniparser-server\install.bat" (
+        echo.
+        cd omniparser-server
+        call install.bat
+        cd ..
+    ) else (
+        echo [WARNING] omniparser-server/install.bat not found, skipping
+    )
+) else (
+    echo Skipping OmniParser setup.
+)
+
+echo.
 echo ============================================
 echo   Setup Complete!
 echo ============================================
