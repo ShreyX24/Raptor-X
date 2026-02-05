@@ -1,6 +1,0 @@
-Metadata-Version: 2.4
-Name: gemma-service-manager
-Version: 1.0.0
-Summary: GUI service manager for Gemma microservices
-Requires-Python: >=3.11
-Requires-Dist: PySide6>=6.6.0

@@ -1,5 +1,0 @@
-[console_scripts]
-gemma-manager = service_manager:main
-
-[gui_scripts]
-gemma-manager-gui = service_manager:main

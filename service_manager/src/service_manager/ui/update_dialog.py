@@ -401,7 +401,7 @@ class UpdateDialog(QDialog):
         try:
             # Try to find the executable
             import shutil
-            exe = shutil.which("rpx-manager") or shutil.which("gemma-manager")
+            exe = shutil.which("rpx-manager")
 
             if exe:
                 subprocess.Popen([exe], start_new_session=True)
