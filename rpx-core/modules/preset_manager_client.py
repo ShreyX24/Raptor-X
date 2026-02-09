@@ -210,7 +210,7 @@ class PresetManagerClient:
 
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
-                    f"{self.preset_manager_url}/api/sync/gemma-presets",
+                    f"{self.preset_manager_url}/api/sync/rpx-presets",
                     json=payload
                 )
                 response.raise_for_status()
@@ -257,7 +257,7 @@ class PresetManagerClient:
             }
 
             response = requests.post(
-                f"{self.preset_manager_url}/api/sync/gemma-presets",
+                f"{self.preset_manager_url}/api/sync/rpx-presets",
                 json=payload,
                 timeout=120.0
             )
