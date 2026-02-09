@@ -35,9 +35,11 @@ def get_steam_install_path() -> Optional[str]:
         path, _ = winreg.QueryValueEx(key, "SteamPath")
         winreg.CloseKey(key)
         if path and os.path.exists(path):
+            logger.debug(f"[Steam] Found install path via HKCU: {path}")
             return path
-    except Exception:
-        pass
+        logger.debug(f"[Steam] HKCU path '{path}' does not exist")
+    except Exception as e:
+        logger.debug(f"[Steam] HKCU registry lookup failed: {e}")
 
     # Try HKEY_LOCAL_MACHINE (64-bit)
     try:
@@ -45,9 +47,11 @@ def get_steam_install_path() -> Optional[str]:
         path, _ = winreg.QueryValueEx(key, "InstallPath")
         winreg.CloseKey(key)
         if path and os.path.exists(path):
+            logger.debug(f"[Steam] Found install path via HKLM x64: {path}")
             return path
-    except Exception:
-        pass
+        logger.debug(f"[Steam] HKLM x64 path '{path}' does not exist")
+    except Exception as e:
+        logger.debug(f"[Steam] HKLM x64 registry lookup failed: {e}")
 
     # Try HKEY_LOCAL_MACHINE (32-bit)
     try:
@@ -55,9 +59,11 @@ def get_steam_install_path() -> Optional[str]:
         path, _ = winreg.QueryValueEx(key, "InstallPath")
         winreg.CloseKey(key)
         if path and os.path.exists(path):
+            logger.debug(f"[Steam] Found install path via HKLM x86: {path}")
             return path
-    except Exception:
-        pass
+        logger.debug(f"[Steam] HKLM x86 path '{path}' does not exist")
+    except Exception as e:
+        logger.debug(f"[Steam] HKLM x86 registry lookup failed: {e}")
 
     logger.warning("Steam installation not found in registry")
     return None
@@ -78,22 +84,29 @@ def get_steam_library_folders() -> List[str]:
 
     # Parse libraryfolders.vdf
     vdf_path = os.path.join(steam_path, "steamapps", "libraryfolders.vdf")
+    logger.debug(f"[Steam] Parsing libraryfolders.vdf: {vdf_path}")
     if os.path.exists(vdf_path):
         try:
             with open(vdf_path, 'r', encoding='utf-8') as f:
                 content = f.read()
+            logger.debug(f"[Steam] libraryfolders.vdf: {len(content)} bytes")
 
             # Regex to find "path" "..." entries
             matches = re.findall(r'"path"\s+"([^"]+)"', content)
+            logger.debug(f"[Steam] Found {len(matches)} path entries in VDF")
             for match in matches:
                 # Unescape double backslashes
                 path = match.replace('\\\\', '\\')
                 if path not in libraries and os.path.exists(path):
                     libraries.append(path)
+                    logger.debug(f"[Steam] Added library: {path}")
 
         except Exception as e:
             logger.warning(f"Failed to parse libraryfolders.vdf: {e}")
+    else:
+        logger.debug(f"[Steam] libraryfolders.vdf not found at {vdf_path}")
 
+    logger.debug(f"[Steam] Total libraries: {len(libraries)}")
     return libraries
 
 
@@ -203,6 +216,7 @@ def set_steam_auto_login(username: str) -> bool:
         True if successful
     """
     try:
+        logger.debug(f"[Steam] Opening HKCU\\Software\\Valve\\Steam for write")
         key = winreg.OpenKey(
             winreg.HKEY_CURRENT_USER,
             r"Software\Valve\Steam",
@@ -213,6 +227,7 @@ def set_steam_auto_login(username: str) -> bool:
         winreg.SetValueEx(key, "RememberPassword", 0, winreg.REG_DWORD, 1)
         winreg.CloseKey(key)
         logger.info(f"Registry: Set AutoLoginUser to '{username}'")
+        logger.debug(f"[Steam] Also set RememberPassword=1")
         return True
     except Exception as e:
         logger.warning(f"Failed to set AutoLoginUser registry: {e}")
@@ -280,9 +295,11 @@ def is_steam_running() -> bool:
     for proc in psutil.process_iter(['name']):
         try:
             if proc.info['name'] and proc.info['name'].lower() == 'steam.exe':
+                logger.debug("[Steam] steam.exe is running")
                 return True
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
+    logger.debug("[Steam] steam.exe not found in process list")
     return False
 
 
@@ -295,11 +312,14 @@ def kill_steam() -> bool:
         for proc in psutil.process_iter(['pid', 'name']):
             try:
                 if proc.info['name'] and proc.info['name'].lower() == process_name.lower():
+                    logger.debug(f"[Steam] Terminating {proc.info['name']} (PID {proc.info['pid']})")
                     psutil.Process(proc.info['pid']).terminate()
                     killed = True
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                logger.debug(f"[Steam] Could not terminate {process_name}: {e}")
                 continue
 
+    logger.debug(f"[Steam] kill_steam result: killed={killed}")
     return killed
 
 

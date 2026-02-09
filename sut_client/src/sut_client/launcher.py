@@ -71,10 +71,13 @@ def find_process_by_name(process_name: str, exact_only: bool = False, debug_log_
     """
     similar_processes = []  # For debugging
     search_term = process_name.lower().replace('.exe', '')  # e.g., "rdr2"
+    _search_start = time.time()
+    proc_count = 0
 
     try:
         # Use process_iter with field selection (same as system.py - proven to work)
         for proc in psutil.process_iter(['pid', 'name', 'exe']):
+            proc_count += 1
             try:
                 proc_name = proc.info['name']
                 proc_exe = os.path.basename(proc.info['exe']) if proc.info['exe'] else None
@@ -105,6 +108,9 @@ def find_process_by_name(process_name: str, exact_only: bool = False, debug_log_
 
     except Exception as e:
         logger.error(f"Error searching for process {process_name}: {str(e)}")
+
+    _search_elapsed = (time.time() - _search_start) * 1000
+    logger.debug(f"[ProcessSearch] '{process_name}' not found, scanned {proc_count} processes in {_search_elapsed:.1f}ms")
 
     # Log similar processes if debugging enabled and process not found
     if debug_log_similar and similar_processes:
@@ -433,6 +439,12 @@ def launch_game(
             return {"status": "error", "error": "Game executable not found"}
         new_process_name = process_id if process_id else os.path.splitext(os.path.basename(game_path))[0]
 
+    launch_start_time = time.time()
+    logger.debug(f"[Launch] Parameters: steam_app_id={steam_app_id}, exe_path={exe_path}, "
+                 f"process_name={process_name}, force_relaunch={force_relaunch}, "
+                 f"launch_args={launch_args}, use_direct_exe={use_direct_exe}, "
+                 f"process_detection_timeout={process_detection_timeout}")
+
     with game_lock:
         # Terminate existing game if running
         if current_game_process_name:
@@ -575,6 +587,7 @@ def launch_game(
             return {"status": "cancelled", "message": "Launch cancelled by user"}
 
         if actual_process:
+            logger.debug(f"[Launch] Process detection took {time.time() - start_wait:.1f}s, {check_count} checks")
             # Early exit check: Is window already in foreground?
             # This avoids expensive pywinauto detection if game is already focused
             try:
@@ -701,10 +714,14 @@ def launch_game(
                 "pywinauto_available": is_pywinauto_available(),
             }
 
+            total_launch_time = time.time() - launch_start_time
             logger.info(f"[OK] Launch Complete: {process_name} (PID: {process_pid}) is running. Window: {window_found}, Foreground: {foreground_confirmed}")
+            logger.debug(f"[Launch] Total launch time: {total_launch_time:.1f}s")
 
         else:
+            total_launch_time = time.time() - launch_start_time
             logger.error(f"LAUNCH FAILED: Game process '{current_game_process_name}' not found within {max_wait_time}s")
+            logger.debug(f"[Launch] Total time before failure: {total_launch_time:.1f}s")
             response_data = {
                 "status": "error",
                 "error": f"Game process '{current_game_process_name}' not detected after {max_wait_time}s. Game may not be installed, process name is incorrect, or a Steam dialog may be blocking launch.",

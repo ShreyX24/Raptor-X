@@ -180,6 +180,7 @@ class InputController:
     def _move_mouse_absolute(self, x: int, y: int):
         """Move mouse using SendInput with absolute positioning."""
         norm_x, norm_y = self._normalize_coordinates(x, y)
+        logger.debug(f"[SendInput] MouseMove absolute ({x}, {y}) -> normalized ({norm_x}, {norm_y})")
 
         mouse_input = MOUSEINPUT()
         mouse_input.dx = norm_x
@@ -196,6 +197,7 @@ class InputController:
         result = self.user32.SendInput(1, ctypes.byref(input_struct), ctypes.sizeof(INPUT))
 
         if result == 0:
+            logger.debug(f"[SendInput] MouseMove failed (result=0), fallback to win32api.SetCursorPos({x}, {y})")
             # Fallback to win32api
             win32api.SetCursorPos((x, y))
 
@@ -211,6 +213,7 @@ class InputController:
             click_delay: Delay before clicking
         """
         try:
+            logger.debug(f"[Click] {button} at ({x}, {y}), move_duration={move_duration}s, click_delay={click_delay}s")
             # Move to position
             self.move_mouse(x, y, smooth=True, duration=move_duration)
 
@@ -258,6 +261,7 @@ class InputController:
             move_duration: Time to move to position before clicking
         """
         try:
+            logger.debug(f"[HoldClick] {button} at ({x}, {y}) for {duration}s, move_duration={move_duration}s")
             # Move to position
             self.move_mouse(x, y, smooth=True, duration=move_duration)
             time.sleep(0.1)
@@ -292,8 +296,21 @@ class InputController:
             logger.error(f"Hold click failed: {e}")
             return False
 
+    # Flag names for debug logging
+    _MOUSE_FLAG_NAMES = {
+        MOUSEEVENTF_LEFTDOWN: "LEFT_DOWN",
+        MOUSEEVENTF_LEFTUP: "LEFT_UP",
+        MOUSEEVENTF_RIGHTDOWN: "RIGHT_DOWN",
+        MOUSEEVENTF_RIGHTUP: "RIGHT_UP",
+        MOUSEEVENTF_MIDDLEDOWN: "MIDDLE_DOWN",
+        MOUSEEVENTF_MIDDLEUP: "MIDDLE_UP",
+    }
+
     def _send_mouse_event(self, flags: int):
         """Send a mouse event using SendInput."""
+        flag_name = self._MOUSE_FLAG_NAMES.get(flags, f"0x{flags:04X}")
+        logger.debug(f"[SendInput] MouseEvent {flag_name}")
+
         mouse_input = MOUSEINPUT()
         mouse_input.dx = 0
         mouse_input.dy = 0
@@ -309,6 +326,7 @@ class InputController:
         result = self.user32.SendInput(1, ctypes.byref(input_struct), ctypes.sizeof(INPUT))
 
         if result == 0:
+            logger.debug(f"[SendInput] MouseEvent {flag_name} failed (result=0), using win32api fallback")
             # Fallback to win32api
             if flags == MOUSEEVENTF_LEFTDOWN:
                 win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0)
@@ -323,6 +341,7 @@ class InputController:
                      move_duration: float = 0.3) -> bool:
         """Double-click at position."""
         try:
+            logger.debug(f"[DoubleClick] {button} at ({x}, {y}), move_duration={move_duration}s")
             # Move to position
             self.move_mouse(x, y, smooth=True, duration=move_duration)
             time.sleep(0.1)
@@ -368,6 +387,7 @@ class InputController:
             duration: Duration of drag in seconds
         """
         try:
+            logger.debug(f"[Drag] {button} from ({x1}, {y1}) to ({x2}, {y2}), duration={duration}s")
             # Move to start position
             self.move_mouse(x1, y1, smooth=True, duration=0.3)
             time.sleep(0.1)
@@ -404,6 +424,7 @@ class InputController:
     def scroll(self, x: int, y: int, clicks: int, direction: str = 'up') -> bool:
         """Scroll at position."""
         try:
+            logger.debug(f"[Scroll] Moving to ({x}, {y}) before scroll {direction} x{clicks}")
             # Move to position first
             self.move_mouse(x, y, smooth=False, duration=0)
             time.sleep(0.05)
@@ -411,7 +432,7 @@ class InputController:
             # Calculate scroll amount (120 units per click)
             scroll_amount = 120 if direction == 'up' else -120
 
-            for _ in range(clicks):
+            for i in range(clicks):
                 mouse_input = MOUSEINPUT()
                 mouse_input.dx = 0
                 mouse_input.dy = 0
@@ -424,10 +445,11 @@ class InputController:
                 input_struct.type = INPUT_MOUSE
                 input_struct.union.mi = mouse_input
 
-                self.user32.SendInput(1, ctypes.byref(input_struct), ctypes.sizeof(INPUT))
+                result = self.user32.SendInput(1, ctypes.byref(input_struct), ctypes.sizeof(INPUT))
+                logger.debug(f"[SendInput] Scroll {direction} tick {i+1}/{clicks} amount={scroll_amount} result={result}")
                 time.sleep(0.02)
 
-            logger.debug(f"Scrolled {direction} {clicks} times")
+            logger.debug(f"Scrolled {direction} {clicks} times at ({x}, {y})")
             return True
 
         except Exception as e:
@@ -552,6 +574,8 @@ class InputController:
         """Send a keyboard event using SendInput."""
         # Get hardware scan code for the virtual key
         scan_code = self.user32.MapVirtualKeyW(vk_code, 0)
+        action = "KEY_UP" if key_up else "KEY_DOWN"
+        logger.debug(f"[SendInput] {action} VK=0x{vk_code:02X} scan=0x{scan_code:02X}")
 
         kbd_input = KEYBDINPUT()
         kbd_input.wVk = vk_code
@@ -565,6 +589,8 @@ class InputController:
         input_struct.union.ki = kbd_input
 
         result = self.user32.SendInput(1, ctypes.byref(input_struct), ctypes.sizeof(INPUT))
+        if result == 0:
+            logger.debug(f"[SendInput] {action} VK=0x{vk_code:02X} failed (result=0)")
         return result
 
     def press_hotkey(self, keys: list) -> bool:
@@ -597,6 +623,7 @@ class InputController:
                     logger.error(f"Unknown key in hotkey: {key}")
                     return False
 
+            logger.debug(f"[Hotkey] Pressing down {len(vk_codes)} keys: {[f'0x{v:02X}' for v in vk_codes]}")
             # Press all keys down
             for vk_code in vk_codes:
                 self._send_key_event(vk_code, False)
@@ -604,6 +631,7 @@ class InputController:
 
             time.sleep(0.05)
 
+            logger.debug(f"[Hotkey] Releasing {len(vk_codes)} keys in reverse")
             # Release all keys in reverse order
             for vk_code in reversed(vk_codes):
                 self._send_key_event(vk_code, True)
@@ -619,12 +647,16 @@ class InputController:
     def type_text(self, text: str, char_delay: float = 0.05) -> bool:
         """Type text character by character."""
         try:
-            for char in text:
+            logger.debug(f"[TypeText] Typing {len(text)} chars with {char_delay}s delay")
+            for i, char in enumerate(text):
                 if char == '\n':
+                    logger.debug(f"[TypeText] char[{i}] = '\\n' -> press_key('enter')")
                     self.press_key('enter')
                 elif char == '\t':
+                    logger.debug(f"[TypeText] char[{i}] = '\\t' -> press_key('tab')")
                     self.press_key('tab')
                 else:
+                    logger.debug(f"[TypeText] char[{i}] = '{char}' -> pyautogui.write")
                     # Use pyautogui for complex characters
                     pyautogui.write(char, interval=0)
 

@@ -20,7 +20,7 @@ def show_progress_bar_gui(current: int, total: int, bar_length: int = 50):
     """Display a progress bar in the console for GUI app."""
     progress = current / total
     filled_length = int(bar_length * progress)
-    bar = '█' * filled_length + '-' * (bar_length - filled_length)
+    bar = '#' * filled_length + '-' * (bar_length - filled_length)
     percentage = progress * 100
 
     # Use \r to overwrite the same line
@@ -770,10 +770,10 @@ class AutomationGUI:
         messagebox.showerror("Connection Error", 
                             f"Cannot connect to SUT.\n\n{error_msg}\n\n"
                             "Please check:\n"
-                            "• SUT service is running\n"
-                            "• IP address and port are correct\n"
-                            "• Firewall settings\n"
-                            "• Network connectivity")
+                            "- SUT service is running\n"
+                            "- IP address and port are correct\n"
+                            "- Firewall settings\n"
+                            "- Network connectivity")
         # Reset status back to Ready after user closes the error dialog
         self.status_label.config(text="Ready", foreground="blue")
 

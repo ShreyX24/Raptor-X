@@ -69,6 +69,39 @@ def create_app() -> Flask:
     # Initialize input controller (from Gemma v0.2)
     input_controller = InputController()
 
+    # =========================================================================
+    # HTTP REQUEST/RESPONSE LOGGING (debug mode)
+    # =========================================================================
+
+    @app.before_request
+    def log_request():
+        """Log every incoming HTTP request at DEBUG level."""
+        request._start_time = time.time()
+        if request.is_json:
+            body = request.get_json(silent=True)
+            # Redact sensitive fields
+            if body and isinstance(body, dict):
+                safe_body = {k: ('***' if k in ('password',) else v) for k, v in body.items()}
+                # Truncate large values (base64 images, preset content)
+                for k, v in safe_body.items():
+                    if isinstance(v, str) and len(v) > 200:
+                        safe_body[k] = f"{v[:200]}... ({len(v)} chars)"
+                    elif isinstance(v, list) and len(v) > 5:
+                        safe_body[k] = f"[{len(v)} items]"
+            else:
+                safe_body = body
+            logger.debug(f"[HTTP] --> {request.method} {request.path} body={safe_body}")
+        else:
+            args = dict(request.args) if request.args else None
+            logger.debug(f"[HTTP] --> {request.method} {request.path} args={args}")
+
+    @app.after_request
+    def log_response(response):
+        """Log every HTTP response at DEBUG level with timing."""
+        elapsed = (time.time() - getattr(request, '_start_time', time.time())) * 1000
+        logger.debug(f"[HTTP] <-- {request.method} {request.path} status={response.status_code} time={elapsed:.1f}ms")
+        return response
+
     @app.route('/status', methods=['GET'])
     def status():
         """Return SUT status for discovery"""
@@ -1223,7 +1256,9 @@ def create_app() -> Flask:
                 region = None
 
             # Capture screenshot using mss (DXGI) for better game capture, fallback to ImageGrab
+            _cap_start = time.time()
             img = None
+            capture_method = None
             if MSS_AVAILABLE:
                 try:
                     with mss.mss() as sct:
@@ -1235,6 +1270,7 @@ def create_app() -> Flask:
                         sct_img = sct.grab(monitor)
                         # Convert to PIL Image
                         img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+                        capture_method = "mss (DXGI)"
                         logger.debug("Screenshot captured using mss (DXGI)")
                 except Exception as mss_err:
                     logger.warning(f"mss capture failed, falling back to ImageGrab: {mss_err}")
@@ -1243,14 +1279,21 @@ def create_app() -> Flask:
             if img is None:
                 # Fallback to ImageGrab
                 img = ImageGrab.grab(bbox=region)
+                capture_method = "ImageGrab"
                 logger.debug("Screenshot captured using ImageGrab")
+
+            _cap_elapsed = (time.time() - _cap_start) * 1000
+            logger.debug(f"[Screenshot] Captured {img.width}x{img.height} via {capture_method} in {_cap_elapsed:.1f}ms, region={region}, format={output_format}")
 
             if output_format == 'base64':
                 # Return as base64 JSON
+                _enc_start = time.time()
                 buffer = io.BytesIO()
                 img.save(buffer, format='PNG')
                 buffer.seek(0)
                 img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                _enc_elapsed = (time.time() - _enc_start) * 1000
+                logger.debug(f"[Screenshot] Encoded to base64: {len(img_base64)} chars, PNG size={buffer.tell()} bytes in {_enc_elapsed:.1f}ms")
                 return jsonify({
                     "status": "success",
                     "image": img_base64,
@@ -1259,9 +1302,12 @@ def create_app() -> Flask:
                 })
             else:
                 # Return as PNG file
+                _enc_start = time.time()
                 buffer = io.BytesIO()
                 img.save(buffer, format='PNG')
                 buffer.seek(0)
+                _enc_elapsed = (time.time() - _enc_start) * 1000
+                logger.debug(f"[Screenshot] Encoded to PNG: {buffer.getbuffer().nbytes} bytes in {_enc_elapsed:.1f}ms")
                 return send_file(buffer, mimetype='image/png')
 
         except Exception as e:

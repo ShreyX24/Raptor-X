@@ -70,9 +70,11 @@ def check_process(process_name: str) -> Dict[str, Any]:
     Returns:
         dict with running status, pid, and name
     """
+    logger.debug(f"[Process] Checking if '{process_name}' is running")
     proc = find_process_by_name(process_name)
 
     if proc:
+        logger.debug(f"[Process] '{process_name}' is running: PID={proc.pid}, name={proc.name()}")
         return {
             "status": "success",
             "running": True,
@@ -80,6 +82,7 @@ def check_process(process_name: str) -> Dict[str, Any]:
             "name": proc.name()
         }
     else:
+        logger.debug(f"[Process] '{process_name}' is not running")
         return {
             "status": "success",
             "running": False
@@ -365,6 +368,7 @@ def kill_process(process_name: str) -> Dict[str, Any]:
         cmd = ["taskkill", "/F", "/IM", process_name]
 
         logger.info(f"Killing process: {process_name}")
+        logger.debug(f"[Process] Executing: {' '.join(cmd)}")
 
         process = subprocess.run(
             cmd,

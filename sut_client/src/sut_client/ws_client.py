@@ -124,7 +124,9 @@ class WebSocketClient:
         )
         jitter = random.uniform(0, delay * 0.3)
         self.reconnect_attempts += 1
-        return delay + jitter
+        total = delay + jitter
+        logger.debug(f"[WS] Reconnect delay: {total:.1f}s (attempt #{self.reconnect_attempts}, base={delay:.1f}s, jitter={jitter:.1f}s)")
+        return total
 
     async def connect_and_run(self):
         """Connect to Master and maintain connection"""
@@ -145,10 +147,14 @@ class WebSocketClient:
                     self.reconnect_attempts = 0  # Reset on successful connect
 
                     # Send registration
-                    await ws.send(json.dumps(self._get_registration_info()))
+                    reg_info = self._get_registration_info()
+                    logger.debug(f"[WS] --> Sending registration: type={reg_info.get('type')}, sut_id={reg_info.get('sut_id')}, ip={reg_info.get('ip')}")
+                    await ws.send(json.dumps(reg_info))
 
                     # Wait for acknowledgment
-                    response = json.loads(await ws.recv())
+                    raw_response = await ws.recv()
+                    response = json.loads(raw_response)
+                    logger.debug(f"[WS] <-- Registration response: type={response.get('type')}, keys={list(response.keys())}")
 
                     if response.get("type") != "register_ack":
                         raise Exception(f"Registration failed: {response}")
@@ -160,7 +166,9 @@ class WebSocketClient:
 
                     # Message loop
                     async for message in ws:
-                        await self._handle_message(json.loads(message))
+                        parsed = json.loads(message)
+                        logger.debug(f"[WS] <-- Received message: type={parsed.get('type')}, keys={list(parsed.keys())}")
+                        await self._handle_message(parsed)
 
             except ConnectionClosed:
                 self.connected = False
@@ -227,13 +235,16 @@ class WebSocketClient:
     async def _handle_message(self, message: Dict[str, Any]):
         """Handle incoming message from Master"""
         msg_type = message.get("type")
+        logger.debug(f"[WS] Handling message type: {msg_type}")
 
         if msg_type == "ping":
             # Respond to heartbeat
+            logger.debug("[WS] --> Sending pong")
             await self.websocket.send(json.dumps({"type": "pong"}))
 
         elif msg_type == "status_request":
             # Send status
+            logger.debug("[WS] --> Sending status response")
             await self._send_status()
 
         elif msg_type == "update_available":
@@ -290,7 +301,7 @@ class WebSocketClient:
     async def _send_status(self):
         """Send status to Master"""
         if self.websocket:
-            await self.websocket.send(json.dumps({
+            payload = {
                 "type": "status",
                 "sut_id": self.sut_id,
                 "data": {
@@ -298,21 +309,26 @@ class WebSocketClient:
                     "connected": self.connected,
                     "timestamp": datetime.utcnow().isoformat()
                 }
-            }))
+            }
+            logger.debug(f"[WS] --> status: connected={self.connected}")
+            await self.websocket.send(json.dumps(payload))
 
     async def _send_result(self, command_type: str, result: Dict[str, Any]):
         """Send command result to Master"""
         if self.websocket:
-            await self.websocket.send(json.dumps({
+            payload = {
                 "type": "result",
                 "sut_id": self.sut_id,
                 "command_type": command_type,
                 "data": result,
                 "timestamp": datetime.utcnow().isoformat()
-            }))
+            }
+            logger.debug(f"[WS] --> result for '{command_type}': keys={list(result.keys())}")
+            await self.websocket.send(json.dumps(payload))
 
     def stop(self):
         """Stop the client"""
+        logger.debug("[WS] Stop requested, closing connection")
         self.running = False
         self.connected = False
 

@@ -418,6 +418,7 @@ class PresetApplier:
         if not path_string:
             return ""
 
+        logger.debug(f"[Path] Expanding: {path_string}")
         expanded = path_string
 
         # Handle %STEAM_GAME_<appid>% pattern for dynamic game path resolution
@@ -438,7 +439,9 @@ class PresetApplier:
                 expanded = expanded.replace(env_var, env_value)
                 expanded = expanded.replace(env_var.lower(), env_value)
 
-        return expanded.replace('\\', os.sep)
+        result = expanded.replace('\\', os.sep)
+        logger.debug(f"[Path] Expanded to: {result}")
+        return result
 
     def resolve_config_path(self, config_path: str) -> Optional[Path]:
         """
@@ -672,13 +675,19 @@ class PresetApplier:
                 filename = file_data.get('filename')
                 content_b64 = file_data.get('content')
                 if filename and content_b64:
-                    file_content_map[filename] = base64.b64decode(content_b64)
+                    decoded = base64.b64decode(content_b64)
+                    file_content_map[filename] = decoded
+                    logger.debug(f"[Preset] Decoded file '{filename}': {len(decoded)} bytes")
+
+            logger.debug(f"[Preset] {len(file_content_map)} files to apply, {len(config_files)} config targets")
 
             # Process each config file
             for config_def in config_files:
                 config_path = config_def.get('path', '')
                 config_type = config_def.get('type', 'ini')
                 apply_to_all_subfolders = config_def.get('apply_to_all_subfolders', False)
+
+                logger.debug(f"[Preset] Processing config: path='{config_path}', type={config_type}, wildcard={'*' in config_path}, subfolder={apply_to_all_subfolders}")
 
                 # Handle registry configs
                 if config_type == 'registry':
@@ -730,8 +739,10 @@ class PresetApplier:
 
                 # Create backup if file exists
                 if create_backup and target_path.exists():
+                    logger.debug(f"[Preset] Creating backup of {target_path}")
                     backup_path = self.backup_service.create_backup(game_short_name, target_path)
                     if backup_path:
+                        logger.debug(f"[Preset] Backup created: {backup_path}")
                         result["backups_created"].append(str(backup_path))
 
                 # Ensure target directory exists
@@ -752,6 +763,7 @@ class PresetApplier:
 
                 # Write preset file
                 try:
+                    logger.debug(f"[Preset] Writing {len(preset_content)} bytes to {target_path}")
                     with open(target_path, 'wb') as f:
                         f.write(preset_content)
                     result["files_applied"].append(str(target_path))

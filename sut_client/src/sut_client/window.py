@@ -126,7 +126,9 @@ def wait_for_window_ready_pywinauto(
         logger.debug("pywinauto not available, skipping wait_for_window_ready_pywinauto")
         return False, None, None
 
+    _wr_start = time.time()
     logger.info(f"Waiting for window ready state (PID: {pid})")
+    logger.debug(f"[WindowReady] visible_timeout={visible_timeout}s, ready_timeout={ready_timeout}s")
 
     try:
         # Connect to the process using pywinauto
@@ -179,6 +181,7 @@ def wait_for_window_ready_pywinauto(
         try:
             hwnd = main_window.handle
             logger.info(f"Window ready! HWND={hwnd}, Title='{window_title}'")
+            logger.debug(f"[WindowReady] Total time: {(time.time() - _wr_start)*1000:.1f}ms")
             return True, hwnd, window_title
         except Exception as e:
             logger.warning(f"Could not get window handle: {e}")
@@ -431,28 +434,38 @@ def ensure_window_foreground_v2(pid: int, timeout: int = 5, use_pywinauto: bool 
     Returns:
         bool: True if window is confirmed in foreground
     """
+    import time as _time
+    _fg_start = _time.time()
+
     # Method 1: Clean WScript.Shell AppActivate (best for games)
-    logger.debug(f"Trying clean focus methods for PID {pid}")
+    logger.debug(f"[Focus] Starting foreground sequence for PID {pid}, title={window_title}, use_pywinauto={use_pywinauto}")
 
     if window_title:
+        logger.debug(f"[Focus] Method 1a: AppActivate by title '{window_title}'")
         if focus_window_by_title(window_title):
+            logger.debug(f"[Focus] Success via title AppActivate in {(_time.time() - _fg_start)*1000:.1f}ms")
             return True
 
+    logger.debug(f"[Focus] Method 1b: AppActivate by PID {pid}")
     if focus_window_by_pid_clean(pid):
+        logger.debug(f"[Focus] Success via PID AppActivate in {(_time.time() - _fg_start)*1000:.1f}ms")
         return True
-    logger.debug("AppActivate failed, trying basic Win32")
+    logger.debug("[Focus] AppActivate failed, trying basic Win32")
 
     # Method 2: Basic Win32 (no Alt key, no system manipulation)
+    logger.debug(f"[Focus] Method 2: Basic Win32 for PID {pid}, timeout={min(timeout, 3)}s")
     if focus_window_basic_win32(pid, timeout=min(timeout, 3)):
+        logger.debug(f"[Focus] Success via basic Win32 in {(_time.time() - _fg_start)*1000:.1f}ms")
         return True
-    logger.debug("Basic Win32 failed, trying pywinauto")
+    logger.debug("[Focus] Basic Win32 failed, trying pywinauto")
 
     # Method 3: pywinauto (optional, can hang on fullscreen games)
     if use_pywinauto and PYWINAUTO_AVAILABLE:
-        logger.debug(f"Trying pywinauto set_focus for PID {pid}")
+        logger.debug(f"[Focus] Method 3: pywinauto set_focus for PID {pid}")
         if bring_to_foreground_pywinauto(pid):
+            logger.debug(f"[Focus] Success via pywinauto in {(_time.time() - _fg_start)*1000:.1f}ms")
             return True
-        logger.debug("pywinauto failed")
+        logger.debug("[Focus] pywinauto failed")
 
     # Method 4: Aggressive Win32 (last resort - disabled by default for games)
     # This method uses Alt key trick and SystemParametersInfo which can
@@ -460,7 +473,7 @@ def ensure_window_foreground_v2(pid: int, timeout: int = 5, use_pywinauto: bool 
     # logger.debug("Trying aggressive Win32 method (last resort)")
     # return ensure_window_foreground(pid, timeout)
 
-    logger.warning(f"All focus methods failed for PID {pid}")
+    logger.warning(f"[Focus] All focus methods failed for PID {pid} after {(_time.time() - _fg_start)*1000:.1f}ms")
     return False
 
 
@@ -727,8 +740,11 @@ def minimize_other_windows(target_pid: int, exclude_titles: list = None, exclude
         return True
 
     try:
+        _min_start = time.time()
         win32gui.EnumWindows(callback, None)
+        _min_elapsed = (time.time() - _min_start) * 1000
         logger.info(f"Minimized {minimized_count} other window(s)")
+        logger.debug(f"[Minimize] Completed in {_min_elapsed:.1f}ms, excluded PIDs: {exclude_pids}")
     except Exception as e:
         logger.error(f"minimize_other_windows failed: {e}")
 

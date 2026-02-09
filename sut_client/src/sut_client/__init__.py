@@ -13,12 +13,11 @@ __author__ = "RPX Team"
 
 # RAPTOR X ASCII Banner (with purple-to-white gradient)
 RPX_BANNER_LINES = [
-    "██████╗  █████╗ ██████╗ ████████╗ ██████╗ ██████╗     ██╗  ██╗",
-    "██╔══██╗██╔══██╗██╔══██╗╚══██╔══╝██╔═══██╗██╔══██╗    ╚██╗██╔╝",
-    "██████╔╝███████║██████╔╝   ██║   ██║   ██║██████╔╝     ╚███╔╝",
-    "██╔══██╗██╔══██║██╔═══╝    ██║   ██║   ██║██╔══██╗     ██╔██╗",
-    "██║  ██║██║  ██║██║        ██║   ╚██████╔╝██║  ██║    ██╔╝ ██╗",
-    "╚═╝  ╚═╝╚═╝  ╚═╝╚═╝        ╚═╝    ╚═════╝ ╚═╝  ╚═╝    ╚═╝  ╚═╝",
+    " ____   _    ____ _____ ___  ____    __  __",
+    "|  _ \\ / \\  |  _ \\_   _/ _ \\|  _ \\   \\ \\/ /",
+    "| |_) / _ \\ | |_) || || | | | |_) |   \\  / ",
+    "|  _ < ___ \\|  __/ | || |_| |  _ <    /  \\ ",
+    "|_| \\_\\_/ \\_\\_|    |_| \\___/|_| \\_\\  /_/\\_\\",
 ]
 
 # ANSI 256-color gradient: purple (93) -> light purple -> white (231)
@@ -515,9 +514,12 @@ def main():
     if args.debug:
         logging.basicConfig(
             level=logging.DEBUG,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            force=True  # Override any prior basicConfig calls
         )
-        print("[DEBUG MODE ENABLED]")
+        # Ensure root logger and all child loggers are at DEBUG
+        logging.getLogger().setLevel(logging.DEBUG)
+        print("[DEBUG MODE ENABLED - verbose logging active for all modules]")
     else:
         logging.basicConfig(
             level=logging.INFO,

@@ -68,12 +68,12 @@ def set_window_title(title: str):
 def print_banner(operation: str):
     """Print operation banner"""
     banner = f"""
-{Colors.PURPLE}╔══════════════════════════════════════════════════════════════╗
-║{Colors.WHITE}                    RAPTOR X SSH OPERATIONS                    {Colors.PURPLE}║
-╠══════════════════════════════════════════════════════════════╣
-║{Colors.CYAN}  Operation: {Colors.WHITE}{operation:<49}{Colors.PURPLE}║
-║{Colors.CYAN}  Time:      {Colors.WHITE}{datetime.now().strftime('%Y-%m-%d %H:%M:%S'):<49}{Colors.PURPLE}║
-╚══════════════════════════════════════════════════════════════╝{Colors.RESET}
+{Colors.PURPLE}+==============================================================+
+|{Colors.WHITE}                    RAPTOR X SSH OPERATIONS                    {Colors.PURPLE}|
++==============================================================+
+|{Colors.CYAN}  Operation: {Colors.WHITE}{operation:<49}{Colors.PURPLE}|
+|{Colors.CYAN}  Time:      {Colors.WHITE}{datetime.now().strftime('%Y-%m-%d %H:%M:%S'):<49}{Colors.PURPLE}|
++==============================================================+{Colors.RESET}
 """
     print(banner)
 
@@ -88,8 +88,8 @@ def print_status(message: str, status: str = "info"):
         "progress": Colors.WHITE,
     }
     color = colors.get(status, Colors.WHITE)
-    symbol = {"info": "→", "success": "✓", "warning": "!", "error": "✗", "progress": "○"}
-    print(f"{color}{symbol.get(status, '→')}{Colors.RESET} {message}")
+    symbol = {"info": "->", "success": "[OK]", "warning": "!", "error": "[X]", "progress": "o"}
+    print(f"{color}{symbol.get(status, '->')}{Colors.RESET} {message}")
 
 
 def print_progress_bar(current: int, total: int, prefix: str = "", width: int = 40):
@@ -100,7 +100,7 @@ def print_progress_bar(current: int, total: int, prefix: str = "", width: int = 
         percent = int((current / total) * 100)
 
     filled = int(width * current / total) if total > 0 else width
-    bar = "█" * filled + "░" * (width - filled)
+    bar = "#" * filled + "-" * (width - filled)
 
     # Format size
     def format_size(size_bytes):
@@ -308,9 +308,9 @@ def cmd_update(args):
         print_status("Restarter not found - please restart sut-client manually", "warning")
 
     print()
-    print(f"{Colors.GREEN}{'═' * 60}{Colors.RESET}")
+    print(f"{Colors.GREEN}{'=' * 60}{Colors.RESET}")
     print(f"{Colors.GREEN}  UPDATE COMPLETE!{Colors.RESET}")
-    print(f"{Colors.GREEN}{'═' * 60}{Colors.RESET}")
+    print(f"{Colors.GREEN}{'=' * 60}{Colors.RESET}")
 
     countdown_close(5)
     return 0
@@ -423,10 +423,10 @@ def cmd_push_logs(args):
         return 1
 
     print()
-    print(f"{Colors.GREEN}{'═' * 60}{Colors.RESET}")
+    print(f"{Colors.GREEN}{'=' * 60}{Colors.RESET}")
     print(f"{Colors.GREEN}  LOGS UPLOADED SUCCESSFULLY!{Colors.RESET}")
     print(f"{Colors.GREEN}  Location: {master_ip}:{remote_dest}{Colors.RESET}")
-    print(f"{Colors.GREEN}{'═' * 60}{Colors.RESET}")
+    print(f"{Colors.GREEN}{'=' * 60}{Colors.RESET}")
 
     countdown_close(5)
     return 0
@@ -476,9 +476,9 @@ def cmd_setup_keys(args):
 
     # Display public key
     print()
-    print(f"{Colors.CYAN}{'─' * 60}{Colors.RESET}")
+    print(f"{Colors.CYAN}{'-' * 60}{Colors.RESET}")
     print(f"{Colors.WHITE}Your public key:{Colors.RESET}")
-    print(f"{Colors.CYAN}{'─' * 60}{Colors.RESET}")
+    print(f"{Colors.CYAN}{'-' * 60}{Colors.RESET}")
 
     try:
         public_key = pub_key_path.read_text().strip()
@@ -488,7 +488,7 @@ def cmd_setup_keys(args):
         input("Press Enter to close...")
         return 1
 
-    print(f"{Colors.CYAN}{'─' * 60}{Colors.RESET}")
+    print(f"{Colors.CYAN}{'-' * 60}{Colors.RESET}")
     print()
 
     # Get fingerprint

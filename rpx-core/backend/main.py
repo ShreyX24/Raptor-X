@@ -16,7 +16,7 @@ def setup_logging(config):
     # Create UTF-8 capable handlers for Windows compatibility
     file_handler = logging.FileHandler(config.log_file, encoding='utf-8')
 
-    # For console output, use UTF-8 stream to handle special characters (e.g., ⌘ from OCR)
+    # For console output, use UTF-8 stream to handle special characters (e.g., special chars from OCR)
     import io
     stream_handler = logging.StreamHandler(
         io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')

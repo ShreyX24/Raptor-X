@@ -258,14 +258,14 @@ class RunStorageManager:
 
     Directory structure:
     logs/runs/{date}_{time}_{cpu}_{ip}_{type}-{game}/
-    ├── manifest.json
-    ├── perf-run-1/
-    │   ├── blackbox_perf-run1_{cpu}_{ip}_{game}.log
-    │   ├── screenshots/
-    │   └── results/
-    ├── perf-run-2/
-    ├── perf-run-3/
-    └── trace-run/
+    +-- manifest.json
+    +-- perf-run-1/
+    |   +-- blackbox_perf-run1_{cpu}_{ip}_{game}.log
+    |   +-- screenshots/
+    |   +-- results/
+    +-- perf-run-2/
+    +-- perf-run-3/
+    +-- trace-run/
     """
 
     def __init__(self, base_dir: str = None):

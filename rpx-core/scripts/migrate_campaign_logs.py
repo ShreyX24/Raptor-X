@@ -5,20 +5,20 @@ to game-grouped structure.
 
 Before:
     campaign-folder/
-    ├── 2026-01-08_..._single-Far Cry 6/       (game1, run 1)
-    ├── 2026-01-08_..._single-Shadow of TR/    (game2, run 1)
-    ├── 2026-01-08_..._single-Far Cry 6/       (game1, run 2)
-    └── campaign_manifest.json
+    +-- 2026-01-08_..._single-Far Cry 6/       (game1, run 1)
+    +-- 2026-01-08_..._single-Shadow of TR/    (game2, run 1)
+    +-- 2026-01-08_..._single-Far Cry 6/       (game1, run 2)
+    +-- campaign_manifest.json
 
 After:
     campaign-folder/
-    ├── Far-Cry-6/
-    │   ├── perf-run-1/
-    │   └── perf-run-2/
-    ├── Shadow-of-the-Tomb-Raider/
-    │   ├── perf-run-1/
-    │   └── perf-run-2/
-    └── campaign_manifest.json
+    +-- Far-Cry-6/
+    |   +-- perf-run-1/
+    |   +-- perf-run-2/
+    +-- Shadow-of-the-Tomb-Raider/
+    |   +-- perf-run-1/
+    |   +-- perf-run-2/
+    +-- campaign_manifest.json
 
 Usage:
     python migrate_campaign_logs.py [--dry-run] [--logs-dir PATH]

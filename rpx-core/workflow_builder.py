@@ -50,7 +50,7 @@ class CollapsibleFrame(ttk.Frame):
         # Toggle button with arrow indicator
         self.toggle_btn = ttk.Button(
             self.header, 
-            text=f"{'▶' if collapsed else '▼'} {title}",
+            text=f"{'>' if collapsed else 'v'} {title}",
             command=self.toggle,
             style="Toolbutton"
         )
@@ -67,10 +67,10 @@ class CollapsibleFrame(ttk.Frame):
         
         if self.collapsed:
             self.content.pack_forget()
-            self.toggle_btn.config(text=f"▶ {self.title}")
+            self.toggle_btn.config(text=f"> {self.title}")
         else:
             self.content.pack(fill=tk.BOTH, expand=True)
-            self.toggle_btn.config(text=f"▼ {self.title}")
+            self.toggle_btn.config(text=f"v {self.title}")
     
     def collapse(self):
         """Collapse the frame."""
@@ -336,7 +336,7 @@ class ActionDefinitionDialog(tk.Toplevel):
         actions_grid = [
             # Column 1: Click actions
             [
-                ("🖱️ Click Actions", None, "header"),
+                ("Click Actions", None, "header"),
                 ("Find and Click", "find_and_click", "Find element and click it"),
                 ("Right Click", "right_click", "Right-click on element"),
                 ("Double Click", "double_click", "Double-click on element"),
@@ -345,7 +345,7 @@ class ActionDefinitionDialog(tk.Toplevel):
             ],
             # Column 2: Keyboard actions
             [
-                ("⌨️ Keyboard Actions", None, "header"),
+                ("Keyboard Actions", None, "header"),
                 ("Press Key", "key", "Press single key (Enter, Esc, etc.)"),
                 ("Hold Key", "hold_key", "Press and HOLD key for duration"),
                 ("Key Combo", "hotkey", "Press keys together (Ctrl+S)"),
@@ -353,7 +353,7 @@ class ActionDefinitionDialog(tk.Toplevel):
             ],
             # Column 3: Other actions
             [
-                ("🖱️ Other Actions", None, "header"),
+                ("Other Actions", None, "header"),
                 ("Hold Click", "hold_click", "Click and HOLD for duration"),
                 ("Scroll", "scroll", "Scroll up or down"),
                 ("Wait", "wait", "Wait for specified time")
@@ -920,7 +920,7 @@ class WorkflowBuilderGUI:
         ttk.Label(sut_frame, text=":").pack(side=tk.LEFT)
         ttk.Entry(sut_frame, textvariable=self.sut_port, width=5).pack(side=tk.LEFT, padx=2)
         ttk.Button(sut_frame, text="Connect", command=self.connect_sut, width=8).pack(side=tk.LEFT, padx=3)
-        self.sut_status_label = ttk.Label(sut_frame, text="●", foreground="red", font=('TkDefaultFont', 14))
+        self.sut_status_label = ttk.Label(sut_frame, text="*", foreground="red", font=('TkDefaultFont', 14))
         self.sut_status_label.pack(side=tk.LEFT, padx=2)
 
         # Vision model connection (compact)
@@ -941,7 +941,7 @@ class WorkflowBuilderGUI:
         ttk.Label(self.omni_frame, text=":").pack(side=tk.LEFT)
         ttk.Entry(self.omni_frame, textvariable=self.omniparser_port, width=5).pack(side=tk.LEFT, padx=2)
         ttk.Button(self.omni_frame, text="Connect", command=self.connect_vision_model, width=8).pack(side=tk.LEFT, padx=3)
-        self.vision_status_label = ttk.Label(self.omni_frame, text="●", foreground="red", font=('TkDefaultFont', 14))
+        self.vision_status_label = ttk.Label(self.omni_frame, text="*", foreground="red", font=('TkDefaultFont', 14))
         self.vision_status_label.pack(side=tk.LEFT, padx=2)
 
         # Gemma connection (hidden by default)
@@ -950,19 +950,19 @@ class WorkflowBuilderGUI:
         ttk.Label(self.gemma_frame, text=":").pack(side=tk.LEFT)
         ttk.Entry(self.gemma_frame, textvariable=self.gemma_port, width=5).pack(side=tk.LEFT, padx=2)
         ttk.Button(self.gemma_frame, text="Connect", command=self.connect_vision_model, width=8).pack(side=tk.LEFT, padx=3)
-        self.gemma_status_label = ttk.Label(self.gemma_frame, text="●", foreground="red", font=('TkDefaultFont', 14))
+        self.gemma_status_label = ttk.Label(self.gemma_frame, text="*", foreground="red", font=('TkDefaultFont', 14))
         self.gemma_status_label.pack(side=tk.LEFT, padx=2)
 
         # Action buttons (compact)
         btn_frame = ttk.Frame(control_frame)
         btn_frame.pack(fill=tk.X, pady=3)
 
-        ttk.Button(btn_frame, text="📷 Capture", command=self.capture_screenshot).pack(side=tk.LEFT, padx=2)
-        ttk.Button(btn_frame, text="🔍 Parse", command=self.parse_screenshot).pack(side=tk.LEFT, padx=2)
-        ttk.Button(btn_frame, text="📁 Folder", command=self.open_screenshots_folder).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="Capture", command=self.capture_screenshot).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="Parse", command=self.parse_screenshot).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="Folder", command=self.open_screenshots_folder).pack(side=tk.LEFT, padx=2)
         
         # Zoom button
-        self.zoom_btn_text = tk.StringVar(value="🔎 100%")
+        self.zoom_btn_text = tk.StringVar(value="Zoom 100%")
         self.zoom_btn = ttk.Button(btn_frame, textvariable=self.zoom_btn_text, command=self.cycle_zoom, width=8)
         self.zoom_btn.pack(side=tk.LEFT, padx=5)
 
@@ -1018,16 +1018,16 @@ class WorkflowBuilderGUI:
         ttk.Button(step_btn_frame, text="+Add", command=self.add_step, width=6).pack(side=tk.LEFT, padx=1)
         ttk.Button(step_btn_frame, text="Edit", command=self.edit_step, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(step_btn_frame, text="Del", command=self.remove_step, width=4).pack(side=tk.LEFT, padx=1)
-        ttk.Button(step_btn_frame, text="▲", command=self.move_step_up, width=2).pack(side=tk.LEFT, padx=1)
-        ttk.Button(step_btn_frame, text="▼", command=self.move_step_down, width=2).pack(side=tk.LEFT, padx=1)
+        ttk.Button(step_btn_frame, text="Up", command=self.move_step_up, width=2).pack(side=tk.LEFT, padx=1)
+        ttk.Button(step_btn_frame, text="Dn", command=self.move_step_down, width=2).pack(side=tk.LEFT, padx=1)
         ttk.Button(step_btn_frame, text="Copy", command=self.copy_step, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(step_btn_frame, text="Paste", command=self.paste_step, width=5).pack(side=tk.LEFT, padx=1)
         
         # Test buttons with green styling
-        tk.Button(step_btn_frame, text="▶ Test", command=self.test_action, width=7,
+        tk.Button(step_btn_frame, text="> Test", command=self.test_action, width=7,
                   bg="#4CAF50", fg="white", font=('TkDefaultFont', 11, 'bold'),
                   relief=tk.RAISED, bd=2).pack(side=tk.LEFT, padx=3)
-        self.flow_btn = tk.Button(step_btn_frame, text="▶▶ Flow", command=self.toggle_flow, width=8,
+        self.flow_btn = tk.Button(step_btn_frame, text=">> Flow", command=self.toggle_flow, width=8,
                   bg="#2E7D32", fg="white", font=('TkDefaultFont', 11, 'bold'),
                   relief=tk.RAISED, bd=2)
         self.flow_btn.pack(side=tk.LEFT, padx=3)
@@ -1086,10 +1086,10 @@ class WorkflowBuilderGUI:
         game_path_frame.grid(row=row, column=1, columnspan=2, sticky=tk.W, pady=1)
         ttk.Entry(game_path_frame, textvariable=self.game_path, width=20).pack(side=tk.LEFT)
         
-        # Test/Kill button (starts as "▶ Test")
+        # Test/Kill button (starts as "> Test")
         self.game_running = False
         self.test_kill_btn = tk.Button(
-            game_path_frame, text="▶ Launch Game", width=12, 
+            game_path_frame, text="> Launch Game", width=12,
             command=self.toggle_game_test,
             bg="#4CAF50", fg="white", font=('TkDefaultFont', 10, 'bold')
         )
@@ -1157,20 +1157,20 @@ class WorkflowBuilderGUI:
 
             if self.omniparser_connection:
                 self.vision_model = self.omniparser_connection
-                self.vision_status_label.config(text="●", foreground="green")
+                self.vision_status_label.config(text="*", foreground="green")
             else:
                 self.vision_model = None
-                self.vision_status_label.config(text="●", foreground="red")
+                self.vision_status_label.config(text="*", foreground="red")
         else:
             self.omni_frame.pack_forget()
             self.gemma_frame.pack(fill=tk.X, pady=2)
 
             if self.gemma_connection:
                 self.vision_model = self.gemma_connection
-                self.gemma_status_label.config(text="●", foreground="green")
+                self.gemma_status_label.config(text="*", foreground="green")
             else:
                 self.vision_model = None
-                self.gemma_status_label.config(text="●", foreground="red")
+                self.gemma_status_label.config(text="*", foreground="red")
 
     def cycle_zoom(self):
         """Cycle through zoom levels: 50% -> 60% -> 70% -> 80% -> 90% -> 100% -> 50%..."""
@@ -1180,7 +1180,7 @@ class WorkflowBuilderGUI:
         
         # Update button text
         zoom_percent = int(zoom * 100)
-        self.zoom_btn_text.set(f"🔎 {zoom_percent}%")
+        self.zoom_btn_text.set(f"Zoom {zoom_percent}%")
         
         # Apply zoom to canvas
         self.canvas.set_zoom(zoom)
@@ -1257,7 +1257,7 @@ class WorkflowBuilderGUI:
             try:
                 self.status_text.set("Launching game...")
                 # Immediately show waiting state on button
-                self.test_kill_btn.config(text="⏳ Waiting...", bg="#FFC107")  # Yellow/amber for waiting
+                self.test_kill_btn.config(text="Waiting...", bg="#FFC107")  # Yellow/amber for waiting
                 self.root.update()
                 
                 # Get startup wait from metadata (default 30 seconds for slow games)
@@ -1281,7 +1281,7 @@ class WorkflowBuilderGUI:
                 if status == "success":
                     # Full success - process found and foreground confirmed
                     self.game_running = True
-                    self.test_kill_btn.config(text="■ Kill Game", bg="#f44336")  # Red
+                    self.test_kill_btn.config(text="[X] Kill Game", bg="#f44336")  # Red
                     process_name = process_id or os.path.basename(game_path)
                     pid = result.get("game_process_pid", "?")
                     self.status_text.set(f"Game running! PID: {pid}")
@@ -1293,7 +1293,7 @@ class WorkflowBuilderGUI:
                     
                     # Still set as running - user can try to kill or wait for process
                     self.game_running = True
-                    self.test_kill_btn.config(text="■ Kill Game", bg="#ff9800")  # Orange for warning
+                    self.test_kill_btn.config(text="[X] Kill Game", bg="#ff9800")  # Orange for warning
                     
                     # Try to detect process with retry if we have a process_id
                     if process_id:
@@ -1316,7 +1316,7 @@ class WorkflowBuilderGUI:
                         "The game may still be starting.\n"
                         "Mark as running anyway?"):
                         self.game_running = True
-                        self.test_kill_btn.config(text="■ Kill Game", bg="#ff9800")  # Orange
+                        self.test_kill_btn.config(text="[X] Kill Game", bg="#ff9800")  # Orange
                 else:
                     messagebox.showerror("Error", f"Failed to launch: {e}")
                     self.status_text.set("Launch failed")
@@ -1336,7 +1336,7 @@ class WorkflowBuilderGUI:
                 
                 # Reset button
                 self.game_running = False
-                self.test_kill_btn.config(text="▶ Launch Game", bg="#4CAF50")  # Green
+                self.test_kill_btn.config(text="> Launch Game", bg="#4CAF50")  # Green
                     
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to kill: {e}")
@@ -1399,7 +1399,7 @@ class WorkflowBuilderGUI:
             else:
                 # Process exited
                 self.game_running = False
-                self.test_kill_btn.config(text="▶ Launch Game", bg="#4CAF50")
+                self.test_kill_btn.config(text="> Launch Game", bg="#4CAF50")
                 self.status_text.set("Game exited")
         except Exception as e:
             logger.warning(f"Process check failed: {e}")
@@ -1414,12 +1414,12 @@ class WorkflowBuilderGUI:
             self.network = NetworkManager(ip, port)
             self.screenshot_mgr = ScreenshotManager(self.network)
 
-            self.sut_status_label.config(text="●", foreground="green")
+            self.sut_status_label.config(text="*", foreground="green")
             self.status_text.set(f"Connected to SUT at {ip}:{port}")
             messagebox.showinfo("Success", "Connected to SUT successfully!")
 
         except Exception as e:
-            self.sut_status_label.config(text="●", foreground="red")
+            self.sut_status_label.config(text="*", foreground="red")
             messagebox.showerror("Error", f"Failed to connect: {str(e)}")
 
     def connect_vision_model(self):
@@ -1444,17 +1444,17 @@ class WorkflowBuilderGUI:
                 model_name = "Gemma"
                 status_label = self.gemma_status_label
 
-            status_label.config(text="●", foreground="green")
+            status_label.config(text="*", foreground="green")
             self.status_text.set(f"Connected to {model_name} at {url}")
             messagebox.showinfo("Success", f"Connected to {model_name} successfully!")
 
         except Exception as e:
             if self.vision_var.get() == "omniparser":
-                self.vision_status_label.config(text="●", foreground="red")
+                self.vision_status_label.config(text="*", foreground="red")
                 # Clear saved connection on failure
                 self.omniparser_connection = None
             else:
-                self.gemma_status_label.config(text="●", foreground="red")
+                self.gemma_status_label.config(text="*", foreground="red")
                 # Clear saved connection on failure
                 self.gemma_connection = None
             messagebox.showerror("Error", f"Failed to connect to vision model: {str(e)}")
@@ -1925,7 +1925,7 @@ class WorkflowBuilderGUI:
         # Set running state and update button
         self.flow_running = True
         self.flow_stop_requested = False
-        self.flow_btn.config(text="■ Stop", bg="#f44336")  # Red
+        self.flow_btn.config(text="[X] Stop", bg="#f44336")  # Red
         self.root.update()
 
         failed_step = None
@@ -2076,7 +2076,7 @@ class WorkflowBuilderGUI:
         # Reset button state
         self.flow_running = False
         self.flow_stop_requested = False
-        self.flow_btn.config(text="▶▶ Flow", bg="#2E7D32")  # Green
+        self.flow_btn.config(text=">> Flow", bg="#2E7D32")  # Green
         self.root.update()
         
         if stopped:

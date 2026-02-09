@@ -904,7 +904,7 @@ class TimelineManager:
             The event_id for this service call (use to complete/fail the call)
         """
         event_id = self._generate_event_id("svc")
-        msg = f"{source_service} → {target_service}: {method} {endpoint}"
+        msg = f"{source_service} ->{target_service}: {method} {endpoint}"
 
         self.add_event(
             event_id,
@@ -948,7 +948,7 @@ class TimelineManager:
             target = event.metadata.get('target_service', '?')
             endpoint = event.metadata.get('endpoint', '?')
             duration_str = f" ({duration_ms}ms)" if duration_ms else ""
-            msg = f"{source} → {target}: {endpoint} completed{duration_str}"
+            msg = f"{source} ->{target}: {endpoint} completed{duration_str}"
 
         return self.add_event(
             f"{event_id}_done",
@@ -983,7 +983,7 @@ class TimelineManager:
             source = event.metadata.get('source_service', '?')
             target = event.metadata.get('target_service', '?')
             endpoint = event.metadata.get('endpoint', '?')
-            msg = f"{source} → {target}: {endpoint} failed - {error}"
+            msg = f"{source} ->{target}: {endpoint} failed - {error}"
 
         return self.add_event(
             f"{event_id}_failed",

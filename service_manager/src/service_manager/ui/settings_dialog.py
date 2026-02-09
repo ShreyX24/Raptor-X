@@ -883,8 +883,8 @@ class SteamAccountPairDialog(QDialog):
         # Description
         desc = QLabel(
             "Each pair has two accounts:\n"
-            "• A-F Account: Used for games starting with A-F (e.g., Cyberpunk, BMW)\n"
-            "• G-Z Account: Used for games starting with G-Z (e.g., RDR2, SOTR)"
+            "- A-F Account: Used for games starting with A-F (e.g., Cyberpunk, BMW)\n"
+            "- G-Z Account: Used for games starting with G-Z (e.g., RDR2, SOTR)"
         )
         desc.setWordWrap(True)
         desc.setStyleSheet("color: #888; margin-bottom: 10px;")
@@ -995,8 +995,8 @@ class SteamAccountsTab(QWidget):
             "Configure Steam account pairs for multi-SUT automation.\n\n"
             "Steam only allows one concurrent login per account. To run benchmarks on multiple SUTs "
             "simultaneously, each SUT needs a dedicated account pair. Games are split by first letter:\n"
-            "• A-F: BMW, Cyberpunk, Far Cry, etc.\n"
-            "• G-Z: Hitman, RDR2, SOTR, etc.\n\n"
+            "- A-F: BMW, Cyberpunk, Far Cry, etc.\n"
+            "- G-Z: Hitman, RDR2, SOTR, etc.\n\n"
             "This allows two games to run concurrently per SUT without login conflicts."
         )
         desc.setWordWrap(True)

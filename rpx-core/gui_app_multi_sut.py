@@ -466,9 +466,9 @@ class SUTController:
             self.current_game_name = game_entry.game_name
 
             self.logger.info(f"")
-            self.logger.info(f"╔════════════════════════════════════════════════════════════╗")
-            self.logger.info(f"║ GAME {game_index + 1}/{len(self.campaign)}: {game_entry.game_name}")
-            self.logger.info(f"╚════════════════════════════════════════════════════════════╝")
+            self.logger.info(f"============================================================")
+            self.logger.info(f"  GAME {game_index + 1}/{len(self.campaign)}: {game_entry.game_name}")
+            self.logger.info(f"============================================================")
             self.logger.info(f"Config: {game_entry.config_path}")
             self.logger.info(f"Game Path: {game_entry.game_path}")
             self.logger.info(f"Runs: {game_entry.run_count}, Delay: {game_entry.run_delay}s")
@@ -484,7 +484,7 @@ class SUTController:
                 self.failed_games.append(game_entry.game_name)
 
                 if self.continue_on_failure:
-                    self.logger.warning(f"⚠️  Skipping {game_entry.game_name} and continuing with campaign...")
+                    self.logger.warning(f"[WARN] Skipping {game_entry.game_name} and continuing with campaign...")
                     continue  # Skip to next game
                 else:
                     self.status = "Failed"
@@ -513,9 +513,9 @@ class SUTController:
                 self.total_runs = game_entry.run_count
 
                 self.logger.info(f"")
-                self.logger.info(f"────────────────────────────────────────────────────────────")
+                self.logger.info(f"------------------------------------------------------------")
                 self.logger.info(f"  Run {run_num}/{game_entry.run_count} of {game_entry.game_name}")
-                self.logger.info(f"────────────────────────────────────────────────────────────")
+                self.logger.info(f"------------------------------------------------------------")
 
                 # Run appropriate automation type
                 if config_parser.is_step_based():
@@ -531,7 +531,7 @@ class SUTController:
                     return
 
                 if self.status == "Failed":
-                    self.logger.error(f"❌ Run {run_num} of {game_entry.game_name} failed")
+                    self.logger.error(f"[FAIL] Run {run_num} of {game_entry.game_name} failed")
                     self.failed_games.append(f"{game_entry.game_name} (Run {run_num})")
 
                     # Kill the failed game process before continuing
@@ -540,7 +540,7 @@ class SUTController:
                         self.kill_game_process()
 
                     if self.continue_on_failure:
-                        self.logger.warning(f"⚠️  Skipping remaining runs of {game_entry.game_name} and continuing with campaign...")
+                        self.logger.warning(f"[WARN] Skipping remaining runs of {game_entry.game_name} and continuing with campaign...")
                         self.status = "Running"  # Reset status to continue
                         break  # Skip remaining runs of this game, move to next game
                     else:
@@ -566,7 +566,7 @@ class SUTController:
             # Delay between games (except after last game)
             if game_index < len(self.campaign) - 1 and self.delay_between_games > 0:
                 self.logger.info(f"")
-                self.logger.info(f"⏳ Waiting {self.delay_between_games} seconds before next game...")
+                self.logger.info(f"Waiting {self.delay_between_games} seconds before next game...")
                 for _ in range(self.delay_between_games):
                     if self.stop_event.is_set():
                         self.logger.info("Campaign stopped during game delay")
@@ -577,24 +577,24 @@ class SUTController:
         # Campaign completed (with or without failures)
         if self.status != "Failed" and self.status != "Stopped":
             self.logger.info(f"")
-            self.logger.info(f"╔════════════════════════════════════════════════════════════╗")
+            self.logger.info(f"============================================================")
             if len(self.failed_games) == 0:
                 self.status = "Completed"
-                self.logger.info(f"║ >>>> CAMPAIGN COMPLETED SUCCESSFULLY!")
-                self.logger.info(f"║ Total Games: {len(self.campaign)}")
-                self.logger.info(f"║ All games executed without errors")
+                self.logger.info(f"  >>>> CAMPAIGN COMPLETED SUCCESSFULLY!")
+                self.logger.info(f"  Total Games: {len(self.campaign)}")
+                self.logger.info(f"  All games executed without errors")
             else:
                 self.status = "Completed"  # Still mark as completed (partial success)
-                self.logger.info(f"║ ⚠️  CAMPAIGN COMPLETED WITH FAILURES")
-                self.logger.info(f"║ Total Games: {len(self.campaign)}")
-                self.logger.info(f"║ Successful: {len(self.campaign) - len(self.failed_games)}")
-                self.logger.info(f"║ Failed: {len(self.failed_games)}")
-                self.logger.info(f"║")
-                self.logger.info(f"║ Failed Games:")
+                self.logger.info(f"  [WARN] CAMPAIGN COMPLETED WITH FAILURES")
+                self.logger.info(f"  Total Games: {len(self.campaign)}")
+                self.logger.info(f"  Successful: {len(self.campaign) - len(self.failed_games)}")
+                self.logger.info(f"  Failed: {len(self.failed_games)}")
+                self.logger.info(f"  ")
+                self.logger.info(f"  Failed Games:")
                 for failed_game in self.failed_games:
-                    self.logger.info(f"║   • {failed_game}")
-            self.logger.info(f"║ Campaign: {self.campaign_name}")
-            self.logger.info(f"╚════════════════════════════════════════════════════════════╝")
+                    self.logger.info(f"    - {failed_game}")
+            self.logger.info(f"  Campaign: {self.campaign_name}")
+            self.logger.info(f"============================================================")
             self.logger.info(f"")
 
     def _run_simple_automation(self, config_parser, config, shared_settings, batch_dir, run_num):
@@ -1311,7 +1311,7 @@ class MultiSUTGUI:
         ttk.Label(row1, text="Name:").pack(side=tk.LEFT, padx=(0, 5))
 
         # Color indicator dot
-        color_dot = tk.Label(row1, text="●", font=("TkDefaultFont", 14),
+        color_dot = tk.Label(row1, text="*", font=("TkDefaultFont", 14),
                             foreground=controller.color["accent"])
         color_dot.pack(side=tk.LEFT, padx=(0, 3))
 
@@ -1581,7 +1581,7 @@ class MultiSUTGUI:
                   command=lambda: self._restart_sut(controller)).pack(side=tk.LEFT, padx=5)
 
         # Preview toggle button
-        preview_btn = ttk.Button(button_row, text="🎥 Preview: ON",
+        preview_btn = ttk.Button(button_row, text="Preview: ON",
                                 command=lambda: self._toggle_preview(controller, widgets))
         preview_btn.pack(side=tk.LEFT, padx=5)
         widgets['preview_btn'] = preview_btn
@@ -1695,9 +1695,9 @@ class MultiSUTGUI:
         # Update button text and appearance
         preview_btn = widgets['preview_btn']
         if controller.preview_enabled:
-            preview_btn.config(text="🎥 Preview: ON")
+            preview_btn.config(text="Preview: ON")
         else:
-            preview_btn.config(text="📷 Preview: OFF")
+            preview_btn.config(text="Preview: OFF")
 
             # Clear the preview canvas when disabling
             canvas = widgets['preview_canvas']
@@ -2250,9 +2250,9 @@ class MultiSUTGUI:
         button_size = 6
         ttk.Button(right_section, text="Edit", width=button_size,
                   command=lambda: self._edit_game_dialog(controller, widgets, index)).pack(side=tk.LEFT, padx=2)
-        ttk.Button(right_section, text="↑", width=3,
+        ttk.Button(right_section, text="Up", width=3,
                   command=lambda: self._move_game_up(controller, widgets, index)).pack(side=tk.LEFT, padx=2)
-        ttk.Button(right_section, text="↓", width=3,
+        ttk.Button(right_section, text="Down", width=3,
                   command=lambda: self._move_game_down(controller, widgets, index)).pack(side=tk.LEFT, padx=2)
         ttk.Button(right_section, text="Remove", width=button_size,
                   command=lambda: self._remove_game_from_campaign(controller, widgets, index)).pack(side=tk.LEFT, padx=2)
@@ -2574,9 +2574,9 @@ class MultiSUTGUI:
             # Update tab title with status indicator
             tab_text = f"{controller.name}: {controller.ip}"
             if controller.status == "Running":
-                tab_text += " ●"
+                tab_text += " *"
             elif controller.status == "Failed" or controller.status == "Error":
-                tab_text += " ●"
+                tab_text += " *"
 
             # Find tab index and update
             for idx in range(self.notebook.index("end")):

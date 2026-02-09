@@ -2,7 +2,7 @@
 Process Manager - Optimized process management with state machine, proper cleanup, and reliability features
 
 Optimizations implemented:
-1. ProcessWrapper with formal state machine (stopped→starting→running→stopping)
+1. ProcessWrapper with formal state machine (stopped->starting->running->stopping)
 2. Proper signal lifecycle management (connect on start, disconnect on stop)
 3. Timer consolidation (single timer with scheduled callbacks)
 4. Log batching (buffer output, flush every 100ms)
