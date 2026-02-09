@@ -4,6 +4,7 @@ export interface SUT {
   ip: string;
   port: number;
   hostname: string;
+  display_name?: string | null;
   status: 'online' | 'offline' | 'busy' | 'error';
   capabilities: Record<string, unknown>;
   last_seen: string | null;

@@ -105,6 +105,20 @@ export async function unpairSut(deviceId: string): Promise<{ status: string }> {
   });
 }
 
+// SUT Display Name API
+export async function setSutDisplayName(
+  deviceId: string,
+  displayName: string
+): Promise<{ success: boolean; display_name: string }> {
+  return fetchJson<{ success: boolean; display_name: string }>(
+    `${DISCOVERY_API}/suts/${deviceId}/display-name`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ display_name: displayName }),
+    }
+  );
+}
+
 // Discovery APIs
 export async function triggerDiscoveryScan(): Promise<{ status: string; scan_result: unknown }> {
   return fetchJson<{ status: string; scan_result: unknown }>(`${API_BASE}/discovery/scan`, {

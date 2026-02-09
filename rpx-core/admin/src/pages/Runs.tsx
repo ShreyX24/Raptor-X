@@ -487,6 +487,68 @@ type RunSummaryItem = {
   run?: AutomationRun;
 };
 
+// Sort types for column sorting
+type SortField = 'type' | 'games' | 'sut_ip' | 'preset' | 'status' | 'duration' | 'started_at';
+type SortDirection = 'asc' | 'desc';
+
+// Chevron icons for sort indicators
+function ChevronUp({ active }: { active: boolean }) {
+  return (
+    <svg className={`w-3 h-3 ${active ? 'text-primary' : 'text-text-muted/30'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+    </svg>
+  );
+}
+
+function ChevronDown2({ active }: { active: boolean }) {
+  return (
+    <svg className={`w-3 h-3 ${active ? 'text-primary' : 'text-text-muted/30'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+    </svg>
+  );
+}
+
+function SortableHeader({
+  label,
+  field,
+  currentField,
+  direction,
+  onSort,
+  className = '',
+}: {
+  label: string;
+  field: SortField;
+  currentField: SortField;
+  direction: SortDirection;
+  onSort: (field: SortField) => void;
+  className?: string;
+}) {
+  const isActive = field === currentField;
+  return (
+    <th
+      onClick={() => onSort(field)}
+      className={`px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider cursor-pointer select-none hover:text-text-secondary transition-colors ${className}`}
+    >
+      <div className="flex items-center gap-1">
+        {label}
+        <span className="inline-flex flex-col -space-y-1">
+          <ChevronUp active={isActive && direction === 'asc'} />
+          <ChevronDown2 active={isActive && direction === 'desc'} />
+        </span>
+      </div>
+    </th>
+  );
+}
+
+// Get duration in ms for sorting
+function getDurationMs(startedAt: string | null, completedAt: string | null | undefined, status: string): number {
+  if (!startedAt) return 0;
+  const start = new Date(startedAt).getTime();
+  const end = completedAt ? new Date(completedAt).getTime() :
+    (status === 'running' ? Date.now() : start);
+  return end - start;
+}
+
 // Calculate duration from start to end (or now if running)
 function formatDuration(startedAt: string | null, completedAt: string | null | undefined, status: string): string {
   if (!startedAt) return '-';
@@ -514,6 +576,19 @@ export function Runs() {
   const { activeRunsList, history, loading, stop, pagination, loadMore, loadingMore } = useRuns();
   const { activeCampaigns, historyCampaigns, stop: stopCampaign } = useCampaigns();
   const [isClearing, setIsClearing] = useState(false);
+
+  // Sort state
+  const [sortField, setSortField] = useState<SortField>('started_at');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('desc');
+    }
+  };
 
   // Expanded rows state
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
@@ -632,15 +707,45 @@ export function Runs() {
       });
     });
 
-    // Sort by started_at descending (most recent first)
+    return items;
+  }, [activeCampaigns, historyCampaigns, activeRunsList, history]);
+
+  // Sorted list based on column sort state
+  const sortedList = useMemo(() => {
+    const items = [...unifiedList];
+    const dir = sortDirection === 'asc' ? 1 : -1;
+
     items.sort((a, b) => {
-      const timeA = a.started_at ? new Date(a.started_at).getTime() : 0;
-      const timeB = b.started_at ? new Date(b.started_at).getTime() : 0;
-      return timeB - timeA;
+      switch (sortField) {
+        case 'type':
+          return dir * a.type.localeCompare(b.type);
+        case 'games':
+          return dir * (a.games[0] || '').localeCompare(b.games[0] || '');
+        case 'sut_ip':
+          return dir * a.sut_ip.localeCompare(b.sut_ip);
+        case 'preset': {
+          const presetA = a.quality && a.resolution ? `${a.quality}@${a.resolution}` : '';
+          const presetB = b.quality && b.resolution ? `${b.quality}@${b.resolution}` : '';
+          return dir * presetA.localeCompare(presetB);
+        }
+        case 'status':
+          return dir * a.status.localeCompare(b.status);
+        case 'duration': {
+          const durA = getDurationMs(a.started_at, a.completed_at, a.status);
+          const durB = getDurationMs(b.started_at, b.completed_at, b.status);
+          return dir * (durA - durB);
+        }
+        case 'started_at':
+        default: {
+          const timeA = a.started_at ? new Date(a.started_at).getTime() : 0;
+          const timeB = b.started_at ? new Date(b.started_at).getTime() : 0;
+          return dir * (timeA - timeB);
+        }
+      }
     });
 
     return items;
-  }, [activeCampaigns, historyCampaigns, activeRunsList, history]);
+  }, [unifiedList, sortField, sortDirection]);
 
   const toggleRowExpand = (id: string) => {
     setExpandedRows(prev => {
@@ -803,32 +908,18 @@ export function Runs() {
               <thead className="bg-surface-elevated">
                 <tr>
                   <th className="w-8 px-2"></th>
-                  <th className="w-24 px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider">
-                    Type
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider">
-                    Game(s)
-                  </th>
-                  <th className="w-32 px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider hidden sm:table-cell">
-                    SUT
-                  </th>
-                  <th className="w-28 px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider hidden lg:table-cell">
-                    Preset
-                  </th>
-                  <th className="w-32 px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="w-24 px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider hidden md:table-cell">
-                    Duration
-                  </th>
-                  <th className="w-44 px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider hidden lg:table-cell">
-                    Started
-                  </th>
+                  <SortableHeader label="Type" field="type" currentField={sortField} direction={sortDirection} onSort={handleSort} className="w-24" />
+                  <SortableHeader label="Game(s)" field="games" currentField={sortField} direction={sortDirection} onSort={handleSort} className="px-4" />
+                  <SortableHeader label="SUT" field="sut_ip" currentField={sortField} direction={sortDirection} onSort={handleSort} className="w-32 hidden sm:table-cell" />
+                  <SortableHeader label="Preset" field="preset" currentField={sortField} direction={sortDirection} onSort={handleSort} className="w-28 hidden lg:table-cell" />
+                  <SortableHeader label="Status" field="status" currentField={sortField} direction={sortDirection} onSort={handleSort} className="w-32" />
+                  <SortableHeader label="Duration" field="duration" currentField={sortField} direction={sortDirection} onSort={handleSort} className="w-24 hidden md:table-cell" />
+                  <SortableHeader label="Started" field="started_at" currentField={sortField} direction={sortDirection} onSort={handleSort} className="w-44 hidden lg:table-cell" />
                   <th className="w-16 px-2 py-3"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {unifiedList.map((item) => {
+                {sortedList.map((item) => {
                   const isExpanded = expandedRows.has(item.id);
                   const currentTab = expandedTab[item.id] || 'timeline';
 

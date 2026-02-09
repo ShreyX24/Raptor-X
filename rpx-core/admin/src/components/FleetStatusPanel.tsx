@@ -3,15 +3,28 @@
  */
 
 import { useState } from 'react';
-import { RefreshCw, Key } from 'lucide-react';
+import { RefreshCw, Key, Pencil, Check, X } from 'lucide-react';
 import { StatusDot } from './DataTable';
+import { setSutDisplayName } from '../api';
 import type { SUT } from '../types';
+
+/** Get display label for a SUT (display_name > hostname > ip) */
+function getSutLabel(sut: SUT): string {
+  return sut.display_name || sut.hostname || sut.ip;
+}
+
+/** Whether to show IP separately (not redundant with the label) */
+function shouldShowIp(sut: SUT): boolean {
+  const label = getSutLabel(sut);
+  return label !== sut.ip;
+}
 
 interface FleetStatusPanelProps {
   devices: SUT[];
   onlineDevices: SUT[];
   selectedSutId?: string;
   onSelectSut: (sut: SUT) => void;
+  onDevicesRefresh?: () => void;
   className?: string;
   compact?: boolean;
 }
@@ -21,10 +34,13 @@ export function FleetStatusPanel({
   onlineDevices,
   selectedSutId,
   onSelectSut,
+  onDevicesRefresh,
   className = '',
   compact = false,
 }: FleetStatusPanelProps) {
   const [scanning, setScanning] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
 
   const handleScan = async () => {
     setScanning(true);
@@ -35,6 +51,30 @@ export function FleetStatusPanel({
     } finally {
       setTimeout(() => setScanning(false), 2000);
     }
+  };
+
+  const handleStartEdit = (sut: SUT, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingId(sut.device_id);
+    setEditValue(sut.display_name || '');
+  };
+
+  const handleSaveEdit = async (sut: SUT, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    try {
+      await setSutDisplayName(sut.device_id, editValue.trim());
+      onDevicesRefresh?.();
+    } catch (error) {
+      console.error('Failed to set display name:', error);
+    }
+    setEditingId(null);
+    setEditValue('');
+  };
+
+  const handleCancelEdit = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setEditingId(null);
+    setEditValue('');
   };
 
   // Compact mode - just a dropdown-style selector
@@ -69,22 +109,55 @@ export function FleetStatusPanel({
                 key={sut.device_id}
                 onClick={() => onSelectSut(sut)}
                 className={`
-                  w-full flex items-center justify-between px-2 py-1.5 rounded text-xs
+                  w-full flex items-center justify-between px-2 py-1.5 rounded text-xs text-left
                   ${selectedSutId === sut.device_id
                     ? 'bg-primary/20 border border-primary'
                     : 'bg-surface-elevated hover:bg-surface-hover border border-transparent'
                   }
                 `}
               >
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 min-w-0">
                   <StatusDot status="online" />
-                  <span className="truncate">{sut.hostname || sut.ip}</span>
-                  {sut.master_key_installed && (
-                    <span title="SSH Ready"><Key className="w-2.5 h-2.5 text-success" /></span>
+                  {editingId === sut.device_id ? (
+                    <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="text"
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleSaveEdit(sut); if (e.key === 'Escape') handleCancelEdit(); }}
+                        className="px-1 py-0.5 text-[10px] bg-surface border border-primary rounded w-20 focus:outline-none"
+                        autoFocus
+                      />
+                      <button onClick={(e) => handleSaveEdit(sut, e)} className="p-0.5 text-success hover:text-success/80">
+                        <Check className="w-2.5 h-2.5" />
+                      </button>
+                      <button onClick={(e) => handleCancelEdit(e)} className="p-0.5 text-danger hover:text-danger/80">
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col leading-tight min-w-0">
+                      <div className="flex items-center gap-1">
+                        <span className="truncate">{getSutLabel(sut)}</span>
+                        <button
+                          onClick={(e) => handleStartEdit(sut, e)}
+                          className="p-0.5 text-text-muted hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                          title="Edit display name"
+                        >
+                          <Pencil className="w-2 h-2" />
+                        </button>
+                        {sut.master_key_installed && (
+                          <span title="SSH Ready"><Key className="w-2.5 h-2.5 text-success flex-shrink-0" /></span>
+                        )}
+                      </div>
+                      {shouldShowIp(sut) && (
+                        <span className="text-[10px] text-text-muted font-mono">{sut.ip}</span>
+                      )}
+                    </div>
                   )}
                 </div>
                 {sut.current_task && (
-                  <span className="text-[10px] text-warning">BUSY</span>
+                  <span className="text-[10px] text-warning flex-shrink-0">BUSY</span>
                 )}
               </button>
             ))
@@ -153,6 +226,12 @@ export function FleetStatusPanel({
               sut={sut}
               isSelected={selectedSutId === sut.device_id}
               onClick={() => onSelectSut(sut)}
+              isEditing={editingId === sut.device_id}
+              editValue={editValue}
+              onEditValueChange={setEditValue}
+              onStartEdit={(e) => handleStartEdit(sut, e)}
+              onSaveEdit={(e) => handleSaveEdit(sut, e)}
+              onCancelEdit={handleCancelEdit}
             />
           ))
         )}
@@ -175,15 +254,31 @@ interface CompactSutCardProps {
   sut: SUT;
   isSelected: boolean;
   onClick: () => void;
+  isEditing?: boolean;
+  editValue?: string;
+  onEditValueChange?: (value: string) => void;
+  onStartEdit?: (e: React.MouseEvent) => void;
+  onSaveEdit?: (e?: React.MouseEvent) => void;
+  onCancelEdit?: (e?: React.MouseEvent) => void;
 }
 
-export function CompactSutCard({ sut, isSelected, onClick }: CompactSutCardProps) {
+export function CompactSutCard({
+  sut,
+  isSelected,
+  onClick,
+  isEditing = false,
+  editValue = '',
+  onEditValueChange,
+  onStartEdit,
+  onSaveEdit,
+  onCancelEdit,
+}: CompactSutCardProps) {
   return (
     <button
       onClick={onClick}
       className={`
         w-full flex items-center justify-between px-3 py-2 rounded-md
-        transition-all text-left
+        transition-all text-left group
         ${isSelected
           ? 'bg-primary/20 border border-primary'
           : 'bg-surface-elevated hover:bg-surface-hover border border-transparent'
@@ -192,11 +287,47 @@ export function CompactSutCard({ sut, isSelected, onClick }: CompactSutCardProps
     >
       <div className="flex items-center gap-2 min-w-0">
         <StatusDot status={sut.status === 'online' ? 'online' : 'offline'} />
-        <span className="text-sm font-medium text-text-primary truncate">
-          {sut.hostname || sut.ip}
-        </span>
-        {sut.master_key_installed && (
-          <span title="SSH Ready"><Key className="w-3 h-3 text-success flex-shrink-0" /></span>
+        {isEditing ? (
+          <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+            <input
+              type="text"
+              value={editValue}
+              onChange={(e) => onEditValueChange?.(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') onSaveEdit?.(); if (e.key === 'Escape') onCancelEdit?.(); }}
+              placeholder={sut.hostname || sut.ip}
+              className="px-1.5 py-0.5 text-xs bg-surface border border-primary rounded w-28 focus:outline-none"
+              autoFocus
+            />
+            <button onClick={(e) => onSaveEdit?.(e)} className="p-0.5 text-success hover:text-success/80">
+              <Check className="w-3 h-3" />
+            </button>
+            <button onClick={(e) => onCancelEdit?.(e)} className="p-0.5 text-danger hover:text-danger/80">
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-col leading-tight min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-medium text-text-primary truncate">
+                {getSutLabel(sut)}
+              </span>
+              {onStartEdit && (
+                <button
+                  onClick={(e) => onStartEdit(e)}
+                  className="p-0.5 text-text-muted hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                  title="Edit display name"
+                >
+                  <Pencil className="w-2.5 h-2.5" />
+                </button>
+              )}
+              {sut.master_key_installed && (
+                <span title="SSH Ready"><Key className="w-3 h-3 text-success flex-shrink-0" /></span>
+              )}
+            </div>
+            {shouldShowIp(sut) && (
+              <span className="text-[10px] text-text-muted font-mono">{sut.ip}</span>
+            )}
+          </div>
         )}
       </div>
 

@@ -4,9 +4,35 @@
  */
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Save, X, ChevronDown } from 'lucide-react';
 import { getPresetGames } from '../api/presetManager';
 import type { GameConfig } from '../types';
+
+// ============================================================
+// Campaign Types & Storage
+// ============================================================
+
+interface GameCampaign {
+  id: string;
+  name: string;
+  games: string[];
+  isBuiltIn: boolean;
+}
+
+const USER_CAMPAIGNS_KEY = 'rpx-user-campaigns';
+
+function loadUserCampaigns(): GameCampaign[] {
+  try {
+    const raw = localStorage.getItem(USER_CAMPAIGNS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveUserCampaigns(campaigns: GameCampaign[]): void {
+  localStorage.setItem(USER_CAMPAIGNS_KEY, JSON.stringify(campaigns));
+}
 
 interface GameLibraryPanelProps {
   games: GameConfig[];
@@ -144,6 +170,12 @@ export function GameLibraryPanel({
   const [splGames, setSplGames] = useState<Set<string>>(new Set());
   const [reloading, setReloading] = useState(false);
 
+  // Campaign state
+  const [userCampaigns, setUserCampaigns] = useState<GameCampaign[]>(loadUserCampaigns);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [campaignName, setCampaignName] = useState('');
+  const [activeCampaignId, setActiveCampaignId] = useState<string | null>(null);
+
   // Convert installedGames array to Set for fast lookup
   const installedSet = useMemo(() =>
     new Set(installedGames || []),
@@ -274,6 +306,77 @@ export function GameLibraryPanel({
     'ppg+spl': games.filter(g => g.preset_id && (ppgGames.has(g.preset_id) || splGames.has(g.preset_id))).length,
   }), [games, ppgGames, splGames]);
 
+  // Built-in campaigns derived from ppgGames/splGames
+  const builtInCampaigns = useMemo((): GameCampaign[] => {
+    const campaigns: GameCampaign[] = [];
+    if (ppgGames.size > 0) {
+      const ppgGameNames = games
+        .filter(g => g.preset_id && ppgGames.has(g.preset_id))
+        .map(g => g.name);
+      campaigns.push({
+        id: 'builtin-ppg',
+        name: `10 PPG Titles (${ppgGameNames.length})`,
+        games: ppgGameNames,
+        isBuiltIn: true,
+      });
+    }
+    if (splGames.size > 0) {
+      const splGameNames = games
+        .filter(g => g.preset_id && splGames.has(g.preset_id))
+        .map(g => g.name);
+      campaigns.push({
+        id: 'builtin-spl',
+        name: `SPL Titles (${splGameNames.length})`,
+        games: splGameNames,
+        isBuiltIn: true,
+      });
+    }
+    return campaigns;
+  }, [ppgGames, splGames, games]);
+
+  const allCampaigns = useMemo(
+    () => [...builtInCampaigns, ...userCampaigns],
+    [builtInCampaigns, userCampaigns]
+  );
+
+  const handleSelectCampaign = (campaignId: string) => {
+    if (!campaignId) {
+      setActiveCampaignId(null);
+      return;
+    }
+    const campaign = allCampaigns.find(c => c.id === campaignId);
+    if (campaign) {
+      setActiveCampaignId(campaignId);
+      onSelectGames(campaign.games);
+    }
+  };
+
+  const handleSaveCampaign = () => {
+    const name = campaignName.trim();
+    if (!name || selectedGames.length === 0) return;
+    const newCampaign: GameCampaign = {
+      id: `user-${Date.now()}`,
+      name,
+      games: [...selectedGames],
+      isBuiltIn: false,
+    };
+    const updated = [...userCampaigns, newCampaign];
+    setUserCampaigns(updated);
+    saveUserCampaigns(updated);
+    setActiveCampaignId(newCampaign.id);
+    setShowSaveDialog(false);
+    setCampaignName('');
+  };
+
+  const handleDeleteCampaign = (campaignId: string) => {
+    const updated = userCampaigns.filter(c => c.id !== campaignId);
+    setUserCampaigns(updated);
+    saveUserCampaigns(updated);
+    if (activeCampaignId === campaignId) {
+      setActiveCampaignId(null);
+    }
+  };
+
   // Check if a game is available for selection (installed on SUT or no SUT selected)
   const isGameAvailable = useCallback((game: GameConfig) => {
     if (!hasSutSelected) return true;  // No SUT selected = all games available
@@ -365,7 +468,7 @@ export function GameLibraryPanel({
           </div>
         </div>
 
-        {/* Filter tabs + Search + Legend */}
+        {/* Filter tabs + Campaign selector + Search + Legend */}
         <div className="flex items-center gap-1 flex-wrap">
           {(['all', 'installed', 'ppg', 'spl', 'ppg+spl'] as FilterType[]).map((f) => {
             const getButtonStyles = () => {
@@ -389,6 +492,91 @@ export function GameLibraryPanel({
               </button>
             );
           })}
+
+          {/* Campaign selector */}
+          <div className="flex items-center gap-1 ml-2">
+            <div className="relative">
+              {(() => {
+                const isUserCampaign = activeCampaignId && !allCampaigns.find(c => c.id === activeCampaignId)?.isBuiltIn;
+                return (
+                  <>
+                    <select
+                      value={activeCampaignId || ''}
+                      onChange={(e) => handleSelectCampaign(e.target.value)}
+                      className={`appearance-none pl-2 ${isUserCampaign ? 'pr-10' : 'pr-6'} py-1 text-xs bg-surface border border-border rounded text-text-secondary cursor-pointer hover:border-primary focus:outline-none focus:border-primary`}
+                    >
+                      <option value="">-- Campaigns --</option>
+                      {builtInCampaigns.length > 0 && (
+                        <optgroup label="Built-in">
+                          {builtInCampaigns.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {userCampaigns.length > 0 && (
+                        <optgroup label="User-defined">
+                          {userCampaigns.map(c => (
+                            <option key={c.id} value={c.id}>{c.name} ({c.games.length})</option>
+                          ))}
+                        </optgroup>
+                      )}
+                    </select>
+                    <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
+                    {/* Delete button inside dropdown, to the left of chevron */}
+                    {isUserCampaign && (
+                      <button
+                        onClick={(e) => { e.preventDefault(); handleDeleteCampaign(activeCampaignId); }}
+                        className="absolute right-5 top-1/2 -translate-y-1/2 p-0.5 text-text-muted hover:text-danger rounded transition-colors"
+                        title="Delete this campaign"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </>
+                );
+              })()
+              }</div>
+
+            {/* Save selection as campaign */}
+            {selectedGames.length > 0 && !showSaveDialog && (
+              <button
+                onClick={() => setShowSaveDialog(true)}
+                className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-text-muted hover:text-primary border border-border rounded hover:border-primary transition-colors"
+                title="Save current selection as campaign"
+              >
+                <Save className="w-2.5 h-2.5" />
+                Save
+              </button>
+            )}
+
+            {/* Save dialog */}
+            {showSaveDialog && (
+              <div className="flex items-center gap-1">
+                <input
+                  type="text"
+                  value={campaignName}
+                  onChange={(e) => setCampaignName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleSaveCampaign(); if (e.key === 'Escape') setShowSaveDialog(false); }}
+                  placeholder="Campaign name..."
+                  className="px-2 py-0.5 text-[10px] bg-surface border border-primary rounded w-28 focus:outline-none"
+                  autoFocus
+                />
+                <button
+                  onClick={handleSaveCampaign}
+                  disabled={!campaignName.trim()}
+                  className="px-1.5 py-0.5 text-[10px] bg-primary text-white rounded disabled:opacity-50"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => { setShowSaveDialog(false); setCampaignName(''); }}
+                  className="p-0.5 text-text-muted hover:text-danger"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* Search */}
           <input

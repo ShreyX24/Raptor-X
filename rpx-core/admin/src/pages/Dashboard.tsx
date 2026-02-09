@@ -43,7 +43,7 @@ export function Dashboard() {
 
   // IMPORTANT: All hooks must be called BEFORE any conditional returns
   // Core data hooks (called even on mobile to avoid hooks order violation)
-  const { devices, onlineDevices } = useDevices();
+  const { devices, onlineDevices, refetch: refetchDevices } = useDevices();
   const { gamesList } = useGames();
   const { activeRunsList, history, start, stop } = useRuns();
   const { activeCampaigns, historyCampaigns, stop: stopCampaignFn } = useCampaigns();
@@ -348,6 +348,7 @@ export function Dashboard() {
                 onlineDevices={onlineDevices}
                 selectedSutId={selectedSutId}
                 onSelectSut={handleSelectSut}
+                onDevicesRefresh={refetchDevices}
                 className="h-full"
                 compact
               />
