@@ -74,12 +74,36 @@ def _enable_windows_ansi():
         return False
 
 
-def print_banner(version: str):
+def _pin_banner(banner_height: int):
+    """Pin the banner by setting an ANSI scroll region below it.
+
+    Uses DECSTBM (Set Top and Bottom Margins) to confine all subsequent
+    scrolling to the area below the banner.  Supported on Windows 10+
+    console and Windows Terminal.
+    """
+    import shutil
+    try:
+        _, rows = shutil.get_terminal_size()
+        # Set scroll region: row after banner -> bottom of terminal
+        # DECSTBM: ESC [ <top> ; <bottom> r
+        print(f"\033[{banner_height + 1};{rows}r", end="")
+        # Move cursor into the scroll region
+        print(f"\033[{banner_height + 1};1H", end="", flush=True)
+    except Exception:
+        pass  # Fall back to normal scrolling if anything goes wrong
+
+
+def print_banner(version: str, pin: bool = True):
     """Print the RAPTOR X banner with gradient colors.
 
     Uses block-character banner by default, falls back to plain ASCII
     if the terminal encoding doesn't support Unicode.
     Loads cached branding from master server if available.
+
+    Args:
+        version: Version string to display below the banner.
+        pin: If True, pin the banner to the top of the console using
+             ANSI scroll regions (DECSTBM) so logs scroll beneath it.
     """
     # Load cached branding (updates GRADIENT_COLORS if cache exists)
     _load_cached_branding()
@@ -95,6 +119,13 @@ def print_banner(version: str):
     except (UnicodeEncodeError, LookupError):
         banner = RPX_BANNER_ASCII
 
+    # Banner occupies: 1 blank + len(banner) art + 1 blank + 1 version + 1 blank
+    banner_height = 1 + len(banner) + 1 + 1 + 1
+
+    if pin:
+        # Clear screen and move cursor to top-left
+        print("\033[2J\033[H", end="")
+
     print()  # Empty line before banner
     for i, line in enumerate(banner):
         color_code = GRADIENT_COLORS[i] if i < len(GRADIENT_COLORS) else 231
@@ -109,6 +140,9 @@ def print_banner(version: str):
     padding = max(0, (len(banner[0]) - len(version_text)) // 2)
     print(f"\033[97m{' ' * padding}{version_text}{RESET}")
     print()
+
+    if pin:
+        _pin_banner(banner_height)
 
 
 def _set_window_title(title: str):
@@ -557,8 +591,12 @@ def main():
     # Set window title
     _set_window_title("sut-client")
 
-    # Print RAPTOR X banner with gradient
+    # Print RAPTOR X banner with gradient (pinned at top via scroll region)
     print_banner(__version__)
+
+    # Reset scroll region on exit so terminal isn't left in a broken state
+    import atexit
+    atexit.register(lambda: print("\033[r\033[999;1H", end="", flush=True))
 
     # Set up logging level based on --debug flag
     if args.debug:
