@@ -881,7 +881,10 @@ class SimpleAutomation:
                 retry_suffix = f"_retry{retries}" if retries > 0 else ""
                 screenshot_path = f"{self.run_dir}/screenshots/screenshot_{current_step}{retry_suffix}.png"
                 try:
-                    self.screenshot_mgr.capture(screenshot_path, process_name=self.process_id)
+                    # Skip window focus before screenshot when no_refocus is set
+                    # (prevents cursor lock in games like FC6 that use ClipCursor/raw input)
+                    screenshot_process = None if step.get("no_refocus") else self.process_id
+                    self.screenshot_mgr.capture(screenshot_path, process_name=screenshot_process)
                 except Exception as e:
                     logger.error(f"Failed to capture screenshot: {str(e)}")
                     # Handle optional step failure - skip instead of failing automation
@@ -1750,7 +1753,9 @@ class SimpleAutomation:
         retry_suffix = f"_retry{retries}" if retries > 0 else ""
         verify_path = f"{self.run_dir}/screenshots/verify_{step_num}{retry_suffix}.png"
         try:
-            self.screenshot_mgr.capture(verify_path, process_name=self.process_id)
+            # Skip window focus when no_refocus is set (prevents cursor lock in FC6 etc.)
+            screenshot_process = None if step.get("no_refocus") else self.process_id
+            self.screenshot_mgr.capture(verify_path, process_name=screenshot_process)
             verify_boxes = self.vision_model.detect_ui_elements(verify_path)
 
             if self.annotator:

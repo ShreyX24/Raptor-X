@@ -33,7 +33,7 @@ def setup_logging(config):
     logging.getLogger('urllib3').setLevel(logging.WARNING)
     logging.getLogger('socketio').setLevel(logging.WARNING)
     logging.getLogger('engineio').setLevel(logging.WARNING)
-    logging.getLogger('werkzeug').setLevel(logging.WARNING)  # Suppress HTTP request spam
+    logging.getLogger('werkzeug').setLevel(logging.CRITICAL)  # Suppress HTTP spam + harmless SocketIO polling errors
 
 
 # Global controller reference for signal handling

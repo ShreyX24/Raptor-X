@@ -4,6 +4,18 @@ setlocal
 :: RPX Setup Launcher - Thin wrapper that calls setup.py
 :: Usage: setup.bat [--skip-clone | --install-only | -s]
 
+:: Ensure working directory is script location (elevated cmd starts in System32)
+cd /d "%~dp0"
+
+:: Check for admin privileges and self-elevate if needed
+net session >nul 2>&1
+if errorlevel 1 (
+    echo Requesting administrator privileges...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+        "Start-Process -FilePath '%~f0' -ArgumentList '%*' -Verb RunAs"
+    exit /b
+)
+
 :: Check Python is available
 python --version >nul 2>&1
 if errorlevel 1 (

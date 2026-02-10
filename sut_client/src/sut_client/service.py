@@ -1710,7 +1710,8 @@ def _parse_master_address(master_str: str) -> tuple:
         return master_str, 5000
 
 
-def _ensure_firewall_rule(port: int, rule_name: str = "SUT Client") -> bool:
+def _ensure_firewall_rule(port: int, rule_name: str = "SUT Client",
+                         protocol: str = "tcp") -> bool:
     """
     Ensure Windows Firewall rule exists for the SUT client port.
     Creates the rule if it doesn't exist (requires admin privileges).
@@ -1729,15 +1730,12 @@ def _ensure_firewall_rule(port: int, rule_name: str = "SUT Client") -> bool:
         return True
 
     # Try to create the rule (requires admin)
-    logger.info(f"Creating firewall rule '{rule_name}' for port {port}...")
-
-    # Get the Python executable path for the rule
-    python_exe = sys.executable
+    logger.info(f"Creating firewall rule '{rule_name}' for {protocol.upper()} port {port}...")
 
     # Create inbound rule for the port
     create_cmd = (
         f'netsh advfirewall firewall add rule name="{rule_name}" '
-        f'dir=in action=allow protocol=tcp localport={port} '
+        f'dir=in action=allow protocol={protocol} localport={port} '
         f'enable=yes profile=any'
     )
 
@@ -1785,8 +1783,9 @@ def start_service(master_override: Optional[str] = None):
         logger.info(f"Master Override: {master_override}")
     logger.info("=" * 60)
 
-    # Ensure firewall rule exists (avoids UAC prompt on subsequent runs)
+    # Ensure firewall rules exist (avoids UAC prompt on subsequent runs)
     _ensure_firewall_rule(settings.port, rule_name="SUT Client")
+    _ensure_firewall_rule(9999, rule_name="SUT Client (UDP Discovery)", protocol="udp")
 
     # Create Flask app
     app = create_app()

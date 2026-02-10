@@ -62,8 +62,7 @@ steps:
 
   4:
     description: "Click Exit Benchmark button"
-    # NOTE: focus_before disabled - causes cursor lock issues in FC6
-    # focus_before: true
+    no_refocus: true  # Prevents cursor lock: skips AppActivate focus before screenshots
     find:
       type: "any"
       text: "Exit Benchmark"

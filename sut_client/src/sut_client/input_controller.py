@@ -120,6 +120,16 @@ class InputController:
         )
         logger.info(f"InputController initialized: {self.screen_width}x{self.screen_height}")
 
+    def release_cursor_clip(self):
+        """Release any ClipCursor confinement set by a game/application.
+
+        Games like Far Cry 6 use ClipCursor() to confine the mouse during
+        benchmarks/gameplay. SendInput absolute moves are clamped by the clip
+        rectangle, so we must release it before moving the cursor.
+        """
+        self.user32.ClipCursor(None)
+        logger.debug("[ClipCursor] Released cursor confinement")
+
     @property
     def screen_width(self) -> int:
         """Get current screen width."""
@@ -148,6 +158,9 @@ class InputController:
             duration: Duration of smooth movement in seconds
         """
         try:
+            # Release any cursor confinement (e.g., FC6 benchmark ClipCursor)
+            self.release_cursor_clip()
+
             if smooth and duration > 0:
                 # Get current position
                 current_x, current_y = win32api.GetCursorPos()
@@ -234,6 +247,11 @@ class InputController:
             else:
                 logger.error(f"Invalid button: {button}")
                 return False
+
+            # Release clip again + force final position before clicking
+            # (game may have re-clipped during the smooth move)
+            self.release_cursor_clip()
+            self._move_mouse_absolute(x, y)
 
             # Mouse down
             self._send_mouse_event(down_flag)

@@ -576,6 +576,10 @@ def main():
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
 
+    # Suppress noisy third-party loggers (PING/PONG frames contain binary
+    # data that crashes cp1252 Windows consoles with UnicodeEncodeError)
+    logging.getLogger('websockets').setLevel(logging.WARNING)
+
     # Set DPI awareness for accurate screen coordinates (Windows)
     from .hardware import set_dpi_awareness
     set_dpi_awareness()

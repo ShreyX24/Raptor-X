@@ -499,6 +499,100 @@ class SSHSetup:
         return True
 
 
+# ── NetworkConfigurator ──────────────────────────────────────────────────────
+
+class NetworkConfigurator:
+    """Set network profile to Private and create firewall rules for RPX services."""
+
+    FIREWALL_RULES = [
+        ("RPX SUT Discovery (TCP)", "TCP", 5001),
+        ("RPX SUT Discovery (UDP)", "UDP", 9999),
+        ("RPX SUT Client (TCP)", "TCP", 8080),
+        ("RPX SSH (TCP)", "TCP", 22),
+    ]
+
+    @staticmethod
+    def _ps(cmd: str, timeout: int = 120):
+        return subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
+            capture_output=True, text=True, timeout=timeout,
+        )
+
+    def run(self) -> bool:
+        if sys.platform != "win32":
+            warn("Network setup is Windows-only, skipping")
+            return True
+
+        if not ctypes.windll.shell32.IsUserAnAdmin():
+            warn("Not running as admin - network/firewall setup requires elevation")
+            warn("Re-run setup.bat (it will request admin privileges)")
+            return False
+
+        steps = [
+            ("Set network profiles to Private", self._set_private_profile),
+            ("Create firewall rules", self._create_firewall_rules),
+        ]
+        all_ok = True
+        for label, fn in steps:
+            try:
+                if fn():
+                    ok(label)
+                else:
+                    warn(label)
+                    all_ok = False
+            except Exception as e:
+                warn(f"{label}: {e}")
+                all_ok = False
+        return all_ok
+
+    def _set_private_profile(self) -> bool:
+        r = self._ps(
+            "Get-NetConnectionProfile | Where-Object {$_.NetworkCategory -eq 'Public'} "
+            "| Select-Object -ExpandProperty Name"
+        )
+        public_ifaces = [line.strip() for line in r.stdout.strip().splitlines() if line.strip()]
+        if not public_ifaces:
+            ok("All network interfaces already Private/Domain")
+            return True
+
+        success = True
+        for iface in public_ifaces:
+            safe_name = iface.replace("'", "''")
+            r = self._ps(
+                f"Set-NetConnectionProfile -Name '{safe_name}' -NetworkCategory Private"
+            )
+            if r.returncode == 0:
+                ok(f"Set '{iface}' to Private")
+            else:
+                warn(f"Failed to set '{iface}' to Private: {r.stderr.strip()}")
+                success = False
+        return success
+
+    def _create_firewall_rules(self) -> bool:
+        success = True
+        for name, protocol, port in self.FIREWALL_RULES:
+            # Check if rule already exists
+            r = self._ps(
+                f"Get-NetFirewallRule -DisplayName '{name}' -ErrorAction SilentlyContinue"
+            )
+            if r.returncode == 0 and name in r.stdout:
+                ok(f"Rule '{name}' already exists")
+                continue
+
+            r = self._ps(
+                f"New-NetFirewallRule -DisplayName '{name}' "
+                f"-Direction Inbound -Protocol {protocol} -LocalPort {port} "
+                f"-Action Allow -Profile Private,Domain "
+                f"-Description 'RPX setup: allow {protocol}/{port}'"
+            )
+            if r.returncode == 0:
+                ok(f"Created rule '{name}' ({protocol}/{port})")
+            else:
+                warn(f"Failed to create rule '{name}': {r.stderr.strip()}")
+                success = False
+        return success
+
+
 # ── SettingsConfigurator ─────────────────────────────────────────────────────
 
 class SettingsConfigurator:
@@ -615,10 +709,10 @@ class RPXSetup:
             fail("Git not found. Install from https://git-scm.com/")
             sys.exit(1)
 
-    # ── full setup (9 steps) ─────────────────────────────────────────
+    # ── full setup (10 steps) ────────────────────────────────────────
 
     def _run_full_setup(self):
-        total = 9
+        total = 10
         self._step(1, total, "Clone / detect repository", self._do_clone)
         # After clone, root may have changed
         self.root = self.git.root
@@ -627,14 +721,15 @@ class RPXSetup:
         self._step(4, total, "Download OmniParser weights", self._do_weights)
         self._run_install_steps(start=5, total=total)
 
-    def _run_install_steps(self, start: int = 1, total: int = 5):
+    def _run_install_steps(self, start: int = 1, total: int = 6):
         offset = start - 1
-        adj_total = total if total > 5 else 5
-        self._step(offset + 1, adj_total, "Install NPM dependencies", self._do_npm)
-        self._step(offset + 2, adj_total, "Install Python services (pip -e)", self._do_pip)
-        self._step(offset + 3, adj_total, "SSH server setup", self._do_ssh)
-        self._step(offset + 4, adj_total, "OmniParser dependencies (optional)", self._do_omni_deps)
-        self._step(offset + 5, adj_total, "Configure service manager settings", self._do_settings)
+        adj_total = total if total > 6 else 6
+        self._step(offset + 1, adj_total, "Network & firewall setup", self._do_network)
+        self._step(offset + 2, adj_total, "Install NPM dependencies", self._do_npm)
+        self._step(offset + 3, adj_total, "Install Python services (pip -e)", self._do_pip)
+        self._step(offset + 4, adj_total, "SSH server setup", self._do_ssh)
+        self._step(offset + 5, adj_total, "OmniParser dependencies (optional)", self._do_omni_deps)
+        self._step(offset + 6, adj_total, "Configure service manager settings", self._do_settings)
 
     # ── individual step runners ──────────────────────────────────────
 
@@ -659,6 +754,10 @@ class RPXSetup:
     def _do_weights(self) -> bool:
         dl = WeightsDownloader(self.root)
         return dl.download()
+
+    def _do_network(self) -> bool:
+        net = NetworkConfigurator()
+        return net.run()
 
     def _do_npm(self) -> bool:
         installer = DependencyInstaller(self.root)

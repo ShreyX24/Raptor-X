@@ -53,6 +53,10 @@ driver installation
 MEINFO
 C:\OWR\CSME\External\Tools\System_Tools\MEInfo\Windows64>MEInfoWin64.exe > MEInfo.txt
 
+add info on each heading to let user know what it does
+
+add auto app details fetching via PID when building workflow for a new app
+
 How to Openssh
 google.com/search?q=I%27ve+2+system+with+PC+names+X7+and+X9+both+windows+11+connected+to+same+wifi.+I+want+to+copy+a+folder+from+X9+to+X7.+How+can+I+do+it%3F+will+openssh+help+I+have+openssh+server+installed+%40+X7&sourceid=chrome&ie=UTF-8&gs_lcrp=EgZjaHJvbWUyBggAEEUYOdIBCjY0NDYzajBqMzGoAgWwAgE&oq=I%27ve+2+system+with+PC+names+X7+and+X9+both+windows+11+connected+to+same+wifi.+I+want+to+copy+a+folder+from+X9+to+X7.+How+can+I+do+it%3F+will+openssh+help+I+have+openssh+server+installed+%40+X7&udm=50&aep=42&cud=0&qsubts=1767818719853&mstk=AUtExfCkGdoGeYjpHW5nP6FMsNodVHORGASunYvF0RYdEij3fXHOpw3r1QyAprvLWOiJlcH_q1w-hJzZevzGHkWKwXgO1P9JoqybK3YYf_4zk4zXMebn3KaxqqwJmAGwRmZ4wp-qHJ_BzgeLC3r1yemVlgirSUozHx9W82iLvVTRpcBCMQgm34Ut32t516IHtHVLzboG29iVYw5Ah6HM0BjyMdYT3QjNpA942gFhR_wq_iomxQ90sDJ8yj-YKJAlQMS4XuDhPg113r5MSZIgl5rWdsUtqC-gpzDC4tb-3W19uqVCd3jA8GC0vkGjKWwHJKDbK9Utj6ZCUZiWpg&csuir=1&mtid=4MVeaZyjEvDjseMPiM_58AM
 
