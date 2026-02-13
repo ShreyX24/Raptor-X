@@ -419,17 +419,15 @@ def ensure_window_foreground_v2(pid: int, timeout: int = 5, use_pywinauto: bool 
     """
     Ensure window is in foreground using best available method.
 
-    Priority order (cleanest to most aggressive):
-    1. WScript.Shell AppActivate (cleanest - no system manipulation)
-    2. Basic Win32 ShowWindow + SetForegroundWindow (no Alt key trick)
-    3. pywinauto set_focus (if enabled and available)
-    4. Aggressive Win32 with Alt key trick (last resort, can cause cursor issues)
+    Matches legacy/v2 behavior: pywinauto first, then aggressive Win32 fallback.
+    The aggressive method (Alt key trick + AttachThreadInput) is required for games
+    like FC6 that capture input tightly during benchmarks.
 
     Args:
         pid: Process ID
         timeout: Timeout for Win32 fallback method
-        use_pywinauto: If True, try pywinauto (not recommended for games)
-        window_title: Optional window title for direct AppActivate
+        use_pywinauto: If True, try pywinauto first
+        window_title: Optional window title (unused, kept for API compat)
 
     Returns:
         bool: True if window is confirmed in foreground
@@ -437,41 +435,21 @@ def ensure_window_foreground_v2(pid: int, timeout: int = 5, use_pywinauto: bool 
     import time as _time
     _fg_start = _time.time()
 
-    # Method 1: Clean WScript.Shell AppActivate (best for games)
-    logger.debug(f"[Focus] Starting foreground sequence for PID {pid}, title={window_title}, use_pywinauto={use_pywinauto}")
+    logger.debug(f"[Focus] Starting foreground sequence for PID {pid}")
 
-    if window_title:
-        logger.debug(f"[Focus] Method 1a: AppActivate by title '{window_title}'")
-        if focus_window_by_title(window_title):
-            logger.debug(f"[Focus] Success via title AppActivate in {(_time.time() - _fg_start)*1000:.1f}ms")
-            return True
-
-    logger.debug(f"[Focus] Method 1b: AppActivate by PID {pid}")
-    if focus_window_by_pid_clean(pid):
-        logger.debug(f"[Focus] Success via PID AppActivate in {(_time.time() - _fg_start)*1000:.1f}ms")
-        return True
-    logger.debug("[Focus] AppActivate failed, trying basic Win32")
-
-    # Method 2: Basic Win32 (no Alt key, no system manipulation)
-    logger.debug(f"[Focus] Method 2: Basic Win32 for PID {pid}, timeout={min(timeout, 3)}s")
-    if focus_window_basic_win32(pid, timeout=min(timeout, 3)):
-        logger.debug(f"[Focus] Success via basic Win32 in {(_time.time() - _fg_start)*1000:.1f}ms")
-        return True
-    logger.debug("[Focus] Basic Win32 failed, trying pywinauto")
-
-    # Method 3: pywinauto (optional, can hang on fullscreen games)
+    # Method 1: Try pywinauto first if available (more reliable for some apps)
     if use_pywinauto and PYWINAUTO_AVAILABLE:
-        logger.debug(f"[Focus] Method 3: pywinauto set_focus for PID {pid}")
+        logger.debug(f"[Focus] Method 1: pywinauto set_focus for PID {pid}")
         if bring_to_foreground_pywinauto(pid):
             logger.debug(f"[Focus] Success via pywinauto in {(_time.time() - _fg_start)*1000:.1f}ms")
             return True
-        logger.debug("[Focus] pywinauto failed")
+        logger.debug("[Focus] pywinauto failed, falling back to Win32")
 
-    # Method 4: Aggressive Win32 (last resort - disabled by default for games)
-    # This method uses Alt key trick and SystemParametersInfo which can
-    # interfere with game cursor locking. Only enable if other methods fail.
-    # logger.debug("Trying aggressive Win32 method (last resort)")
-    # return ensure_window_foreground(pid, timeout)
+    # Method 2: Aggressive Win32 (Alt key trick + AttachThreadInput)
+    logger.debug(f"[Focus] Method 2: Aggressive Win32 for PID {pid}")
+    if ensure_window_foreground(pid, timeout):
+        logger.debug(f"[Focus] Success via aggressive Win32 in {(_time.time() - _fg_start)*1000:.1f}ms")
+        return True
 
     logger.warning(f"[Focus] All focus methods failed for PID {pid} after {(_time.time() - _fg_start)*1000:.1f}ms")
     return False
@@ -479,14 +457,16 @@ def ensure_window_foreground_v2(pid: int, timeout: int = 5, use_pywinauto: bool 
 
 def ensure_window_foreground(pid: int, timeout: int = 5) -> bool:
     """
-    DEPRECATED: Aggressive Win32-based foreground method.
+    Aggressive Win32-based foreground method (last resort).
 
-    WARNING: This method uses Alt key trick and SystemParametersInfo manipulation
-    which can cause cursor lock issues in fullscreen/borderless games (FC6, RDR2).
-    Use ensure_window_foreground_v2() or focus_window_simple() instead.
+    Uses Alt key trick, AttachThreadInput, and SystemParametersInfo to force
+    window focus. This is the most aggressive approach but is necessary for
+    games like FC6 that capture input tightly during benchmarks - the clean
+    methods (AppActivate, basic Win32) aren't powerful enough to break the
+    game's input capture.
 
-    This method is kept for backwards compatibility but should NOT be used
-    for game window focusing.
+    Called as last resort by ensure_window_foreground_v2() when cleaner
+    methods fail.
 
     Args:
         pid: Process ID
@@ -495,7 +475,7 @@ def ensure_window_foreground(pid: int, timeout: int = 5) -> bool:
     Returns:
         bool: True if window is confirmed in foreground
     """
-    logger.warning("ensure_window_foreground() is deprecated - may cause cursor lock issues!")
+    logger.debug("Using aggressive Win32 focus method (last resort)")
     logger.debug(f"ensure_window_foreground called for PID {pid} with timeout={timeout}s")
 
     # Callback to find windows for PID

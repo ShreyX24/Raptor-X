@@ -212,7 +212,8 @@ export type AdminTab =
   | 'games'
   | 'automation'
   | 'steam'
-  | 'profiles';
+  | 'profiles'
+  | 'branding';
 
 export interface TabDefinition {
   id: AdminTab;
@@ -233,6 +234,7 @@ export interface UnsavedChanges {
   automation?: boolean;
   steam?: boolean;
   profiles?: boolean;
+  branding?: boolean;
 }
 
 export interface ToastMessage {

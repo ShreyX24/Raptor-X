@@ -20,14 +20,7 @@ from datetime import datetime
 
 from flask import Flask, request, jsonify, send_file
 from waitress import serve as waitress_serve
-from PIL import Image, ImageGrab
-
-# Try to import mss for better game screenshot capture (uses DXGI)
-try:
-    import mss
-    MSS_AVAILABLE = True
-except ImportError:
-    MSS_AVAILABLE = False
+from PIL import ImageGrab
 
 from .config import get_settings
 from .backup import BackupService
@@ -36,12 +29,7 @@ from .discovery import DiscoveryThread
 from .ws_client import WebSocketClientThread
 from .input_controller import InputController
 from .launcher import launch_game, cancel_launch, terminate_game, get_game_status, get_current_game_info, find_process_by_name
-from .window import (
-    ensure_window_foreground_v2,
-    minimize_other_windows,
-    focus_window_by_title,
-    focus_window_simple,
-)
+from .window import ensure_window_foreground_v2, minimize_other_windows
 from .system import check_process, kill_process
 from .steam import login_steam, get_steam_library_folders, get_steam_auto_login_user, is_steam_running, verify_steam_login, find_standalone_game
 from .hardware import set_dpi_awareness, get_screen_resolution, get_cpu_model, get_gpu_model
@@ -936,62 +924,30 @@ def create_app() -> Flask:
         """
         Focus a window to ensure it's in foreground.
 
-        Uses clean focus methods that don't interfere with game cursor locking:
-        1. WScript.Shell AppActivate (cleanest - no system manipulation)
-        2. Basic Win32 ShowWindow + SetForegroundWindow
-        3. No Alt key trick or SystemParametersInfo manipulation
-
-        Can focus by:
-        1. Window title (cleanest, recommended for games)
-        2. Process name (finds PID, then window title)
-        3. Current game (default, no params needed)
+        Can focus either:
+        1. The current game (default, no params needed)
+        2. Any process by name (e.g., "steam" to focus Steam window)
 
         Request body (optional):
         {
-            "window_title": "Far Cry 6",  # Focus by window title (cleanest)
-            "process_name": "steam",      # Focus by process name
-            "minimize_others": false      # Also minimize other windows
+            "process_name": "steam",  # Optional: focus this process instead of game
+            "minimize_others": false  # Also minimize other windows
         }
         """
         try:
             data = request.get_json() or {}
-            window_title = data.get('window_title')
             process_name = data.get('process_name')
             minimize_others = data.get('minimize_others', False)
 
             pid = None
             target_name = None
-            method_used = None
 
-            # Method 1: Focus by window title (cleanest, recommended for games)
-            if window_title:
-                logger.info(f"Focusing by window title: '{window_title}'")
-                success = focus_window_by_title(window_title)
-                target_name = window_title
-                method_used = "window_title"
-
-                if success:
-                    return jsonify({
-                        "status": "success",
-                        "message": f"Window focused by title: '{window_title}'",
-                        "window_title": window_title,
-                        "method": method_used
-                    })
-                else:
-                    return jsonify({
-                        "status": "warning",
-                        "message": f"Could not focus window: '{window_title}'",
-                        "window_title": window_title,
-                        "method": method_used
-                    })
-
-            # Method 2: Focus by process name
             if process_name:
+                # Focus specific process by name
                 proc = find_process_by_name(process_name)
                 if proc:
                     pid = proc.pid
                     target_name = process_name
-                    method_used = "process_name"
                     logger.info(f"Found process '{process_name}' with PID {pid}")
                 else:
                     return jsonify({
@@ -999,11 +955,10 @@ def create_app() -> Flask:
                         "message": f"Process '{process_name}' not found"
                     }), 404
             else:
-                # Method 3: Focus current game (default)
+                # Focus current game (original behavior)
                 game_info = get_current_game_info()
                 pid = game_info.get('pid')
-                target_name = game_info.get('process_name', 'game')
-                method_used = "current_game"
+                target_name = "game"
 
                 if not pid:
                     return jsonify({
@@ -1011,10 +966,8 @@ def create_app() -> Flask:
                         "message": "No game is currently running"
                     }), 400
 
-            # Focus the window using clean methods
-            # Uses WScript.Shell AppActivate first, then basic Win32
-            # No Alt key trick or SystemParametersInfo manipulation
-            success = ensure_window_foreground_v2(pid, timeout=5, use_pywinauto=False)
+            # Focus the window
+            success = ensure_window_foreground_v2(pid, timeout=3)
 
             # Optionally minimize other windows
             minimized_count = 0
@@ -1027,7 +980,6 @@ def create_app() -> Flask:
                     "message": f"Window focused (PID: {pid})",
                     "pid": pid,
                     "process_name": target_name,
-                    "method": method_used,
                     "minimized_others": minimized_count
                 })
             else:
@@ -1035,8 +987,7 @@ def create_app() -> Flask:
                     "status": "warning",
                     "message": f"Could not confirm focus for PID {pid}",
                     "pid": pid,
-                    "process_name": target_name,
-                    "method": method_used
+                    "process_name": target_name
                 })
 
         except Exception as e:
@@ -1211,42 +1162,22 @@ def create_app() -> Flask:
         """
         Take a screenshot and return as PNG image.
 
-        Query params (GET) or JSON body (POST):
+        Query params:
         - region: x,y,width,height (optional, full screen if not provided)
         - format: png|base64 (default: png)
-        - process_name: Focus this process before screenshot (optional, e.g., "RDR2.exe")
         """
         try:
-            # Get params from query string (GET) or JSON body (POST)
+            # Accept params from GET query string or POST JSON body
             if request.method == 'POST' and request.is_json:
                 data = request.get_json()
                 region_str = data.get('region')
                 output_format = data.get('format', 'png')
-                process_name = data.get('process_name')
             else:
                 region_str = request.args.get('region')
                 output_format = request.args.get('format', 'png')
-                process_name = request.args.get('process_name')
-
-            # Focus window before screenshot if process_name specified
-            if process_name:
-                try:
-                    from .system import find_process_by_name
-                    proc = find_process_by_name(process_name)
-                    if proc:
-                        logger.info(f"Focusing {process_name} (PID: {proc.pid}) before screenshot")
-                        ensure_window_foreground_v2(proc.pid, timeout=3, use_pywinauto=False)
-                        time.sleep(0.3)  # Brief delay for window to render
-                    else:
-                        logger.warning(f"Process {process_name} not found for focus")
-                except Exception as focus_err:
-                    logger.warning(f"Failed to focus {process_name}: {focus_err}")
 
             if region_str:
-                if isinstance(region_str, str):
-                    parts = [int(x) for x in region_str.split(',')]
-                else:
-                    parts = region_str
+                parts = [int(x) for x in region_str.split(',')]
                 if len(parts) == 4:
                     x, y, w, h = parts
                     region = (x, y, x + w, y + h)
@@ -1255,45 +1186,15 @@ def create_app() -> Flask:
             else:
                 region = None
 
-            # Capture screenshot using mss (DXGI) for better game capture, fallback to ImageGrab
-            _cap_start = time.time()
-            img = None
-            capture_method = None
-            if MSS_AVAILABLE:
-                try:
-                    with mss.mss() as sct:
-                        if region:
-                            monitor = {"left": region[0], "top": region[1],
-                                      "width": region[2] - region[0], "height": region[3] - region[1]}
-                        else:
-                            monitor = sct.monitors[1]  # Primary monitor
-                        sct_img = sct.grab(monitor)
-                        # Convert to PIL Image
-                        img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
-                        capture_method = "mss (DXGI)"
-                        logger.debug("Screenshot captured using mss (DXGI)")
-                except Exception as mss_err:
-                    logger.warning(f"mss capture failed, falling back to ImageGrab: {mss_err}")
-                    img = None
-
-            if img is None:
-                # Fallback to ImageGrab
-                img = ImageGrab.grab(bbox=region)
-                capture_method = "ImageGrab"
-                logger.debug("Screenshot captured using ImageGrab")
-
-            _cap_elapsed = (time.time() - _cap_start) * 1000
-            logger.debug(f"[Screenshot] Captured {img.width}x{img.height} via {capture_method} in {_cap_elapsed:.1f}ms, region={region}, format={output_format}")
+            # Capture screenshot
+            img = ImageGrab.grab(bbox=region)
 
             if output_format == 'base64':
                 # Return as base64 JSON
-                _enc_start = time.time()
                 buffer = io.BytesIO()
                 img.save(buffer, format='PNG')
                 buffer.seek(0)
                 img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-                _enc_elapsed = (time.time() - _enc_start) * 1000
-                logger.debug(f"[Screenshot] Encoded to base64: {len(img_base64)} chars, PNG size={buffer.tell()} bytes in {_enc_elapsed:.1f}ms")
                 return jsonify({
                     "status": "success",
                     "image": img_base64,
@@ -1302,12 +1203,9 @@ def create_app() -> Flask:
                 })
             else:
                 # Return as PNG file
-                _enc_start = time.time()
                 buffer = io.BytesIO()
                 img.save(buffer, format='PNG')
                 buffer.seek(0)
-                _enc_elapsed = (time.time() - _enc_start) * 1000
-                logger.debug(f"[Screenshot] Encoded to PNG: {buffer.getbuffer().nbytes} bytes in {_enc_elapsed:.1f}ms")
                 return send_file(buffer, mimetype='image/png')
 
         except Exception as e:
@@ -1664,6 +1562,43 @@ def create_app() -> Flask:
 
         except Exception as e:
             logger.error(f"Error getting current Steam user: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    @app.route('/restart', methods=['POST'])
+    def restart():
+        """Restart the SUT client via restarter.bat.
+
+        Spawns the restarter script in the background and returns immediately.
+        The restarter will kill this process and start a fresh instance.
+        """
+        import subprocess
+
+        try:
+            # Find restarter.bat relative to the sut_client package
+            package_dir = Path(__file__).resolve().parent.parent.parent
+            restarter = package_dir / "restarter.bat"
+
+            if not restarter.exists():
+                return jsonify({
+                    "status": "error",
+                    "message": f"restarter.bat not found at {restarter}"
+                }), 404
+
+            logger.info(f"Restart requested - launching {restarter}")
+
+            # Spawn restarter in a new detached console window
+            subprocess.Popen(
+                ["cmd", "/c", str(restarter)],
+                creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.DETACHED_PROCESS,
+                close_fds=True,
+            )
+
+            return jsonify({
+                "status": "success",
+                "message": "Restart initiated"
+            })
+        except Exception as e:
+            logger.error(f"Restart error: {e}")
             return jsonify({"status": "error", "message": str(e)}), 500
 
     @app.route('/login_steam', methods=['POST'])

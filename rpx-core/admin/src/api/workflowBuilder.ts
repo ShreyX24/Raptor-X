@@ -613,4 +613,15 @@ fallbacks:
 `;
 }
 
+/**
+ * Restart a SUT client service
+ * @param sutId The unique ID of the SUT
+ */
+export async function restartSut(sutId: string): Promise<ActionResult> {
+  return fetchDiscoveryJson<ActionResult>(
+    `/suts/${encodeURIComponent(sutId)}/restart`,
+    { method: 'POST' }
+  );
+}
+
 export { WorkflowBuilderError };

@@ -93,6 +93,34 @@ def _pin_banner(banner_height: int):
         pass  # Fall back to normal scrolling if anything goes wrong
 
 
+def redraw_banner():
+    """Redraw the pinned banner in-place with current GRADIENT_COLORS.
+
+    Saves cursor position, moves to row 1, redraws the banner lines
+    with the current gradient, then restores cursor position.
+    Called after branding is fetched from master to show new colors
+    without restarting.
+    """
+    banner = RPX_BANNER_LINES
+    try:
+        RPX_BANNER_LINES[0].encode(sys.stdout.encoding or "utf-8")
+    except (UnicodeEncodeError, LookupError):
+        banner = RPX_BANNER_ASCII
+
+    # Save cursor, move to row 2 (row 1 is blank line before banner)
+    sys.stdout.write("\033[s")  # Save cursor
+    for i, line in enumerate(banner):
+        color_code = GRADIENT_COLORS[i] if i < len(GRADIENT_COLORS) else 231
+        # Row is 2+i (1-based: row 1 = blank line, row 2 = first banner line)
+        sys.stdout.write(f"\033[{2 + i};1H")
+        try:
+            sys.stdout.write(f"\033[38;5;{color_code}m{line}{RESET}\033[K")
+        except UnicodeEncodeError:
+            sys.stdout.write(f"\033[38;5;{color_code}m{line.encode('ascii', 'replace').decode()}{RESET}\033[K")
+    sys.stdout.write("\033[u")  # Restore cursor
+    sys.stdout.flush()
+
+
 def print_banner(version: str, pin: bool = True):
     """Print the RAPTOR X banner with gradient colors.
 
@@ -629,4 +657,9 @@ def main():
 __all__ = [
     "__version__",
     "main",
+    "GRADIENT_COLORS",
+    "RPX_BANNER_LINES",
+    "RPX_BANNER_ASCII",
+    "RESET",
+    "redraw_banner",
 ]

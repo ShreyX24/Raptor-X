@@ -13,6 +13,8 @@ import shutil
 import ctypes
 import zipfile
 import argparse
+import threading
+import time
 import subprocess
 import http.cookiejar
 import urllib.request
@@ -26,17 +28,18 @@ REPO_NAME = "RPX"
 GDRIVE_FILE_ID = "1Otyc6swsZkzNyDHdPvPIXbyCky6QhNkg"
 
 PIP_SERVICES = [
-    ("rpx-core", "RPX Backend"),
-    ("sut_discovery_service", "SUT Discovery"),
-    ("queue_service", "Queue Service"),
-    ("service_manager", "Service Manager"),
-    ("sut_client", "SUT Client"),
-    ("preset-manager", "Preset Manager"),
+    # (directory, display_label, cli_command)
+    ("rpx-core", "RPX Backend", "gemma"),
+    ("sut_discovery_service", "SUT Discovery", "sut-discovery"),
+    ("queue_service", "Queue Service", "queue-service"),
+    ("service_manager", "Service Manager", "rpx-manager"),
+    ("sut_client", "SUT Client", "sut-client"),
+    ("preset-manager", "Preset Manager", "preset-manager"),
 ]
 
 NPM_FRONTENDS = [
-    ("rpx-core/admin", "RPX Admin"),
-    ("preset-manager/admin", "Preset Manager Admin"),
+    ("rpx-core/admin", "RPX Frontend"),
+    ("preset-manager/admin", "Preset Manager Frontend"),
 ]
 
 SUBMODULE_FALLBACKS = {
@@ -52,6 +55,13 @@ BANNER_LINES = [
     "\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2550\u255d    \u2588\u2588\u2551   \u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557     \u2588\u2588\u2554\u2588\u2588\u2557",
     "\u2588\u2588\u2551  \u2588\u2588\u2551\u2588\u2588\u2551  \u2588\u2588\u2551\u2588\u2588\u2551        \u2588\u2588\u2551   \u255a\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d\u2588\u2588\u2551  \u2588\u2588\u2551    \u2588\u2588\u2554\u255d \u2588\u2588\u2557",
     "\u255a\u2550\u255d  \u255a\u2550\u255d\u255a\u2550\u255d  \u255a\u2550\u255d\u255a\u2550\u255d        \u255a\u2550\u255d    \u255a\u2550\u2550\u2550\u2550\u2550\u255d \u255a\u2550\u255d  \u255a\u2550\u255d    \u255a\u2550\u255d  \u255a\u2550\u255d",
+]
+BANNER_ASCII = [
+    " ____   _    ____ _____ ___  ____    __  __",
+    "|  _ \\ / \\  |  _ \\_   _/ _ \\|  _ \\   \\ \\/ /",
+    "| |_) / _ \\ | |_) || || | | | |_) |   \\  / ",
+    "|  _ < ___ \\|  __/ | || |_| |  _ <    /  \\ ",
+    "|_| \\_\\_/ \\_\\_|    |_| \\___/|_| \\_\\  /_/\\_\\",
 ]
 RESET = "\033[0m"
 
@@ -107,18 +117,70 @@ class Colors:
         return f"\033[90m{text}{RESET}"
 
 
-def print_banner():
-    """Print RAPTOR X block-character banner with purple-to-white gradient."""
-    print()
-    for i, line in enumerate(BANNER_LINES):
+def print_banner(pin: bool = True):
+    """Print RAPTOR X block-character banner with purple-to-white gradient.
+
+    Args:
+        pin: If True, pin the banner to the top of the console using
+             ANSI scroll regions (DECSTBM) so setup output scrolls beneath it.
+    """
+    # Choose banner: try Unicode block chars, fall back to ASCII
+    banner = BANNER_LINES
+    try:
+        BANNER_LINES[0].encode(sys.stdout.encoding or "utf-8")
+    except (UnicodeEncodeError, LookupError):
+        banner = BANNER_ASCII
+
+    # Banner occupies: 1 blank + len(banner) art + 1 blank + 1 subtitle + 1 blank
+    banner_height = 1 + len(banner) + 1 + 1 + 1
+
+    if pin:
+        # Clear screen and move cursor to top-left
+        sys.stdout.write("\033[2J\033[H")
+        sys.stdout.flush()
+
+    print()  # blank line before banner
+    for i, line in enumerate(banner):
         c = GRADIENT_COLORS[i] if i < len(GRADIENT_COLORS) else 231
         try:
             print(f"{Colors.fg256(c)}{line}{RESET}")
         except UnicodeEncodeError:
             print(f"{Colors.fg256(c)}{line.encode('ascii', 'replace').decode()}{RESET}")
     subtitle = "Setup Script"
-    pad = max(0, (len(BANNER_LINES[0]) - len(subtitle)) // 2)
-    print(f"\n\033[97m{' ' * pad}{subtitle}{RESET}\n")
+    pad = max(0, (len(banner[0]) - len(subtitle)) // 2)
+    print(f"\n\033[97m{' ' * pad}{subtitle}{RESET}")
+    print()
+
+    if pin:
+        _pin_banner(banner_height)
+
+
+def _pin_banner(banner_height: int):
+    """Pin the banner by setting an ANSI scroll region below it.
+
+    Uses DECSTBM (Set Top and Bottom Margins) to confine all subsequent
+    scrolling to the area below the banner. Supported on Windows 10+
+    console and Windows Terminal.
+    """
+    try:
+        _, rows = shutil.get_terminal_size()
+        # Set scroll region: row after banner -> bottom of terminal
+        # DECSTBM: ESC [ <top> ; <bottom> r
+        sys.stdout.write(f"\033[{banner_height + 1};{rows}r")
+        # Move cursor into the scroll region
+        sys.stdout.write(f"\033[{banner_height + 1};1H")
+        sys.stdout.flush()
+    except Exception:
+        pass  # Fall back to normal scrolling if anything goes wrong
+
+
+def _reset_scroll_region():
+    """Reset DECSTBM scroll region to full terminal (removes banner pinning)."""
+    try:
+        sys.stdout.write("\033[r")  # Reset scroll region to full window
+        sys.stdout.flush()
+    except Exception:
+        pass
 
 
 def step_header(num: int, total: int, title: str):
@@ -146,6 +208,134 @@ def run(cmd: list, cwd=None, timeout=600, check=False) -> subprocess.CompletedPr
     )
 
 
+# ── Progress Indicators ─────────────────────────────────────────────────────
+
+class Spinner:
+    """Animated spinner (/, -, \\, |) with elapsed time for long operations."""
+
+    FRAMES = ['/', '-', '\\', '|']
+
+    def __init__(self, message: str):
+        self.message = message
+        self._running = False
+        self._thread = None
+        self._frame = 0
+        self._start_time = 0.0
+
+    def start(self):
+        self._running = True
+        self._start_time = time.time()
+        self._thread = threading.Thread(target=self._animate, daemon=True)
+        self._thread.start()
+
+    def _animate(self):
+        while self._running:
+            f = self.FRAMES[self._frame % 4]
+            elapsed = time.time() - self._start_time
+            sys.stdout.write(
+                f"\r  [{Colors.cyan(f)}] {self.message} "
+                f"{Colors.dim(f'({elapsed:.0f}s)')}\033[K"
+            )
+            sys.stdout.flush()
+            self._frame += 1
+            time.sleep(0.15)
+
+    def stop(self, success: bool = True, detail: str = ""):
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=1)
+        status = Colors.green('[OK]') if success else Colors.red('[FAIL]')
+        line = f"\r  {status} {self.message}"
+        if detail:
+            line += f" {Colors.dim(f'({detail})')}"
+        sys.stdout.write(f"{line}\033[K\n")
+        sys.stdout.flush()
+
+
+class ProgressBar:
+    """Colored gradient progress bar for tracked operations (downloads, extractions)."""
+
+    def __init__(self, total: int, width: int = 35):
+        self.total = max(total, 1)
+        self.width = width
+        self.current = 0
+        self._start_time = time.time()
+
+    def update(self, amount: int):
+        self.current = min(self.current + amount, self.total)
+        self._draw()
+
+    def set(self, value: int):
+        self.current = min(value, self.total)
+        self._draw()
+
+    def _draw(self):
+        pct = self.current / self.total
+        filled = int(self.width * pct)
+
+        # Build gradient-colored bar
+        bar = ""
+        for i in range(filled):
+            ci = int(i / max(self.width - 1, 1) * (len(GRADIENT_COLORS) - 1))
+            bar += f"{Colors.fg256(GRADIENT_COLORS[ci])}\u2588"
+        bar += f"{RESET}\u2591" * (self.width - filled)
+
+        done_mb = self.current / (1024 * 1024)
+        total_mb = self.total / (1024 * 1024)
+        elapsed = time.time() - self._start_time
+        speed = self.current / max(elapsed, 0.001) / (1024 * 1024)
+
+        info = f"({done_mb:.0f}/{total_mb:.0f} MB"
+        if speed > 0.1 and pct < 1.0:
+            info += f", {speed:.1f} MB/s"
+        info += ")"
+
+        sys.stdout.write(f"\r  {bar} {pct * 100:5.1f}% {Colors.dim(info)}\033[K")
+        sys.stdout.flush()
+
+    def finish(self):
+        self.current = self.total
+        self._draw()
+        print()
+
+
+def run_live(cmd: list, label: str, cwd=None, timeout: int = 600) -> subprocess.CompletedProcess:
+    """Run a subprocess with animated spinner, return CompletedProcess."""
+    spinner = Spinner(label)
+    spinner.start()
+    try:
+        result = subprocess.run(
+            cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout,
+        )
+        if result.returncode == 0:
+            spinner.stop(success=True)
+        else:
+            err_line = ""
+            if result.stderr:
+                err_line = result.stderr.strip().split('\n')[0][:100]
+            spinner.stop(success=False, detail=err_line)
+        return result
+    except subprocess.TimeoutExpired:
+        spinner.stop(success=False, detail="timed out")
+        return subprocess.CompletedProcess(cmd, -1, "", "Timeout")
+    except FileNotFoundError:
+        spinner.stop(success=False, detail=f"{cmd[0]} not found")
+        return subprocess.CompletedProcess(cmd, -1, "", f"Command not found: {cmd[0]}")
+    except Exception as e:
+        spinner.stop(success=False, detail=str(e)[:80])
+        return subprocess.CompletedProcess(cmd, -1, "", str(e))
+
+
+def get_npm_cmd() -> list:
+    """Get the npm command, resolving .cmd extension on Windows."""
+    if sys.platform == "win32":
+        npm = shutil.which("npm")
+        if npm:
+            return [npm]
+        return ["npm.cmd"]
+    return ["npm"]
+
+
 # ── GitManager ───────────────────────────────────────────────────────────────
 
 class GitManager:
@@ -169,19 +359,23 @@ class GitManager:
             ok(f"Found existing repo at {child}")
             return True
 
-        print(f"  Cloning {REPO_URL} ...")
-        r = run(["git", "clone", REPO_URL, REPO_NAME], cwd=self.root.parent)
+        r = run_live(
+            ["git", "clone", REPO_URL, REPO_NAME],
+            "Cloning repository",
+            cwd=self.root.parent,
+        )
         if r.returncode != 0:
-            fail(f"git clone failed: {r.stderr.strip()}")
             return False
         self.root = self.root.parent / REPO_NAME
-        ok("Repository cloned")
         return True
 
     def fetch_and_select_branch(self) -> bool:
         """Fetch all remotes and let user pick a branch interactively."""
-        print("  Fetching remote branches...")
-        run(["git", "fetch", "--all", "--prune"], cwd=self.root)
+        run_live(
+            ["git", "fetch", "--all", "--prune"],
+            "Fetching remote branches",
+            cwd=self.root,
+        )
 
         r = run(
             ["git", "for-each-ref", "--sort=-committerdate",
@@ -222,32 +416,48 @@ class GitManager:
 
         branch = branches[idx][0]
         print(f"  Switching to: {Colors.bold(branch)}")
-        r = run(["git", "checkout", branch], cwd=self.root)
+        r = run_live(
+            ["git", "checkout", branch],
+            f"Checking out {branch}",
+            cwd=self.root,
+        )
         if r.returncode != 0:
-            warn(f"Checkout failed: {r.stderr.strip()}")
-        r = run(["git", "pull", "origin", branch], cwd=self.root)
+            warn(f"Checkout issues: {r.stderr.strip()[:100]}")
+        r = run_live(
+            ["git", "pull", "origin", branch],
+            "Pulling latest changes",
+            cwd=self.root,
+        )
         if r.returncode != 0:
-            warn(f"Pull failed: {r.stderr.strip()}")
+            warn(f"Pull issues: {r.stderr.strip()[:100]}")
         else:
             ok(f"On branch {branch}, up to date")
         return True
 
     def init_submodules(self) -> bool:
         """Init/update submodules with fallback cloning."""
-        print("  Initializing submodules...")
-        run(["git", "submodule", "init"], cwd=self.root)
-        run(["git", "submodule", "update", "--recursive"], cwd=self.root)
+        run_live(
+            ["git", "submodule", "init"],
+            "Initializing submodules",
+            cwd=self.root,
+        )
+        run_live(
+            ["git", "submodule", "update", "--recursive"],
+            "Updating submodules",
+            cwd=self.root,
+        )
 
         for name, url in SUBMODULE_FALLBACKS.items():
             target = self.root / name
             git_check = target / ".git"
             if not git_check.exists():
-                print(f"  Cloning fallback: {name}...")
-                r = run(["git", "clone", url, name], cwd=self.root)
+                r = run_live(
+                    ["git", "clone", url, name],
+                    f"Cloning fallback: {name}",
+                    cwd=self.root,
+                )
                 if r.returncode != 0:
-                    warn(f"Failed to clone {name}: {r.stderr.strip()}")
-                else:
-                    ok(f"Cloned {name}")
+                    warn(f"Failed to clone {name}")
             else:
                 ok(f"Submodule {name} present")
         return True
@@ -287,14 +497,21 @@ class WeightsDownloader:
     # -- private helpers --
 
     def _download_urllib(self) -> bool:
-        """Two-step Google Drive download using urllib + cookiejar."""
+        """Two-step Google Drive download with progress bar."""
         try:
             cj = http.cookiejar.CookieJar()
             opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
             url1 = f"https://drive.google.com/uc?export=download&id={GDRIVE_FILE_ID}"
-            print("  Step 1: Getting download token...")
-            resp1 = opener.open(url1, timeout=30)
-            html = resp1.read().decode("utf-8", errors="replace")
+
+            spinner = Spinner("Getting download token")
+            spinner.start()
+            try:
+                resp1 = opener.open(url1, timeout=30)
+                html = resp1.read().decode("utf-8", errors="replace")
+                spinner.stop(success=True)
+            except Exception:
+                spinner.stop(success=False)
+                raise
 
             uuid = ""
             m = re.search(r'name="uuid"\s+value="([^"]+)"', html)
@@ -312,14 +529,32 @@ class WeightsDownloader:
             if uuid:
                 url2 += f"&uuid={uuid}"
 
-            print("  Step 2: Downloading (this may take several minutes)...")
             resp2 = opener.open(url2, timeout=600)
-            with open(self.weights_zip, "wb") as f:
-                while True:
-                    chunk = resp2.read(1 << 20)  # 1 MB chunks
-                    if not chunk:
-                        break
-                    f.write(chunk)
+            total_size = int(resp2.headers.get("Content-Length", 0))
+
+            progress = None
+            dl_spinner = None
+            if total_size > 0:
+                progress = ProgressBar(total_size)
+            else:
+                dl_spinner = Spinner("Downloading weights (size unknown)")
+                dl_spinner.start()
+
+            try:
+                with open(self.weights_zip, "wb") as f:
+                    while True:
+                        chunk = resp2.read(1 << 20)  # 1 MB chunks
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        if progress:
+                            progress.update(len(chunk))
+            finally:
+                if progress:
+                    progress.finish()
+                if dl_spinner:
+                    dl_spinner.stop(success=True)
+
             return True
         except Exception as e:
             warn(f"urllib download failed: {e}")
@@ -328,28 +563,24 @@ class WeightsDownloader:
             return False
 
     def _download_curl(self) -> bool:
-        """Fallback: use curl subprocess."""
+        """Fallback: use curl with spinner."""
         if not shutil.which("curl"):
             warn("curl not found, cannot use fallback download")
             return False
-        print("  Trying curl fallback...")
-        try:
-            url = (
-                f"https://drive.usercontent.google.com/download"
-                f"?id={GDRIVE_FILE_ID}&export=download&confirm=t"
-            )
-            r = run(
-                ["curl", "-L", "-o", str(self.weights_zip), url],
-                cwd=self.omni_dir,
-                timeout=900,
-            )
-            return r.returncode == 0
-        except Exception as e:
-            warn(f"curl download failed: {e}")
-            return False
+        url = (
+            f"https://drive.usercontent.google.com/download"
+            f"?id={GDRIVE_FILE_ID}&export=download&confirm=t"
+        )
+        r = run_live(
+            ["curl", "-L", "-o", str(self.weights_zip), url],
+            "Downloading weights via curl",
+            cwd=self.omni_dir,
+            timeout=900,
+        )
+        return r.returncode == 0
 
     def _verify_and_extract(self) -> bool:
-        """Verify file size > 100 MB then extract."""
+        """Verify file size > 100 MB then extract with progress."""
         if not self.weights_zip.exists():
             fail("weights.zip not found after download")
             return False
@@ -361,7 +592,23 @@ class WeightsDownloader:
         print(f"  Extracting weights ({size / 1e9:.1f} GB)...")
         try:
             with zipfile.ZipFile(self.weights_zip, "r") as zf:
-                zf.extractall(self.omni_dir)
+                members = zf.infolist()
+                total = len(members)
+                for i, member in enumerate(members):
+                    zf.extract(member, self.omni_dir)
+                    pct = (i + 1) / total
+                    filled = int(35 * pct)
+                    bar = ""
+                    for j in range(filled):
+                        ci = int(j / max(34, 1) * (len(GRADIENT_COLORS) - 1))
+                        bar += f"{Colors.fg256(GRADIENT_COLORS[ci])}\u2588"
+                    bar += f"{RESET}\u2591" * (35 - filled)
+                    sys.stdout.write(
+                        f"\r  {bar} {pct * 100:5.1f}% "
+                        f"{Colors.dim(f'({i + 1}/{total} files)')}\033[K"
+                    )
+                    sys.stdout.flush()
+                print()
             self.weights_zip.unlink()
             ok("Weights downloaded and extracted")
             return True
@@ -380,37 +627,54 @@ class DependencyInstaller:
         self.root = root
 
     def npm_install(self) -> bool:
-        """Run npm install for each frontend."""
+        """Run npm install for each frontend with spinner."""
+        npm = get_npm_cmd()
         success = True
         for rel, label in NPM_FRONTENDS:
             pkg = self.root / rel / "package.json"
             if not pkg.exists():
                 warn(f"{rel}/package.json not found, skipping {label}")
                 continue
-            print(f"  Installing {label} npm dependencies...")
-            r = run(["npm", "install"], cwd=self.root / rel, timeout=300)
+            r = run_live(
+                npm + ["install"],
+                f"Installing {label} dependencies",
+                cwd=self.root / rel,
+                timeout=300,
+            )
             if r.returncode != 0:
-                warn(f"npm install failed for {label}")
                 success = False
-            else:
-                ok(f"{label} dependencies installed")
         return success
 
-    def pip_install(self) -> bool:
-        """pip install -e for each Python service."""
+    def check_python_deps(self) -> list:
+        """Check which Python services are already installed.
+
+        Returns list of (dir, label, cli_cmd, is_installed) tuples.
+        """
+        results = []
+        for rel, label, cli in PIP_SERVICES:
+            installed = shutil.which(cli) is not None
+            results.append((rel, label, cli, installed))
+        return results
+
+    def pip_install(self, skip: set = None) -> bool:
+        """pip install -e for each Python service with spinner."""
+        skip = skip or set()
         success = True
-        for rel, label in PIP_SERVICES:
+        for rel, label, _cli in PIP_SERVICES:
+            if rel in skip:
+                ok(f"{label} (skipped)")
+                continue
             svc_dir = self.root / rel
             if not (svc_dir / "pyproject.toml").exists() and not (svc_dir / "setup.py").exists() and not (svc_dir / "setup.cfg").exists():
                 warn(f"{rel} has no installable config, skipping {label}")
                 continue
-            print(f"  Installing {label}...")
-            r = run([sys.executable, "-m", "pip", "install", "-e", str(svc_dir)], timeout=300)
+            r = run_live(
+                [sys.executable, "-m", "pip", "install", "-e", str(svc_dir)],
+                f"Installing {label}",
+                timeout=300,
+            )
             if r.returncode != 0:
-                warn(f"pip install failed for {label}")
                 success = False
-            else:
-                ok(f"{label} installed")
         return success
 
 
@@ -509,6 +773,8 @@ class NetworkConfigurator:
         ("RPX SUT Discovery (UDP)", "UDP", 9999),
         ("RPX SUT Client (TCP)", "TCP", 8080),
         ("RPX SSH (TCP)", "TCP", 22),
+        ("RPX Frontend (3000)", "TCP", 3000),
+        ("Preset Manager Frontend (3001)", "TCP", 3001),
     ]
 
     @staticmethod
@@ -671,9 +937,10 @@ class RPXSetup:
         self.git = GitManager(root)
         self.results = []  # list of (title, passed) tuples
 
-    def run(self):
+    def run(self, banner_printed: bool = False):
         Colors.enable()
-        print_banner()
+        if not banner_printed:
+            print_banner()
         self._check_prerequisites()
 
         if self.install_only:
@@ -765,6 +1032,23 @@ class RPXSetup:
 
     def _do_pip(self) -> bool:
         installer = DependencyInstaller(self.root)
+
+        # Pre-check which services are already installed
+        deps = installer.check_python_deps()
+        installed_count = sum(1 for _, _, _, inst in deps if inst)
+
+        if installed_count > 0:
+            print(f"\n  {Colors.cyan(str(installed_count))}/{len(deps)} Python services already installed:")
+            for _rel, label, cli, inst in deps:
+                status = Colors.green('\u2713 installed') if inst else Colors.dim('\u2717 not installed')
+                print(f"    {status}  {label} ({Colors.dim(cli)})")
+
+            print(f"\n  {Colors.yellow('Note:')} Reinstalling is recommended to keep versions current.")
+            choice = input(f"  [R]einstall all (recommended) / [S]kip? [R]: ").strip().lower() or 'r'
+            if choice == 's':
+                ok("Skipping Python dependency installation")
+                return True
+
         return installer.pip_install()
 
     def _do_ssh(self) -> bool:
@@ -782,11 +1066,14 @@ class RPXSetup:
         if not install_bat.exists():
             warn("omniparser-server/install.bat not found, skipping")
             return False
-        r = run(["cmd", "/c", str(install_bat)], cwd=self.root / "omniparser-server", timeout=600)
+        r = run_live(
+            ["cmd", "/c", str(install_bat)],
+            "Installing OmniParser dependencies",
+            cwd=self.root / "omniparser-server",
+            timeout=600,
+        )
         if r.returncode != 0:
-            warn("OmniParser install had errors")
             return False
-        ok("OmniParser dependencies installed")
         return True
 
     def _do_settings(self) -> bool:
@@ -796,6 +1083,8 @@ class RPXSetup:
     # ── summary ──────────────────────────────────────────────────────
 
     def _print_summary(self):
+        # Reset scroll region so summary is visible in full terminal
+        _reset_scroll_region()
         print(f"\n{'=' * 60}")
         print(Colors.bold("  Setup Summary"))
         print(f"{'=' * 60}")
@@ -823,9 +1112,11 @@ def main():
     Colors.enable()
 
     install_only = args.install_only
+    banner_printed = False
 
     if not install_only:
         print_banner()
+        banner_printed = True
         print("  Select setup mode:")
         print(f"    {Colors.cyan('[1]')} Full setup (clone/update + install)")
         print(f"    {Colors.cyan('[2]')} Install only (skip git operations)")
@@ -836,7 +1127,7 @@ def main():
 
     root = Path.cwd()
     setup = RPXSetup(root, install_only=install_only)
-    setup.run()
+    setup.run(banner_printed=banner_printed)
 
 
 if __name__ == "__main__":

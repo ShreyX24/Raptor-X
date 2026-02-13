@@ -857,15 +857,12 @@ class SimpleAutomation:
                     self.progress_callback.on_step_complete(current_step, success=False, error_message="Game process terminated")
                 return False
 
-            # Focus game window if step explicitly requests it via focus_before: true
-            # This gives explicit control over which steps need focus (e.g., after benchmark)
-            if step.get("focus_before", False):
-                try:
-                    logger.info(f"Focusing game window before step {current_step} (process: {self.process_name})")
-                    self.network.focus_game(process_name=self.process_name)
-                    time.sleep(0.3)  # Brief delay after focusing
-                except Exception as e:
-                    logger.warning(f"Could not focus game window: {e}")
+            # Focus game window before each step to prevent focus loss
+            try:
+                self.network.focus_game(process_name=self.process_name)
+                time.sleep(0.2)  # Brief delay after focusing
+            except Exception as e:
+                logger.warning(f"Could not focus game window: {e}")
 
             # Handle optional steps (popups, interruptions)
             if self._handle_optional_steps():
@@ -1513,12 +1510,11 @@ class SimpleAutomation:
 
         try:
             # Check if refocusing should be disabled for this step
-            # Disable refocus for benchmark steps to prevent cursor lock issues
-            # Can also be explicitly set in step config via no_refocus: true
-            no_refocus = is_benchmark or (step.get("no_refocus", False) if step else False)
+            # Only disable if explicitly set in step config via no_refocus: true
+            no_refocus = step.get("no_refocus", False) if step else False
 
             if no_refocus:
-                logger.info("Refocusing disabled for this wait (benchmark/no_refocus)")
+                logger.info("Refocusing disabled for this wait (no_refocus flag set)")
 
             if condition:
                 # Conditional wait (wait until condition is met)

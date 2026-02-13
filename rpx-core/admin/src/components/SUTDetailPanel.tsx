@@ -10,6 +10,7 @@ import {
   type SUTSystemInfo,
   type InstalledGame,
 } from '../api';
+import { restartSut } from '../api/workflowBuilder';
 
 interface SUTDetailPanelProps {
   sut: SUT | null;
@@ -77,6 +78,12 @@ const CloseIcon = () => (
   </svg>
 );
 
+const RestartIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+  </svg>
+);
+
 const KeyIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
@@ -120,6 +127,24 @@ export function SUTDetailPanel({ sut, onClose }: SUTDetailPanelProps) {
   const [installedGames, setInstalledGames] = useState<InstalledGame[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [restarting, setRestarting] = useState(false);
+  const [restartMessage, setRestartMessage] = useState<string | null>(null);
+
+  const handleRestart = async () => {
+    if (!sut || sut.status !== 'online') return;
+    if (!confirm(`Restart SUT client on ${sut.hostname || sut.ip}? The SUT will go offline briefly.`)) return;
+
+    setRestarting(true);
+    setRestartMessage(null);
+    try {
+      await restartSut(sut.device_id);
+      setRestartMessage('Restart initiated');
+    } catch (err) {
+      setRestartMessage(err instanceof Error ? err.message : 'Restart failed');
+    } finally {
+      setRestarting(false);
+    }
+  };
 
   useEffect(() => {
     if (!sut || sut.status !== 'online') {
@@ -190,14 +215,27 @@ export function SUTDetailPanel({ sut, onClose }: SUTDetailPanelProps) {
             <p className="text-sm text-text-muted">{sut.ip}:{sut.port}</p>
           </div>
         </div>
-        {onClose && (
-          <button
-            onClick={onClose}
-            className="p-1 rounded hover:bg-surface-elevated transition-colors text-text-muted hover:text-text-primary"
-          >
-            <CloseIcon />
-          </button>
-        )}
+        <div className="flex items-center gap-1">
+          {sut.status === 'online' && (
+            <button
+              onClick={handleRestart}
+              disabled={restarting}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-border bg-surface-elevated hover:bg-surface-hover text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+              title="Restart SUT client"
+            >
+              <RestartIcon />
+              {restarting ? 'Restarting...' : 'Restart'}
+            </button>
+          )}
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="p-1 rounded hover:bg-surface-elevated transition-colors text-text-muted hover:text-text-primary"
+            >
+              <CloseIcon />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Content */}
@@ -228,6 +266,17 @@ export function SUTDetailPanel({ sut, onClose }: SUTDetailPanelProps) {
             </span>
           )}
         </div>
+
+        {/* Restart message */}
+        {restartMessage && (
+          <div className={`p-2 rounded-lg text-xs ${
+            restartMessage === 'Restart initiated'
+              ? 'bg-success/10 text-success border border-success/20'
+              : 'bg-danger/10 text-danger border border-danger/20'
+          }`}>
+            {restartMessage}
+          </div>
+        )}
 
         {/* SSH Status */}
         {(sut.ssh_fingerprint || sut.master_key_installed !== undefined) && (

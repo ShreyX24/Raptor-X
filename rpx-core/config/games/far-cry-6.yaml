@@ -49,7 +49,6 @@ steps:
 
   3:
     description: "Wait for benchmark to complete"
-    no_refocus: true  # Disable periodic refocusing during benchmark (prevents cursor lock)
     action:
       type: "wait"
       duration: 70
@@ -62,7 +61,6 @@ steps:
 
   4:
     description: "Click Exit Benchmark button"
-    no_refocus: true  # Prevents cursor lock: skips AppActivate focus before screenshots
     find:
       type: "any"
       text: "Exit Benchmark"

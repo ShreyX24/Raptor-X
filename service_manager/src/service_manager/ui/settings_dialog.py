@@ -8,15 +8,14 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QCheckBox, QPushButton, QComboBox,
     QGroupBox, QFormLayout, QListWidget, QListWidgetItem,
     QMessageBox, QInputDialog, QTextEdit, QSpinBox, QFrame,
-    QFileDialog, QColorDialog, QScrollArea, QSizePolicy
+    QFileDialog,
 )
-from PySide6.QtGui import QColor, QFont
 from PySide6.QtCore import Qt, Signal
 
 from ..config import get_services, detect_project_dir
 from ..settings import (
     ServiceSettings, Profile, OmniParserServer, SteamAccountPair,
-    get_settings_manager, BANNER_PRESETS, DEFAULT_BANNER_GRADIENT
+    get_settings_manager,
 )
 
 
@@ -978,252 +977,6 @@ class SteamAccountsTab(QWidget):
         return self.timeout_spin.value()
 
 
-def _ansi256_to_rgb(code: int) -> tuple:
-    """Convert ANSI 256-color code to (R, G, B) tuple."""
-    if code < 16:
-        # Standard colors
-        basic = [
-            (0, 0, 0), (128, 0, 0), (0, 128, 0), (128, 128, 0),
-            (0, 0, 128), (128, 0, 128), (0, 128, 128), (192, 192, 192),
-            (128, 128, 128), (255, 0, 0), (0, 255, 0), (255, 255, 0),
-            (0, 0, 255), (255, 0, 255), (0, 255, 255), (255, 255, 255),
-        ]
-        return basic[code]
-    elif code < 232:
-        # 216-color cube (16-231)
-        idx = code - 16
-        r = idx // 36
-        g = (idx % 36) // 6
-        b = idx % 6
-        return (r * 51, g * 51, b * 51)
-    else:
-        # Grayscale ramp (232-255)
-        v = 8 + (code - 232) * 10
-        return (v, v, v)
-
-
-def _rgb_to_ansi256(r: int, g: int, b: int) -> int:
-    """Convert RGB to nearest ANSI 256-color code."""
-    best_code = 0
-    best_dist = float('inf')
-
-    # Check 216-color cube (16-231)
-    ri = round(r / 51)
-    gi = round(g / 51)
-    bi = round(b / 51)
-    cube_code = 16 + 36 * ri + 6 * gi + bi
-    cr, cg, cb = ri * 51, gi * 51, bi * 51
-    cube_dist = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2
-    if cube_dist < best_dist:
-        best_dist = cube_dist
-        best_code = cube_code
-
-    # Check grayscale ramp (232-255)
-    gray_avg = (r + g + b) // 3
-    gray_idx = max(0, min(23, round((gray_avg - 8) / 10)))
-    gray_code = 232 + gray_idx
-    gv = 8 + gray_idx * 10
-    gray_dist = (r - gv) ** 2 + (g - gv) ** 2 + (b - gv) ** 2
-    if gray_dist < best_dist:
-        best_code = gray_code
-
-    return best_code
-
-
-BANNER_LINES = [
-    "\u2588\u2588\u2588\u2588\u2588\u2588\u2557  \u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2557     \u2588\u2588\u2557  \u2588\u2588\u2557",
-    "\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u255a\u2550\u2550\u2588\u2588\u2554\u2550\u2550\u255d\u2588\u2588\u2554\u2550\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557    \u255a\u2588\u2588\u2557\u2588\u2588\u2554\u255d",
-    "\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d   \u2588\u2588\u2551   \u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d     \u255a\u2588\u2588\u2588\u2554\u255d",
-    "\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2550\u255d    \u2588\u2588\u2551   \u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557     \u2588\u2588\u2554\u2588\u2588\u2557",
-    "\u2588\u2588\u2551  \u2588\u2588\u2551\u2588\u2588\u2551  \u2588\u2588\u2551\u2588\u2588\u2551        \u2588\u2588\u2551   \u255a\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d\u2588\u2588\u2551  \u2588\u2588\u2551    \u2588\u2588\u2554\u255d \u2588\u2588\u2557",
-    "\u255a\u2550\u255d  \u255a\u2550\u255d\u255a\u2550\u255d  \u255a\u2550\u255d\u255a\u2550\u255d        \u255a\u2550\u255d    \u255a\u2550\u2550\u2550\u2550\u2550\u255d \u255a\u2550\u255d  \u255a\u2550\u255d    \u255a\u2550\u255d  \u255a\u2550\u255d",
-]
-
-
-class BannerColorTab(QWidget):
-    """Tab for customizing the RAPTOR X banner gradient colors"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._colors = DEFAULT_BANNER_GRADIENT.copy()
-        self._row_buttons = []
-        self._setup_ui()
-        self._load_settings()
-
-    def _setup_ui(self):
-        layout = QHBoxLayout(self)
-
-        # Left side - Controls
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-
-        # Preset gradients section
-        presets_group = QGroupBox("Preset Gradients")
-        presets_layout = QVBoxLayout(presets_group)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setMaximumHeight(200)
-        scroll_widget = QWidget()
-        scroll_layout = QVBoxLayout(scroll_widget)
-        scroll_layout.setSpacing(4)
-
-        for name, colors in BANNER_PRESETS.items():
-            row = QHBoxLayout()
-            btn = QPushButton(name.replace("_", " ").title())
-            btn.setFixedWidth(120)
-            btn.clicked.connect(lambda checked, n=name: self._apply_preset(n))
-            row.addWidget(btn)
-
-            # Color bar preview
-            bar_label = QLabel()
-            bar_html = ""
-            for c in colors:
-                r, g, b = _ansi256_to_rgb(c)
-                bar_html += f'<span style="background-color:rgb({r},{g},{b});">&nbsp;&nbsp;&nbsp;</span>'
-            bar_label.setText(bar_html)
-            bar_label.setTextFormat(Qt.RichText)
-            row.addWidget(bar_label)
-            row.addStretch()
-            scroll_layout.addLayout(row)
-
-        scroll_layout.addStretch()
-        scroll.setWidget(scroll_widget)
-        presets_layout.addWidget(scroll)
-        left_layout.addWidget(presets_group)
-
-        # Per-row customization
-        rows_group = QGroupBox("Per-Row Colors")
-        rows_layout = QVBoxLayout(rows_group)
-
-        for i in range(6):
-            row = QHBoxLayout()
-            label = QLabel(f"Row {i + 1}:")
-            label.setFixedWidth(50)
-            row.addWidget(label)
-
-            btn = QPushButton()
-            btn.setFixedSize(60, 24)
-            btn.clicked.connect(lambda checked, idx=i: self._pick_color(idx))
-            row.addWidget(btn)
-            self._row_buttons.append(btn)
-
-            code_label = QLabel()
-            code_label.setFixedWidth(40)
-            code_label.setStyleSheet("color: #888;")
-            row.addWidget(code_label)
-
-            row.addStretch()
-            rows_layout.addLayout(row)
-
-        left_layout.addWidget(rows_group)
-
-        # Reset button
-        reset_btn = QPushButton("Reset to Default")
-        reset_btn.clicked.connect(self._reset_to_default)
-        left_layout.addWidget(reset_btn)
-
-        left_layout.addStretch()
-        layout.addWidget(left)
-
-        # Right side - Live preview
-        right = QWidget()
-        right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-
-        preview_group = QGroupBox("Live Preview")
-        preview_layout = QVBoxLayout(preview_group)
-
-        self.preview_label = QLabel()
-        self.preview_label.setFont(QFont("Consolas", 8))
-        self.preview_label.setTextFormat(Qt.RichText)
-        self.preview_label.setAlignment(Qt.AlignCenter)
-        self.preview_label.setStyleSheet("background-color: #1e1e1e; padding: 10px; border-radius: 4px;")
-        self.preview_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        preview_layout.addWidget(self.preview_label)
-
-        right_layout.addWidget(preview_group)
-        layout.addWidget(right, 1)
-
-    def _load_settings(self):
-        """Load current gradient from settings"""
-        settings = get_settings_manager()
-        self._colors = settings.get_banner_gradient()
-        self._update_ui()
-
-    def _update_ui(self):
-        """Update button colors and preview"""
-        for i, code in enumerate(self._colors):
-            r, g, b = _ansi256_to_rgb(code)
-            self._row_buttons[i].setStyleSheet(
-                f"background-color: rgb({r},{g},{b}); border: 1px solid #555;"
-            )
-            # Update code label (sibling in layout)
-            parent_layout = self._row_buttons[i].parent().layout()
-            if parent_layout is None:
-                # Button is in a QHBoxLayout added to rows_layout
-                pass
-            # Find the code label by iterating the row buttons parent
-            rows_group = self._row_buttons[i].parentWidget()
-            if rows_group:
-                rows_layout = rows_group.layout()
-                if rows_layout:
-                    for row_idx in range(rows_layout.count()):
-                        item = rows_layout.itemAt(row_idx)
-                        if item and item.layout():
-                            h_layout = item.layout()
-                            # Check if this row's button matches
-                            for w_idx in range(h_layout.count()):
-                                widget = h_layout.itemAt(w_idx).widget()
-                                if widget is self._row_buttons[i]:
-                                    # The code label is the next widget after button
-                                    code_widget = h_layout.itemAt(w_idx + 1)
-                                    if code_widget and code_widget.widget():
-                                        code_widget.widget().setText(f"({code})")
-                                    break
-
-        self._update_preview()
-
-    def _update_preview(self):
-        """Update the banner preview with current colors"""
-        html = '<div style="font-family: Consolas, monospace; font-size: 8pt; line-height: 1.2;">'
-        for i, line in enumerate(BANNER_LINES):
-            code = self._colors[i] if i < len(self._colors) else 231
-            r, g, b = _ansi256_to_rgb(code)
-            # Escape HTML entities in the banner
-            escaped = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            html += f'<div style="color: rgb({r},{g},{b}); white-space: pre;">{escaped}</div>'
-        html += '</div>'
-        self.preview_label.setText(html)
-
-    def _apply_preset(self, name: str):
-        """Apply a preset gradient"""
-        if name in BANNER_PRESETS:
-            self._colors = BANNER_PRESETS[name].copy()
-            self._update_ui()
-
-    def _pick_color(self, row: int):
-        """Open color picker for a specific row"""
-        r, g, b = _ansi256_to_rgb(self._colors[row])
-        initial = QColor(r, g, b)
-        color = QColorDialog.getColor(initial, self, f"Pick Color for Row {row + 1}")
-        if color.isValid():
-            ansi_code = _rgb_to_ansi256(color.red(), color.green(), color.blue())
-            self._colors[row] = ansi_code
-            self._update_ui()
-
-    def _reset_to_default(self):
-        """Reset to default gradient"""
-        self._colors = DEFAULT_BANNER_GRADIENT.copy()
-        self._update_ui()
-
-    def get_gradient(self) -> list:
-        """Get the current gradient colors"""
-        return self._colors.copy()
-
-
 class SettingsDialog(QDialog):
     """Settings dialog with tabs"""
 
@@ -1257,8 +1010,6 @@ class SettingsDialog(QDialog):
         self.steam_accounts_tab = SteamAccountsTab()
         self.tabs.addTab(self.steam_accounts_tab, "Steam Accounts")
 
-        self.banner_tab = BannerColorTab()
-        self.tabs.addTab(self.banner_tab, "Banner Colors")
 
         layout.addWidget(self.tabs)
 
@@ -1313,8 +1064,5 @@ class SettingsDialog(QDialog):
         # Save Steam account pairs and timeout
         settings.set_steam_account_pairs(self.steam_accounts_tab.get_pairs())
         settings.set_steam_login_timeout(self.steam_accounts_tab.get_timeout())
-
-        # Save banner gradient
-        settings.set_banner_gradient(self.banner_tab.get_gradient())
 
         settings.save()

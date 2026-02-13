@@ -621,6 +621,22 @@ export async function stopCampaign(campaignId: string): Promise<{ status: string
   });
 }
 
+// Branding APIs
+export interface BrandingResponse {
+  banner_gradient: number[];
+}
+
+export async function getBranding(): Promise<BrandingResponse> {
+  return fetchJson<BrandingResponse>(`${DISCOVERY_API}/branding`);
+}
+
+export async function updateBranding(gradient: number[]): Promise<{ status: string; banner_gradient: number[] }> {
+  return fetchJson<{ status: string; banner_gradient: number[] }>(`${DISCOVERY_API}/branding`, {
+    method: 'POST',
+    body: JSON.stringify({ banner_gradient: gradient }),
+  });
+}
+
 export { ApiError, TimeoutError };
 
 // Re-export service-specific APIs

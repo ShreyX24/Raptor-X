@@ -198,3 +198,14 @@ async def get_performance(unique_id: str):
     Proxies to SUT /performance endpoint.
     """
     return await proxy_to_sut(unique_id, "/performance", "GET")
+
+
+# ============== SUT Control ==============
+
+@router.post("/suts/{unique_id}/restart")
+async def restart_sut(unique_id: str):
+    """
+    Restart the SUT client service.
+    Proxies to SUT /restart endpoint.
+    """
+    return await proxy_to_sut(unique_id, "/restart", "POST", timeout=10.0)

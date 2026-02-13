@@ -188,7 +188,7 @@ class WebSocketClient:
                     await asyncio.sleep(delay)
 
     async def _fetch_branding(self):
-        """Fetch banner branding from discovery service and cache locally."""
+        """Fetch banner branding from discovery service, cache locally, and redraw banner."""
         try:
             import urllib.request
             from pathlib import Path
@@ -211,6 +211,14 @@ class WebSocketClient:
                 with open(cache_file, "w", encoding="utf-8") as f:
                     json.dump({"banner_gradient": gradient}, f)
                 logger.info(f"Cached branding gradient: {gradient}")
+
+                # Update in-memory gradient and redraw the pinned banner
+                from . import GRADIENT_COLORS, redraw_banner
+                GRADIENT_COLORS[:] = gradient
+                try:
+                    redraw_banner()
+                except Exception:
+                    pass  # Non-critical if redraw fails
         except Exception as e:
             logger.debug(f"Could not fetch branding: {e}")
 

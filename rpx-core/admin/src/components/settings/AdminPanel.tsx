@@ -11,6 +11,7 @@ import { GameConfigEditor } from './GameConfigEditor';
 import { AutomationSettings } from './AutomationSettings';
 import { SteamAccountsManager } from './SteamAccountsManager';
 import { ProfileManager } from './ProfileManager';
+import { BrandingSettings } from './BrandingSettings';
 import { useAdminConfig } from '../../hooks/useAdminConfig';
 import type { AdminTab } from '../../types/admin';
 import { RefreshCw } from 'lucide-react';
@@ -139,6 +140,13 @@ export function AdminPanel({ initialTab = 'services' }: AdminPanelProps) {
             loading={loading}
             onUnsavedChange={() => markUnsaved('profiles')}
             onSaved={() => clearUnsaved('profiles')}
+          />
+        );
+      case 'branding':
+        return (
+          <BrandingSettings
+            onUnsavedChange={() => markUnsaved('branding')}
+            onSaved={() => clearUnsaved('branding')}
           />
         );
       default:

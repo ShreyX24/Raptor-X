@@ -1,3 +1,4 @@
 @echo off
 echo Starting Raptor X Service Manager...
-rpx-manager
+start "" rpx-manager
+exit
