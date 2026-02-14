@@ -1,6 +1,11 @@
 """
 Window Detection and Management Module
-Provides pywinauto-based window detection with Win32 API fallback.
+Provides pywinauto-based window detection with aggressive Win32 API fallback.
+
+The v2 focus chain (pywinauto → aggressive Win32) is required for games like
+Far Cry 6 that capture input tightly during benchmarks. Simpler methods
+(WScript AppActivate, basic ShowWindow+BringWindowToTop) are too weak to break
+fullscreen input capture and cause cursor freeze / input loss.
 
 Ported from KATANA RPX v0.2
 Author: SATYAJIT BHUYAN (satyajit.bhuyan@intel.com)
@@ -15,7 +20,6 @@ import win32api
 import win32con
 import win32gui
 import win32process
-import win32com.client
 
 logger = logging.getLogger(__name__)
 
@@ -228,200 +232,18 @@ def bring_to_foreground_pywinauto(pid: int) -> bool:
         return False
 
 
-# =============================================================================
-# WScript.Shell Focus Methods (Cleanest approach - no system state manipulation)
-# =============================================================================
-
-def focus_window_by_title(window_title: str) -> bool:
-    """
-    Focus a window by its title using WScript.Shell AppActivate.
-
-    This is the cleanest and most reliable method as it:
-    1. Uses Windows' built-in window activation mechanism
-    2. Does NOT manipulate system-wide settings
-    3. Does NOT send fake Alt keys that can interfere with games
-    4. Works with fullscreen, borderless, and windowed modes
-
-    Args:
-        window_title: Window title (partial match supported)
-
-    Returns:
-        bool: True if window was activated
-    """
-    try:
-        shell = win32com.client.Dispatch("WScript.Shell")
-        result = shell.AppActivate(window_title)
-        if result:
-            logger.info(f"AppActivate succeeded for window: '{window_title}'")
-            return True
-        else:
-            logger.debug(f"AppActivate returned False for: '{window_title}'")
-            return False
-    except Exception as e:
-        logger.warning(f"AppActivate failed for '{window_title}': {e}")
-        return False
-
-
-def focus_window_by_pid_clean(pid: int) -> bool:
-    """
-    Focus a window by PID using clean WScript.Shell method.
-
-    First finds the window title for the PID, then uses AppActivate.
-    This avoids system state manipulation that can cause cursor lock issues.
-
-    Args:
-        pid: Process ID
-
-    Returns:
-        bool: True if window was activated
-    """
-    # Find window title for this PID
-    window_title = None
-
-    def callback(hwnd, titles):
-        try:
-            _, found_pid = win32process.GetWindowThreadProcessId(hwnd)
-            if found_pid == pid and win32gui.IsWindowVisible(hwnd):
-                title = win32gui.GetWindowText(hwnd)
-                if title:
-                    titles.append(title)
-        except Exception:
-            pass
-        return True
-
-    titles = []
-    try:
-        win32gui.EnumWindows(callback, titles)
-    except Exception as e:
-        logger.warning(f"Window enumeration failed: {e}")
-        return False
-
-    if not titles:
-        logger.debug(f"No visible windows found for PID {pid}")
-        return False
-
-    # Try each found window title
-    for title in titles:
-        if focus_window_by_title(title):
-            return True
-
-    return False
-
-
-def focus_window_simple(pid: int = None, window_title: str = None) -> bool:
-    """
-    Simple, clean window focus that doesn't mess with system state.
-
-    Uses WScript.Shell's AppActivate which is the safest method.
-    Falls back to basic ShowWindow + SetForegroundWindow without
-    the Alt key trick or SystemParametersInfo manipulation.
-
-    Args:
-        pid: Process ID (optional if window_title provided)
-        window_title: Window title to focus (optional if pid provided)
-
-    Returns:
-        bool: True if focus succeeded
-    """
-    # Method 1: Direct title focus (cleanest)
-    if window_title:
-        if focus_window_by_title(window_title):
-            return True
-
-    # Method 2: Find title from PID and use AppActivate
-    if pid:
-        if focus_window_by_pid_clean(pid):
-            return True
-
-        # Method 3: Fallback to basic Win32 (no Alt key, no system manipulation)
-        return focus_window_basic_win32(pid)
-
-    return False
-
-
-def focus_window_basic_win32(pid: int, timeout: int = 5) -> bool:
-    """
-    Basic Win32 focus without system state manipulation.
-
-    This is a simpler version that:
-    - Does NOT send Alt key (can interfere with game cursor lock)
-    - Does NOT manipulate SystemParametersInfo (can leave bad state)
-    - Just uses ShowWindow + SetForegroundWindow
-
-    Args:
-        pid: Process ID
-        timeout: Max time to try
-
-    Returns:
-        bool: True if focus succeeded
-    """
-    def callback(hwnd, windows):
-        try:
-            _, found_pid = win32process.GetWindowThreadProcessId(hwnd)
-            if found_pid == pid and win32gui.IsWindowVisible(hwnd):
-                title = win32gui.GetWindowText(hwnd)
-                if title:
-                    windows.append((hwnd, title))
-        except Exception:
-            pass
-        return True
-
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        windows = []
-        try:
-            win32gui.EnumWindows(callback, windows)
-        except Exception as e:
-            logger.warning(f"Window enumeration failed: {e}")
-
-        if windows:
-            target_hwnd, window_title = windows[0]
-
-            try:
-                # Restore if minimized
-                if win32gui.IsIconic(target_hwnd):
-                    win32gui.ShowWindow(target_hwnd, win32con.SW_RESTORE)
-                else:
-                    win32gui.ShowWindow(target_hwnd, win32con.SW_SHOW)
-
-                # Simple focus - no Alt key trick
-                win32gui.BringWindowToTop(target_hwnd)
-
-                try:
-                    win32gui.SetForegroundWindow(target_hwnd)
-                except Exception as e:
-                    # SetForegroundWindow can fail if another app has focus lock
-                    # This is expected sometimes - not a critical error
-                    logger.debug(f"SetForegroundWindow failed (may still work): {e}")
-
-                # Verify
-                time.sleep(0.1)
-                foreground_hwnd = win32gui.GetForegroundWindow()
-                if foreground_hwnd == target_hwnd:
-                    logger.info(f"Basic Win32 focus succeeded for '{window_title}'")
-                    return True
-
-                # Check if at least the PID matches
-                _, fg_pid = win32process.GetWindowThreadProcessId(foreground_hwnd)
-                if fg_pid == pid:
-                    logger.info(f"Focus on window from same PID ({pid})")
-                    return True
-
-            except Exception as e:
-                logger.debug(f"Basic Win32 focus attempt failed: {e}")
-
-        time.sleep(0.5)
-
-    return False
-
-
 def ensure_window_foreground_v2(pid: int, timeout: int = 5, use_pywinauto: bool = True, window_title: str = None) -> bool:
     """
     Ensure window is in foreground using best available method.
 
-    Matches legacy/v2 behavior: pywinauto first, then aggressive Win32 fallback.
-    The aggressive method (Alt key trick + AttachThreadInput) is required for games
-    like FC6 that capture input tightly during benchmarks.
+    Focus chain: pywinauto set_focus() → aggressive Win32 fallback.
+
+    FC6 Root Cause (2026-02): Games with tight input capture (e.g. Far Cry 6
+    benchmarks) require the aggressive Win32 method (Alt key trick +
+    AttachThreadInput + SystemParametersInfo) to reliably gain focus. Weaker
+    methods (WScript AppActivate, basic ShowWindow+BringWindowToTop) fail
+    silently — the window appears focused but the game's input loop doesn't
+    recognize it, causing cursor freeze and lost input.
 
     Args:
         pid: Process ID
@@ -457,16 +279,18 @@ def ensure_window_foreground_v2(pid: int, timeout: int = 5, use_pywinauto: bool 
 
 def ensure_window_foreground(pid: int, timeout: int = 5) -> bool:
     """
-    Aggressive Win32-based foreground method (last resort).
+    Aggressive Win32 focus — last resort fallback for ensure_window_foreground_v2().
 
-    Uses Alt key trick, AttachThreadInput, and SystemParametersInfo to force
-    window focus. This is the most aggressive approach but is necessary for
-    games like FC6 that capture input tightly during benchmarks - the clean
-    methods (AppActivate, basic Win32) aren't powerful enough to break the
-    game's input capture.
+    Technique stack:
+      1. Disable foreground lock timeout (SystemParametersInfo)
+      2. Send synthetic Alt key press to unlock SetForegroundWindow
+      3. AttachThreadInput to share input queue with target
+      4. ShowWindow + BringWindowToTop + SetForegroundWindow
+      5. Restore original foreground lock timeout
 
-    Called as last resort by ensure_window_foreground_v2() when cleaner
-    methods fail.
+    This is the only method that reliably focuses fullscreen games with tight
+    input capture (FC6 benchmarks, and likely similar titles). The Alt key
+    trick + thread attachment is what makes it work where simpler methods fail.
 
     Args:
         pid: Process ID
