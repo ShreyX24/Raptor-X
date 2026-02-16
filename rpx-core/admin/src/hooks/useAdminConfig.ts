@@ -12,6 +12,7 @@ import type {
   OmniParserSettings,
   SteamAccountsResponse,
   ProfilesResponse,
+  TracingConfig,
 } from '../types/admin';
 
 interface UseAdminConfigReturn {
@@ -23,6 +24,7 @@ interface UseAdminConfigReturn {
   steamAccounts: SteamAccountsResponse | null;
   discovery: DiscoverySettings | null;
   automation: AutomationSettings | null;
+  tracing: TracingConfig | null;
 
   // Loading states
   loading: boolean;
@@ -32,6 +34,7 @@ interface UseAdminConfigReturn {
   steamLoading: boolean;
   discoveryLoading: boolean;
   automationLoading: boolean;
+  tracingLoading: boolean;
 
   // Errors
   error: string | null;
@@ -44,6 +47,7 @@ interface UseAdminConfigReturn {
   refreshSteamAccounts: () => Promise<void>;
   refreshDiscovery: () => Promise<void>;
   refreshAutomation: () => Promise<void>;
+  refreshTracing: () => Promise<void>;
   refreshAll: () => Promise<void>;
 }
 
@@ -56,6 +60,7 @@ export function useAdminConfig(): UseAdminConfigReturn {
   const [steamAccounts, setSteamAccounts] = useState<SteamAccountsResponse | null>(null);
   const [discovery, setDiscovery] = useState<DiscoverySettings | null>(null);
   const [automation, setAutomation] = useState<AutomationSettings | null>(null);
+  const [tracing, setTracing] = useState<TracingConfig | null>(null);
 
   // Loading states
   const [loading, setLoading] = useState(true);
@@ -65,6 +70,7 @@ export function useAdminConfig(): UseAdminConfigReturn {
   const [steamLoading, setSteamLoading] = useState(false);
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
   const [automationLoading, setAutomationLoading] = useState(false);
+  const [tracingLoading, setTracingLoading] = useState(false);
 
   // Error state
   const [error, setError] = useState<string | null>(null);
@@ -155,6 +161,18 @@ export function useAdminConfig(): UseAdminConfigReturn {
     }
   }, []);
 
+  const refreshTracing = useCallback(async () => {
+    try {
+      setTracingLoading(true);
+      const data = await adminApi.getTracingConfig();
+      setTracing(data);
+    } catch (err) {
+      console.error('Failed to load tracing config:', err);
+    } finally {
+      setTracingLoading(false);
+    }
+  }, []);
+
   const refreshAll = useCallback(async () => {
     await Promise.all([
       refreshConfig(),
@@ -164,6 +182,7 @@ export function useAdminConfig(): UseAdminConfigReturn {
       refreshSteamAccounts(),
       refreshDiscovery(),
       refreshAutomation(),
+      refreshTracing(),
     ]);
   }, [
     refreshConfig,
@@ -173,6 +192,7 @@ export function useAdminConfig(): UseAdminConfigReturn {
     refreshSteamAccounts,
     refreshDiscovery,
     refreshAutomation,
+    refreshTracing,
   ]);
 
   // Initial load
@@ -189,6 +209,7 @@ export function useAdminConfig(): UseAdminConfigReturn {
     steamAccounts,
     discovery,
     automation,
+    tracing,
 
     // Loading states
     loading,
@@ -198,6 +219,7 @@ export function useAdminConfig(): UseAdminConfigReturn {
     steamLoading,
     discoveryLoading,
     automationLoading,
+    tracingLoading,
 
     // Error
     error,
@@ -210,6 +232,7 @@ export function useAdminConfig(): UseAdminConfigReturn {
     refreshSteamAccounts,
     refreshDiscovery,
     refreshAutomation,
+    refreshTracing,
     refreshAll,
   };
 }

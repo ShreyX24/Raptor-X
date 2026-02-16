@@ -152,6 +152,35 @@ export interface YamlValidationResult {
 }
 
 // ============================================================================
+// Tracing Configuration Types
+// ============================================================================
+
+export interface TracingAgent {
+  enabled: boolean;
+  description: string;
+  path: string;
+  args: string[];
+  duration_arg: string;
+  duration_style: string;
+  output_arg: string;
+  output_style: string;
+  has_duration: boolean;
+  output_filename_only?: boolean;
+}
+
+export interface TracingConfig {
+  output_dir: string;
+  post_trace_buffer: number;
+  ssh: {
+    timeout: number;
+    max_retries: number;
+    retry_delay: number;
+    user: string;
+  };
+  agents: Record<string, TracingAgent>;
+}
+
+// ============================================================================
 // Full Configuration Type
 // ============================================================================
 
@@ -213,7 +242,8 @@ export type AdminTab =
   | 'automation'
   | 'steam'
   | 'profiles'
-  | 'branding';
+  | 'branding'
+  | 'tracing';
 
 export interface TabDefinition {
   id: AdminTab;
@@ -235,6 +265,7 @@ export interface UnsavedChanges {
   steam?: boolean;
   profiles?: boolean;
   branding?: boolean;
+  tracing?: boolean;
 }
 
 export interface ToastMessage {

@@ -12,6 +12,7 @@ import { AutomationSettings } from './AutomationSettings';
 import { SteamAccountsManager } from './SteamAccountsManager';
 import { ProfileManager } from './ProfileManager';
 import { BrandingSettings } from './BrandingSettings';
+import { TracingSettings } from './TracingSettings';
 import { useAdminConfig } from '../../hooks/useAdminConfig';
 import type { AdminTab } from '../../types/admin';
 import { RefreshCw } from 'lucide-react';
@@ -32,6 +33,8 @@ export function AdminPanel({ initialTab = 'services' }: AdminPanelProps) {
     steamAccounts,
     discovery,
     automation,
+    tracing,
+    tracingLoading,
     loading,
     error,
     refreshAll,
@@ -147,6 +150,15 @@ export function AdminPanel({ initialTab = 'services' }: AdminPanelProps) {
           <BrandingSettings
             onUnsavedChange={() => markUnsaved('branding')}
             onSaved={() => clearUnsaved('branding')}
+          />
+        );
+      case 'tracing':
+        return (
+          <TracingSettings
+            config={tracing}
+            loading={tracingLoading}
+            onUnsavedChange={() => markUnsaved('tracing')}
+            onSaved={() => clearUnsaved('tracing')}
           />
         );
       default:

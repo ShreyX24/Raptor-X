@@ -12,6 +12,7 @@ import {
   Cloud,
   User,
   Palette,
+  Activity,
 } from 'lucide-react';
 
 const TAB_DEFINITIONS: TabDefinition[] = [
@@ -23,6 +24,7 @@ const TAB_DEFINITIONS: TabDefinition[] = [
   { id: 'steam', label: 'Steam', description: 'Steam account management' },
   { id: 'profiles', label: 'Profiles', description: 'Environment profiles' },
   { id: 'branding', label: 'Branding', description: 'Banner color customization' },
+  { id: 'tracing', label: 'Tracing', description: 'Tracing agent configuration' },
 ];
 
 const TAB_ICONS: Record<AdminTab, React.ReactNode> = {
@@ -34,6 +36,7 @@ const TAB_ICONS: Record<AdminTab, React.ReactNode> = {
   steam: <Cloud className="w-4 h-4" />,
   profiles: <User className="w-4 h-4" />,
   branding: <Palette className="w-4 h-4" />,
+  tracing: <Activity className="w-4 h-4" />,
 };
 
 interface TabNavigationProps {

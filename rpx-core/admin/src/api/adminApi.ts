@@ -15,6 +15,7 @@ import type {
   SteamAccountPair,
   DiscoverySettings,
   AutomationSettings,
+  TracingConfig,
   GamesListResponse,
   GameYamlResponse,
   YamlValidationResult,
@@ -299,6 +300,57 @@ export async function validateYaml(content: string): Promise<YamlValidationResul
 }
 
 // ============================================================================
+// Tracing API (uses /api/tracing, not /api/admin)
+// ============================================================================
+
+const TRACING_API_BASE = '/api/tracing';
+
+async function tracingFetch<T>(
+  endpoint: string,
+  options: FetchOptions = {}
+): Promise<T> {
+  const url = `${TRACING_API_BASE}${endpoint}`;
+  const response = await fetchWithTimeout(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
+
+  if (!response.ok) {
+    let errorMessage = `HTTP ${response.status}`;
+    try {
+      const errorData = await response.json();
+      errorMessage = errorData.error || errorMessage;
+    } catch {
+      // Ignore JSON parse errors
+    }
+    throw new AdminApiError(response.status, errorMessage);
+  }
+
+  return response.json();
+}
+
+export async function getTracingConfig(): Promise<TracingConfig> {
+  const data = await tracingFetch<{ config: TracingConfig }>('/config');
+  return data.config;
+}
+
+export async function updateTracingConfig(config: TracingConfig): Promise<ApiResponse> {
+  return tracingFetch<ApiResponse>('/config', {
+    method: 'PUT',
+    body: JSON.stringify(config),
+  });
+}
+
+export async function toggleTracingAgent(name: string): Promise<ApiResponse> {
+  return tracingFetch<ApiResponse>(`/agents/${encodeURIComponent(name)}/toggle`, {
+    method: 'POST',
+  });
+}
+
+// ============================================================================
 // Export all functions
 // ============================================================================
 
@@ -345,6 +397,11 @@ export const adminApi = {
   createGame,
   deleteGame,
   validateYaml,
+
+  // Tracing
+  getTracingConfig,
+  updateTracingConfig,
+  toggleTracingAgent,
 };
 
 export default adminApi;
