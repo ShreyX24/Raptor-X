@@ -24,7 +24,7 @@ class TracePuller:
 
     # Default trace output directories on SUT
     DEFAULT_TRACE_DIRS = {
-        "ptat": r"C:\OWR\PTAT",  # PTAT outputs files in its directory
+        "ptat": None,  # PTAT outputs to C:\Users\<user>\Documents\iPTAT\log\ (discovered at runtime)
         "socwatch": r"C:\Traces",  # Default socwatch output
     }
 
@@ -56,6 +56,53 @@ class TracePuller:
         self.ssh_timeout = ssh_timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self._sut_username_cache: Optional[str] = None
+
+    def _get_sut_username(self) -> Optional[str]:
+        """
+        Discover the logged-in username on the SUT via SSH whoami.
+        Result is cached for the lifetime of this TracePuller instance.
+
+        Returns:
+            Username string (e.g. 'labuser'), or None on failure
+        """
+        if self._sut_username_cache is not None:
+            return self._sut_username_cache
+
+        try:
+            result = subprocess.run(
+                ["ssh"] + self._get_ssh_options() + [
+                    f"{self.ssh_user}@{self.sut_ip}",
+                    "whoami"
+                ],
+                capture_output=True, text=True, timeout=self.ssh_timeout + 10
+            )
+            if result.returncode == 0:
+                # whoami may return DOMAIN\user or just user — take the last part
+                raw = result.stdout.strip()
+                username = raw.split("\\")[-1]
+                self._sut_username_cache = username
+                logger.info(f"Discovered SUT username: {username}")
+                return username
+            else:
+                logger.warning(f"whoami failed on SUT: {result.stderr}")
+        except Exception as e:
+            logger.error(f"Error discovering SUT username: {e}")
+
+        return None
+
+    def _get_ptat_output_dir(self) -> Optional[str]:
+        """
+        Get the PTAT output directory on the SUT.
+        PTAT always writes to C:\\Users\\<user>\\Documents\\iPTAT\\log\\
+
+        Returns:
+            Remote directory path, or None if username discovery fails
+        """
+        username = self._get_sut_username()
+        if username:
+            return f"C:\\Users\\{username}\\Documents\\iPTAT\\log"
+        return None
 
     def _get_ssh_options(self) -> List[str]:
         """Get SSH options with current timeout."""
@@ -372,9 +419,15 @@ class TracePuller:
                 date_pattern = datetime.now().strftime("%Y%m%d")
 
                 if agent == "ptat":
-                    # PTAT files are in the run-specific directory with .csv extension
+                    # PTAT writes to C:\Users\<user>\Documents\iPTAT\log\ (fixed location)
+                    ptat_dir = self._get_ptat_output_dir()
+                    if not ptat_dir:
+                        logger.error("Cannot determine PTAT output dir - SUT username discovery failed")
+                        agent_results["error"] = "Could not discover SUT username for PTAT directory"
+                        results[agent] = agent_results
+                        continue
                     file_pattern = f"*{agent}*{game_name.replace('-', '')}*.csv"
-                    remote_search_dir = run_trace_dir
+                    remote_search_dir = ptat_dir
                 elif agent == "socwatch":
                     # socwatch creates .csv files (main data) and .etl files (raw traces)
                     # Only pull .csv files - the .etl files are huge and rarely needed

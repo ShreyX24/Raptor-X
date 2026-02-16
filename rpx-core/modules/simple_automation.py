@@ -252,18 +252,26 @@ class SimpleAutomation:
         # Create run-specific trace directory path on SUT
         trace_dir = f"{self.trace_output_dir}\\{self.run_id}"
 
-        # Create the trace directory on SUT first
-        try:
-            logger.info(f"Creating trace directory on SUT: {trace_dir}")
-            mkdir_result = self.network.execute_command(
-                path="cmd.exe",
-                args=["/c", "mkdir", trace_dir],
-                async_exec=False
-            )
-            if mkdir_result.get("status") == "error" and "already exists" not in str(mkdir_result.get("message", "")):
-                logger.warning(f"mkdir returned: {mkdir_result}")
-        except Exception as e:
-            logger.warning(f"Could not create trace directory (may already exist): {e}")
+        # Check if any agent needs a trace directory on SUT
+        # (agents with output_filename_only write to their own fixed location)
+        needs_trace_dir = any(
+            name in tracing_agents and not tracing_agents[name].get("output_filename_only", False)
+            for name in agents
+        )
+
+        if needs_trace_dir:
+            # Create the trace directory on SUT first
+            try:
+                logger.info(f"Creating trace directory on SUT: {trace_dir}")
+                mkdir_result = self.network.execute_command(
+                    path="cmd.exe",
+                    args=["/c", "mkdir", trace_dir],
+                    async_exec=False
+                )
+                if mkdir_result.get("status") == "error" and "already exists" not in str(mkdir_result.get("message", "")):
+                    logger.warning(f"mkdir returned: {mkdir_result}")
+            except Exception as e:
+                logger.warning(f"Could not create trace directory (may already exist): {e}")
 
         # Generate trace filename components
         # Format: {sut_ip}_{date}_{trace_type}_{game_name}
@@ -297,8 +305,12 @@ class SimpleAutomation:
             # Add output filename/prefix (includes path for trace files)
             if agent_config.get("output_arg"):
                 output_arg = agent_config["output_arg"]
-                # Use full path: trace_dir\trace_filename
-                output_path = f"{trace_dir}\\{trace_filename}"
+                if agent_config.get("output_filename_only"):
+                    # Agent only accepts filenames (e.g. PTAT writes to its own fixed dir)
+                    output_path = f"{trace_filename}.csv"
+                else:
+                    # Full path: trace_dir\trace_filename
+                    output_path = f"{trace_dir}\\{trace_filename}"
                 if output_arg.endswith("="):
                     # Equals-style: -m=filename
                     args.append(f"{output_arg}{output_path}")

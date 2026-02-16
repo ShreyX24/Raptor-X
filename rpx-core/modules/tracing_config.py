@@ -257,6 +257,7 @@ def get_tracing_agents_dict() -> Dict[str, Dict[str, Any]]:
             "duration_arg": agent.get("duration_arg", ""),
             "output_arg": agent.get("output_arg", ""),
             "runs_indefinitely": not agent.get("has_duration", True),
+            "output_filename_only": agent.get("output_filename_only", False),
         }
 
     return result
