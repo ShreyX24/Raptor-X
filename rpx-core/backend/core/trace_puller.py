@@ -434,8 +434,10 @@ class TracePuller:
                     file_pattern = f"*{agent}*{game_name.replace('-', '')}*.csv"
                     remote_search_dir = run_trace_dir
                 elif agent == "presentmon":
-                    # PresentMon writes a single CSV to the output_file path
-                    file_pattern = f"*{agent}*{game_name.replace('-', '')}*.csv"
+                    # PresentMon writes PresentMon-<timestamp>.csv next to its exe.
+                    # Automation moves it to run_trace_dir after capture.
+                    # Search trace dir first, fall back to exe dir.
+                    file_pattern = "PresentMon-*.csv"
                     remote_search_dir = run_trace_dir
                 else:
                     # Generic fallback: search for CSV files matching the agent name
@@ -450,6 +452,15 @@ class TracePuller:
                 if not files:
                     # Try broader pattern
                     files = self.list_remote_files(remote_search_dir, f"*{agent}*.csv")
+
+                # Fallback: for agents with a fixed output dir (e.g. PresentMon),
+                # check the exe directory if nothing found in trace dir
+                if not files and agent == "presentmon":
+                    fallback_dir = r"C:\OWR\PresentMon"
+                    logger.info(f"No {agent} files in trace dir, checking {fallback_dir}")
+                    files = self.list_remote_files(fallback_dir, "PresentMon-*.csv")
+                    if files:
+                        remote_search_dir = fallback_dir
 
                 # Filter out unwanted files
                 if agent == "socwatch":

@@ -401,6 +401,24 @@ class SimpleAutomation:
         if agents_with_duration:
             self._wait_for_tracing_completion(agents_with_duration, tracing_agents)
 
+        # Move output files for agents that write to a fixed directory
+        # (e.g. PresentMon always writes next to its exe, not to the trace dir)
+        trace_dir = f"{self.trace_output_dir}\\{self.run_id}"
+        for agent_name, _pid in agents_with_duration:
+            agent_config = tracing_agents.get(agent_name, {})
+            fixed_dir = agent_config.get("output_fixed_dir")
+            file_pattern = agent_config.get("output_file_pattern")
+            if fixed_dir and file_pattern:
+                try:
+                    logger.info(f"Moving {agent_name} output from {fixed_dir}\\{file_pattern} to {trace_dir}")
+                    self.network.execute_command(
+                        path="cmd.exe",
+                        args=["/c", "move", f"{fixed_dir}\\{file_pattern}", trace_dir],
+                        async_exec=False
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to move {agent_name} output files: {e}")
+
         # For agents without duration: terminate them
         for agent_name, pid in agents_to_terminate:
             try:
