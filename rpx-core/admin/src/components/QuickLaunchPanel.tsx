@@ -296,8 +296,8 @@ export function QuickLaunchPanel({
   const [selectedResolution, setSelectedResolution] = useState<Resolution | null>(null);
   const [iterations, setIterations] = useState(1);
   const [skipSteamLogin, setSkipSteamLogin] = useState(false);  // Manual login mode
-  const [disableTracing, setDisableTracing] = useState(false);  // Disable SOCWatch/PTAT tracing
-  const [tracingAgents, setTracingAgents] = useState<string[]>(['socwatch', 'ptat']);  // Selected tracing agents
+  const [disableTracing, setDisableTracing] = useState(false);  // Disable tracing
+  const [tracingAgents, setTracingAgents] = useState<string[]>([]);  // Selected tracing agents (populated from API)
   const [cooldownSeconds, setCooldownSeconds] = useState(120);  // Cooldown between iterations/runs (0 to disable)
 
   // Debug mode - for testing specific automation steps
@@ -307,11 +307,37 @@ export function QuickLaunchPanel({
   const [gameSteps, setGameSteps] = useState<GameStep[]>([]);
   const [loadingSteps, setLoadingSteps] = useState(false);
 
-  // Available tracing agents
-  const AVAILABLE_TRACING_AGENTS = [
-    { id: 'socwatch', label: 'SOCWatch', description: 'Intel power/thermal tracing' },
-    { id: 'ptat', label: 'PTAT', description: 'Platform thermal analysis' },
-  ];
+  // Available tracing agents - fetched from tracing config API
+  const [availableTracingAgents, setAvailableTracingAgents] = useState<{ id: string; label: string; description: string }[]>([]);
+
+  // Fetch available tracing agents from backend on mount
+  useEffect(() => {
+    fetch('/api/tracing/config')
+      .then(res => res.json())
+      .then(data => {
+        const agents = data.config?.agents ?? {};
+        const agentList = Object.entries(agents).map(([id, agent]: [string, any]) => ({
+          id,
+          label: id === 'socwatch' ? 'SOCWatch' : id.toUpperCase(),
+          description: agent.description || id,
+        }));
+        setAvailableTracingAgents(agentList);
+        // Default: select all enabled agents
+        const enabledIds = Object.entries(agents)
+          .filter(([_, agent]: [string, any]) => agent.enabled)
+          .map(([id]) => id);
+        setTracingAgents(prev => prev.length === 0 ? enabledIds : prev);
+      })
+      .catch(() => {
+        // Fallback if API unavailable
+        setAvailableTracingAgents([
+          { id: 'socwatch', label: 'SOCWatch', description: 'Intel power/thermal tracing' },
+          { id: 'ptat', label: 'PTAT', description: 'Platform thermal analysis' },
+          { id: 'presentmon', label: 'PresentMon', description: 'Frame time and latency analysis' },
+        ]);
+        setTracingAgents(prev => prev.length === 0 ? ['socwatch', 'ptat', 'presentmon'] : prev);
+      });
+  }, []);
 
   // Status
   const [launchState, setLaunchState] = useState<LaunchState>('idle');
@@ -662,7 +688,7 @@ export function QuickLaunchPanel({
     setIterations(lastRunSettings.iterations);
     setSkipSteamLogin(lastRunSettings.skipSteamLogin);
     setDisableTracing(lastRunSettings.disableTracing ?? false);
-    setTracingAgents(lastRunSettings.tracingAgents ?? ['socwatch', 'ptat']);
+    setTracingAgents(lastRunSettings.tracingAgents ?? availableTracingAgents.map(a => a.id));
     setCooldownSeconds(lastRunSettings.cooldownSeconds ?? 120);
 
     // Restore debug mode settings
@@ -830,7 +856,7 @@ export function QuickLaunchPanel({
           <div className="flex-shrink-0">
             <div className="text-[10px] text-text-muted uppercase mb-1">Tracing</div>
             <div className="flex items-center gap-1">
-              {AVAILABLE_TRACING_AGENTS.map(agent => (
+              {availableTracingAgents.map(agent => (
                 <label
                   key={agent.id}
                   className={`flex items-center gap-1 px-2 py-1.5 rounded cursor-pointer transition-colors ${
@@ -1328,7 +1354,7 @@ export function QuickLaunchPanel({
           <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-elevated border border-border rounded">
             <span className="text-[10px] text-text-muted uppercase">Tracing</span>
             <div className="flex items-center gap-1">
-              {AVAILABLE_TRACING_AGENTS.map(agent => (
+              {availableTracingAgents.map(agent => (
                 <label
                   key={agent.id}
                   className={`flex items-center gap-1 px-2 py-0.5 rounded cursor-pointer transition-colors ${

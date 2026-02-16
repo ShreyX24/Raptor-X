@@ -36,7 +36,7 @@ interface HooksConfig {
 // Tracing configuration
 interface TracingConfig {
   enabled: boolean;
-  agents?: ('socwatch' | 'ptat')[];
+  agents?: string[];
   output_dir?: string;
 }
 
@@ -905,6 +905,27 @@ function MetadataPanel({
   const inputClass = "w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200";
   const labelClass = "block text-[10px] text-gray-500 uppercase tracking-wide mb-0.5";
 
+  // Fetch available tracing agents from API
+  const [wfTracingAgents, setWfTracingAgents] = useState<{ id: string; label: string }[]>([]);
+  useEffect(() => {
+    fetch('/api/tracing/config')
+      .then(res => res.json())
+      .then(data => {
+        const agents = data.config?.agents ?? {};
+        setWfTracingAgents(Object.entries(agents).map(([id, _agent]: [string, any]) => ({
+          id,
+          label: id === 'socwatch' ? 'SOCWatch' : id === 'ptat' ? 'Intel PTAT' : id.charAt(0).toUpperCase() + id.slice(1),
+        })));
+      })
+      .catch(() => {
+        setWfTracingAgents([
+          { id: 'socwatch', label: 'SOCWatch' },
+          { id: 'ptat', label: 'Intel PTAT' },
+          { id: 'presentmon', label: 'PresentMon' },
+        ]);
+      });
+  }, []);
+
   return (
     <div className="space-y-4">
       {/* Basic Info */}
@@ -1092,7 +1113,9 @@ function MetadataPanel({
       <div className="space-y-2">
         <h4 className="text-xs font-medium text-gray-400 border-b border-gray-700 pb-1">
           Tracing
-          <span className="ml-2 text-[10px] text-emerald-400/70">(SOCWatch + PTAT)</span>
+          {wfTracingAgents.length > 0 && (
+            <span className="ml-2 text-[10px] text-emerald-400/70">({wfTracingAgents.map(a => a.label).join(' + ')})</span>
+          )}
         </h4>
         <label className="flex items-center gap-2 cursor-pointer">
           <input
@@ -1103,7 +1126,7 @@ function MetadataPanel({
               tracing: {
                 ...metadata.tracing,
                 enabled: e.target.checked,
-                agents: metadata.tracing?.agents ?? ['socwatch', 'ptat'],
+                agents: metadata.tracing?.agents ?? wfTracingAgents.map(a => a.id),
               }
             })}
             className="rounded border-gray-600 bg-gray-700 text-emerald-500"
@@ -1112,47 +1135,29 @@ function MetadataPanel({
         </label>
         {metadata.tracing?.enabled && (
           <div className="pl-4 border-l-2 border-emerald-500/30 space-y-2">
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={metadata.tracing?.agents?.includes('socwatch') ?? true}
-                  onChange={(e) => {
-                    const agents = metadata.tracing?.agents ?? [];
-                    onChange({
-                      ...metadata,
-                      tracing: {
-                        ...metadata.tracing!,
-                        agents: e.target.checked
-                          ? [...agents.filter(a => a !== 'socwatch'), 'socwatch']
-                          : agents.filter(a => a !== 'socwatch')
-                      }
-                    });
-                  }}
-                  className="rounded border-gray-600 bg-gray-700 text-emerald-500"
-                />
-                <span className="text-[11px] text-gray-400">SOCWatch</span>
-              </label>
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={metadata.tracing?.agents?.includes('ptat') ?? true}
-                  onChange={(e) => {
-                    const agents = metadata.tracing?.agents ?? [];
-                    onChange({
-                      ...metadata,
-                      tracing: {
-                        ...metadata.tracing!,
-                        agents: e.target.checked
-                          ? [...agents.filter(a => a !== 'ptat'), 'ptat']
-                          : agents.filter(a => a !== 'ptat')
-                      }
-                    });
-                  }}
-                  className="rounded border-gray-600 bg-gray-700 text-emerald-500"
-                />
-                <span className="text-[11px] text-gray-400">Intel PTAT</span>
-              </label>
+            <div className="flex items-center gap-3 flex-wrap">
+              {wfTracingAgents.map(agent => (
+                <label key={agent.id} className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={metadata.tracing?.agents?.includes(agent.id) ?? true}
+                    onChange={(e) => {
+                      const agents = metadata.tracing?.agents ?? [];
+                      onChange({
+                        ...metadata,
+                        tracing: {
+                          ...metadata.tracing!,
+                          agents: e.target.checked
+                            ? [...agents.filter(a => a !== agent.id), agent.id]
+                            : agents.filter(a => a !== agent.id)
+                        }
+                      });
+                    }}
+                    className="rounded border-gray-600 bg-gray-700 text-emerald-500"
+                  />
+                  <span className="text-[11px] text-gray-400">{agent.label}</span>
+                </label>
+              ))}
             </div>
             <div>
               <label className={labelClass}>Output Directory (on SUT)</label>
@@ -1471,7 +1476,7 @@ export function WorkflowBuilder() {
     },
     tracing: {
       enabled: false,
-      agents: ['socwatch', 'ptat'],
+      agents: [],
     },
     hooks: undefined,
   });
@@ -1572,7 +1577,7 @@ export function WorkflowBuilder() {
         },
         tracing: {
           enabled: false,
-          agents: ['socwatch', 'ptat'],
+          agents: [],
         },
         hooks: undefined,
       };

@@ -37,7 +37,7 @@ agents:
     output_style: equals
     has_duration: true
   presentmon:
-    enabled: false
+    enabled: true
     description: Intel PresentMon - Frame time, FPS percentiles, and latency analysis
     path: C:\OWR\PresentMon\PresentMon-2.3.1-x64.exe
     args:
