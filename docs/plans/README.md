@@ -57,8 +57,6 @@ This folder contains implementation plans for major features and integrations.
 
 ## Original Plan Files
 
-These plans were copied from `C:\Users\shrey\.claude\plans\` with renamed files:
-
 | Original Name | New Name |
 |--------------|----------|
 | `enumerated-wondering-hartmanis.md` | `steam-account-pool-and-ocr-config.md` |

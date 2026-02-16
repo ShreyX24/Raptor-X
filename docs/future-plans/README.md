@@ -101,4 +101,3 @@ This folder contains documentation for planned features and improvements for Rap
 
 - `docs/plans/` - Implementation plans and roadmaps
 - `docs/knowledge-base/` - Architecture learnings and per-game fixes
-- `.claude/LEARNINGS.md` - Dos and don'ts discovered during development

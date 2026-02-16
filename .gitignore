@@ -44,9 +44,7 @@ sut_discovery.log
 queue_service.log
 
 # Local/personal files
-.claude/settings.local.json
-.claude/BUG_NOTES.md
-.claude/*.zip
+.claude/
 backup/
 SystemScope/
 *_SystemScope_*.html
@@ -59,10 +57,6 @@ Gemma/scripts/
 # Startup scripts (machine-specific)
 start-all.bat
 start-all.ps1
-
-# Claude Code temp files
-tmpclaude-*
-**/tmpclaude-*
 
 # Runtime temp data
 run_status.json

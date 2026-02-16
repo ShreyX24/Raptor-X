@@ -68,12 +68,6 @@ Accumulated knowledge from debugging and development:
 | [Architecture Learnings](./knowledge-base/architecture-learnings.md) | Key architectural decisions |
 | [Game Automation Fixes](./knowledge-base/per-game-fixes/game-automation-fixes.md) | Per-game fixes and patterns |
 
-## Related Documentation
-
-- `.claude/CLAUDE.md` - Main project documentation
-- `.claude/LEARNINGS.md` - Development dos and don'ts
-- `.claude/rules/` - Per-service documentation
-
 ## Contributing
 
 When adding new documentation:
