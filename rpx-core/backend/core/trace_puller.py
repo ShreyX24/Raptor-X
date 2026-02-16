@@ -433,9 +433,14 @@ class TracePuller:
                     # Only pull .csv files - the .etl files are huge and rarely needed
                     file_pattern = f"*{agent}*{game_name.replace('-', '')}*.csv"
                     remote_search_dir = run_trace_dir
+                elif agent == "presentmon":
+                    # PresentMon writes a single CSV to the output_file path
+                    file_pattern = f"*{agent}*{game_name.replace('-', '')}*.csv"
+                    remote_search_dir = run_trace_dir
                 else:
-                    logger.warning(f"Unknown trace agent: {agent}")
-                    continue
+                    # Generic fallback: search for CSV files matching the agent name
+                    file_pattern = f"*{agent}*{game_name.replace('-', '')}*.csv"
+                    remote_search_dir = run_trace_dir
 
                 logger.info(f"Searching for {agent} traces in {remote_search_dir} with pattern {file_pattern}")
 

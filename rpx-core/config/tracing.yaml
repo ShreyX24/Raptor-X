@@ -36,3 +36,21 @@ agents:
     output_arg: -m=
     output_style: equals
     has_duration: true
+  presentmon:
+    enabled: false
+    description: Intel PresentMon - Frame time, FPS percentiles, and latency analysis
+    path: C:\OWR\PresentMon\PresentMon-2.3.1-x64.exe
+    args:
+    - --exclude_dropped
+    - --no_console_stats
+    - --stop_existing_session
+    - --terminate_after_timed
+    - --track_gpu_video
+    - --track_frame_type
+    - --session_name
+    - RPX
+    duration_arg: --timed
+    duration_style: space
+    output_arg: --output_file
+    output_style: space
+    has_duration: true
