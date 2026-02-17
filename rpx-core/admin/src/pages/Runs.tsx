@@ -485,6 +485,7 @@ type RunSummaryItem = {
   campaignRuns?: AutomationRun[];
   // For single runs
   run?: AutomationRun;
+  error_message?: string | null;
 };
 
 // Sort types for column sorting
@@ -639,6 +640,7 @@ export function Runs() {
         resolution: campaign.resolution,
         campaign,
         campaignRuns,
+        error_message: campaign.error_message || campaignRuns.find(r => r.error_message)?.error_message || null,
       });
     });
 
@@ -670,6 +672,7 @@ export function Runs() {
         resolution: campaign.resolution,
         campaign,
         campaignRuns,
+        error_message: campaign.error_message || campaignRuns.find(r => r.error_message)?.error_message || null,
       });
     });
 
@@ -687,6 +690,7 @@ export function Runs() {
         quality: run.quality,
         resolution: run.resolution,
         run,
+        error_message: run.error_message,
       });
     });
 
@@ -704,6 +708,7 @@ export function Runs() {
         quality: run.quality,
         resolution: run.resolution,
         run,
+        error_message: run.error_message,
       });
     });
 
@@ -913,6 +918,7 @@ export function Runs() {
                   <SortableHeader label="SUT" field="sut_ip" currentField={sortField} direction={sortDirection} onSort={handleSort} className="w-32 hidden sm:table-cell" />
                   <SortableHeader label="Preset" field="preset" currentField={sortField} direction={sortDirection} onSort={handleSort} className="w-28 hidden lg:table-cell" />
                   <SortableHeader label="Status" field="status" currentField={sortField} direction={sortDirection} onSort={handleSort} className="w-32" />
+                  <th className="hidden xl:table-cell px-3 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider">Error</th>
                   <SortableHeader label="Duration" field="duration" currentField={sortField} direction={sortDirection} onSort={handleSort} className="w-24 hidden md:table-cell" />
                   <SortableHeader label="Started" field="started_at" currentField={sortField} direction={sortDirection} onSort={handleSort} className="w-44 hidden lg:table-cell" />
                   <th className="w-16 px-2 py-3"></th>
@@ -973,6 +979,13 @@ export function Runs() {
                             {item.status}
                           </span>
                         </td>
+                        <td className="hidden xl:table-cell px-3 py-3 text-xs max-w-[300px]">
+                          {item.error_message && (item.status === 'failed' || item.status === 'stopped') ? (
+                            <span className="text-danger truncate block" title={item.error_message}>
+                              {item.error_message.length > 80 ? item.error_message.slice(0, 80) + '\u2026' : item.error_message}
+                            </span>
+                          ) : null}
+                        </td>
                         <td className="px-3 py-3 text-sm text-text-muted hidden md:table-cell font-mono">
                           {formatDuration(item.started_at, item.completed_at, item.status)}
                         </td>
@@ -1000,7 +1013,7 @@ export function Runs() {
                       {/* Expanded Content */}
                       {isExpanded && (
                         <tr>
-                          <td colSpan={9} className="p-0">
+                          <td colSpan={10} className="p-0">
                             <div className="bg-surface-elevated border-t border-border">
                               {/* Tabs */}
                               <div className="flex items-center justify-between border-b border-border px-4">

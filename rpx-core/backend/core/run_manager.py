@@ -5,6 +5,7 @@ Run Manager for tracking and coordinating automation runs across multiple SUTs
 
 import json
 import logging
+import re
 import threading
 import time
 import uuid
@@ -341,6 +342,47 @@ class RunManager:
                 quality=quality,
                 resolution=resolution,
             )
+
+            # Populate error_message from manifest data
+            errors = []
+            for it in manifest.iterations:
+                if it.error_message:
+                    errors.append(it.error_message)
+            for err in manifest.errors:
+                clean = re.sub(r'^\[.*?\]\s*', '', err)
+                if clean not in errors:
+                    errors.append(clean)
+            # Fallback: extract error from timeline.json if manifest has no error data
+            if not errors and manifest.status in ('failed', 'stopped'):
+                try:
+                    tl_path = self.storage.base_dir / manifest.folder_name / 'timeline.json'
+                    if tl_path.exists():
+                        with open(tl_path, 'r', encoding='utf-8') as tl_f:
+                            tl_data = json.load(tl_f)
+                        for evt in tl_data.get('events', []):
+                            etype = evt.get('event_type', '')
+                            msg = evt.get('message', '')
+                            if etype == 'step_failed' and msg:
+                                errors.append(msg)
+                                break
+                        if not errors:
+                            for evt in tl_data.get('events', []):
+                                etype = evt.get('event_type', '')
+                                msg = evt.get('message', '')
+                                if etype == 'error' and msg and msg != 'Automation failed':
+                                    errors.append(msg)
+                                    break
+                        if not errors:
+                            for evt in tl_data.get('events', []):
+                                etype = evt.get('event_type', '')
+                                msg = evt.get('message', '')
+                                if etype == 'run_failed' and msg:
+                                    errors.append(msg)
+                                    break
+                except Exception:
+                    pass
+            if errors:
+                run.error_message = errors[0]
 
             # Set progress times
             if manifest.created_at:
