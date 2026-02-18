@@ -1,10 +1,11 @@
 """
-Trace Puller - Pulls trace files from SUT to Master via SSH/SCP
+Trace Puller - Pulls trace files from SUT to Master via SSH/SCP (with HTTP fallback)
 
 After automation completes, this module pulls PTAT and socwatch trace files
 from the SUT to the Master's run storage directory.
 
-Requires SSH key-based authentication to be set up between Master and SUTs.
+Primary method: SSH/SCP (requires key-based authentication)
+Fallback method: SUT client HTTP API (/list_directory, /file_download)
 """
 
 import subprocess
@@ -12,8 +13,9 @@ import logging
 import os
 import time
 import socket
+import requests
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict, Any
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -103,6 +105,54 @@ class TracePuller:
         if username:
             return f"C:\\Users\\{username}\\Documents\\iPTAT\\log"
         return None
+
+    def _expand_remote_path(self, path: str) -> List[str]:
+        """
+        Expand environment variables like %USERPROFILE% in a remote SUT path.
+
+        Because the SSH user may differ from the interactive user who ran the
+        tracing agent, %USERPROFILE% can resolve to the wrong directory.
+        We return multiple candidate paths to try.
+
+        Returns:
+            List of candidate paths to search (may be empty)
+        """
+        if "%" not in path:
+            return [path]
+
+        candidates = []
+
+        if "%USERPROFILE%" in path:
+            # The tracing agent runs as the interactive desktop user, which may
+            # differ from the SSH user. Try all user profiles on the SUT.
+            suffix = path.split("%USERPROFILE%", 1)[1]  # e.g. \Documents\iPTAT\log
+            try:
+                # List user profile directories on SUT
+                cmd = 'powershell -Command "Get-ChildItem C:\\Users -Directory | Select-Object -ExpandProperty Name"'
+                result = subprocess.run(
+                    ["ssh"] + self._get_ssh_options() + [
+                        f"{self.ssh_user}@{self.sut_ip}",
+                        cmd
+                    ],
+                    capture_output=True, text=True, timeout=self.ssh_timeout + 10
+                )
+                if result.returncode == 0:
+                    users = [u.strip() for u in result.stdout.strip().split('\n') if u.strip()]
+                    # Filter out system dirs
+                    skip = {'Public', 'Default', 'Default User', 'All Users'}
+                    for user in users:
+                        if user not in skip:
+                            candidates.append(f"C:\\Users\\{user}{suffix}")
+            except Exception as e:
+                logger.warning(f"Error listing SUT user profiles: {e}")
+
+            # Fallback: use SSH username
+            if not candidates:
+                username = self._get_sut_username()
+                if username:
+                    candidates.append(path.replace("%USERPROFILE%", f"C:\\Users\\{username}"))
+
+        return candidates
 
     def _get_ssh_options(self) -> List[str]:
         """Get SSH options with current timeout."""
@@ -377,8 +427,106 @@ class TracePuller:
         logger.error(f"Failed to pull directory {remote_dir} after {self.max_retries} attempts")
         return 0
 
+    # ---- HTTP-based fallback methods (via SUT client API) ----
+
+    def _get_sut_client_url(self, endpoint: str) -> str:
+        """Get SUT client HTTP API URL."""
+        return f"http://{self.sut_ip}:8080{endpoint}"
+
+    def list_remote_files_via_http(self, remote_dir: str, pattern: str = "*") -> List[str]:
+        """
+        List files on SUT via HTTP API (fallback when SSH listing fails).
+
+        Uses the SUT client's /list_directory endpoint.
+
+        Args:
+            remote_dir: Remote directory path
+            pattern: Glob pattern to match
+
+        Returns:
+            List of filenames
+        """
+        try:
+            url = self._get_sut_client_url("/list_directory")
+            response = requests.post(url, json={
+                "path": remote_dir,
+                "pattern": pattern
+            }, timeout=15)
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("success"):
+                    files = [f["name"] for f in data.get("files", [])]
+                    if files:
+                        logger.info(f"[HTTP] Found {len(files)} files in {remote_dir} matching '{pattern}': {files}")
+                    else:
+                        error = data.get("error", "")
+                        logger.info(f"[HTTP] No files in {remote_dir} matching '{pattern}'{f' ({error})' if error else ''}")
+                    return files
+                else:
+                    logger.warning(f"[HTTP] list_directory failed: {data.get('error')}")
+            else:
+                logger.warning(f"[HTTP] list_directory returned status {response.status_code}")
+
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"[HTTP] Cannot connect to SUT client at {self.sut_ip}:8080")
+        except Exception as e:
+            logger.warning(f"[HTTP] Error listing files via HTTP: {e}")
+
+        return []
+
+    def pull_file_via_http(self, remote_path: str, local_path: str) -> bool:
+        """
+        Download a file from SUT via HTTP API (fallback when SCP fails).
+
+        Uses the SUT client's /file_download endpoint.
+
+        Args:
+            remote_path: Full path to file on SUT
+            local_path: Local destination path
+
+        Returns:
+            True if successful
+        """
+        try:
+            # Ensure local directory exists
+            local_dir = Path(local_path).parent
+            local_dir.mkdir(parents=True, exist_ok=True)
+
+            url = self._get_sut_client_url("/file_download")
+            response = requests.post(url, json={
+                "path": remote_path
+            }, timeout=300, stream=True)
+
+            if response.status_code == 200:
+                content_type = response.headers.get("Content-Type", "")
+                # Check if it's an error response (JSON)
+                if "application/json" in content_type:
+                    data = response.json()
+                    logger.warning(f"[HTTP] file_download error: {data.get('error')}")
+                    return False
+
+                # Write file content
+                with open(local_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+
+                file_size = os.path.getsize(local_path)
+                logger.info(f"[HTTP] Successfully pulled: {remote_path} -> {local_path} ({file_size} bytes)")
+                return True
+            else:
+                logger.warning(f"[HTTP] file_download returned status {response.status_code}")
+
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"[HTTP] Cannot connect to SUT client for file download")
+        except Exception as e:
+            logger.error(f"[HTTP] Error downloading file: {e}")
+
+        return False
+
     def pull_traces(self, run_id: str, game_name: str, trace_output_dir: str,
-                    local_storage_dir: str, trace_agents: List[str] = None) -> dict:
+                    local_storage_dir: str, trace_agents: List[str] = None,
+                    agent_configs: dict = None) -> dict:
         """
         Pull all trace files for a run.
 
@@ -388,18 +536,27 @@ class TracePuller:
             trace_output_dir: Remote trace output directory on SUT
             local_storage_dir: Local storage directory for the run
             trace_agents: List of trace agents to pull (default: all)
+            agent_configs: Dict of agent YAML configs (for fallback dirs). Optional.
 
         Returns:
             Dict with results per agent: {"ptat": {"files": [...], "success": True}, ...}
         """
         results = {}
         trace_agents = trace_agents or ["ptat", "socwatch"]
+        agent_configs = agent_configs or {}
 
-        # Test connection first
+        # Guard: agent_configs must be a dict, not a list of agent names
+        if not isinstance(agent_configs, dict):
+            logger.warning(f"agent_configs is {type(agent_configs).__name__}, expected dict — ignoring (fallback patterns will be used)")
+            agent_configs = {}
+
+        # Test SSH connection (non-fatal - we can fall back to HTTP)
+        ssh_available = False
         connected, conn_msg = self.test_connection()
-        if not connected:
-            logger.error(f"Cannot pull traces - SSH connection failed: {conn_msg}")
-            return {"error": conn_msg, "success": False}
+        if connected:
+            ssh_available = True
+        else:
+            logger.warning(f"SSH connection failed ({conn_msg}), will use HTTP fallback via SUT client")
 
         # Create traces subdirectory in run storage
         traces_dir = Path(local_storage_dir) / "traces"
@@ -414,61 +571,105 @@ class TracePuller:
             agent_results = {"files": [], "success": False}
 
             try:
-                # Determine remote path pattern based on agent
-                # Trace files are named: {sut_ip}_{date}_{agent}_{game_name}.*
-                date_pattern = datetime.now().strftime("%Y%m%d")
+                # Get agent-specific config for fallback dirs
+                acfg = agent_configs.get(agent, {})
 
-                if agent == "ptat":
-                    # PTAT writes to C:\Users\<user>\Documents\iPTAT\log\ (fixed location)
-                    ptat_dir = self._get_ptat_output_dir()
-                    if not ptat_dir:
-                        logger.error("Cannot determine PTAT output dir - SUT username discovery failed")
-                        agent_results["error"] = "Could not discover SUT username for PTAT directory"
-                        results[agent] = agent_results
-                        continue
-                    file_pattern = f"*{agent}*{game_name.replace('-', '')}*.csv"
-                    remote_search_dir = ptat_dir
-                elif agent == "socwatch":
-                    # socwatch creates .csv files (main data) and .etl files (raw traces)
-                    # Only pull .csv files - the .etl files are huge and rarely needed
-                    file_pattern = f"*{agent}*{game_name.replace('-', '')}*.csv"
-                    remote_search_dir = run_trace_dir
-                elif agent == "presentmon":
-                    # PresentMon writes PresentMon-<timestamp>.csv next to its exe.
-                    # Automation moves it to run_trace_dir after capture.
-                    # Search trace dir first, fall back to exe dir.
-                    file_pattern = "PresentMon-*.csv"
-                    remote_search_dir = run_trace_dir
+                # Determine file pattern from config or defaults
+                config_pattern = acfg.get("output_file_pattern", "")
+
+                if agent == "socwatch":
+                    file_pattern = f"*{agent}*.csv"
+                elif config_pattern:
+                    file_pattern = config_pattern
                 else:
-                    # Generic fallback: search for CSV files matching the agent name
-                    file_pattern = f"*{agent}*{game_name.replace('-', '')}*.csv"
-                    remote_search_dir = run_trace_dir
+                    file_pattern = f"*{agent}*.csv"
+
+                remote_search_dir = run_trace_dir
+                used_http = False  # Track which method found files
 
                 logger.info(f"Searching for {agent} traces in {remote_search_dir} with pattern {file_pattern}")
 
-                # List matching files
-                files = self.list_remote_files(remote_search_dir, file_pattern)
+                # --- Phase 1: Try SSH-based file listing ---
+                files = []
+                if ssh_available:
+                    files = self.list_remote_files(remote_search_dir, file_pattern)
 
+                    if not files and file_pattern != f"*{agent}*.csv":
+                        files = self.list_remote_files(remote_search_dir, f"*{agent}*.csv")
+
+                    # Diagnostic: list ALL files in trace dir (log only, don't claim them)
+                    if not files:
+                        all_files = self.list_remote_files(remote_search_dir, "*")
+                        if all_files:
+                            logger.info(f"[SSH] No {agent} files matched '{file_pattern}', dir contains: {all_files}")
+                        else:
+                            logger.info(f"[SSH] Trace dir {remote_search_dir} appears empty or inaccessible")
+
+                # --- Phase 2: HTTP fallback for trace dir listing ---
                 if not files:
-                    # Try broader pattern
-                    files = self.list_remote_files(remote_search_dir, f"*{agent}*.csv")
+                    logger.info(f"[HTTP] Trying SUT client API to list {remote_search_dir}...")
+                    files = self.list_remote_files_via_http(remote_search_dir, file_pattern)
 
-                # Fallback: for agents with a fixed output dir (e.g. PresentMon),
-                # check the exe directory if nothing found in trace dir
-                if not files and agent == "presentmon":
-                    fallback_dir = r"C:\OWR\PresentMon"
-                    logger.info(f"No {agent} files in trace dir, checking {fallback_dir}")
-                    files = self.list_remote_files(fallback_dir, "PresentMon-*.csv")
+                    if not files and file_pattern != f"*{agent}*.csv":
+                        files = self.list_remote_files_via_http(remote_search_dir, f"*{agent}*.csv")
+
+                    # Diagnostic: list ALL files via HTTP (log only, don't claim them)
+                    if not files:
+                        all_files = self.list_remote_files_via_http(remote_search_dir, "*")
+                        if all_files:
+                            logger.info(f"[HTTP] No {agent} files matched '{file_pattern}', dir contains: {all_files}")
+                        else:
+                            logger.info(f"[HTTP] Trace dir {remote_search_dir} is empty or does not exist")
+
                     if files:
-                        remote_search_dir = fallback_dir
+                        used_http = True
+
+                # --- Phase 3: Fallback to agent's fixed output directory ---
+                if not files:
+                    fallback_dir_raw = acfg.get("output_fixed_dir", "")
+                    if fallback_dir_raw:
+                        # Try SSH first
+                        if ssh_available:
+                            fallback_candidates = self._expand_remote_path(fallback_dir_raw)
+                            fallback_patterns = []
+                            if config_pattern:
+                                fallback_patterns.append(config_pattern)
+                            fallback_patterns.append(f"*{agent}*.csv")
+                            fallback_patterns.append("*.csv")
+                            seen = set()
+                            fallback_patterns = [p for p in fallback_patterns if p not in seen and not seen.add(p)]
+
+                            for fallback_dir in fallback_candidates:
+                                for fb_pattern in fallback_patterns:
+                                    logger.info(f"[SSH] Checking fallback: {fallback_dir} with '{fb_pattern}'")
+                                    files = self.list_remote_files(fallback_dir, fb_pattern)
+                                    if files:
+                                        remote_search_dir = fallback_dir
+                                        logger.info(f"[SSH] Found {len(files)} files in fallback: {files}")
+                                        break
+                                if files:
+                                    break
+
+                        # Try HTTP fallback for fixed dir
+                        if not files:
+                            # HTTP endpoint expands %USERPROFILE% on the SUT side
+                            logger.info(f"[HTTP] Checking fallback dir: {fallback_dir_raw}")
+                            for fb_pattern in [config_pattern, f"*{agent}*.csv", "*.csv"]:
+                                if not fb_pattern:
+                                    continue
+                                files = self.list_remote_files_via_http(fallback_dir_raw, fb_pattern)
+                                if files:
+                                    remote_search_dir = fallback_dir_raw
+                                    used_http = True
+                                    logger.info(f"[HTTP] Found {len(files)} files in fallback with '{fb_pattern}': {files}")
+                                    break
 
                 # Filter out unwanted files
                 if agent == "socwatch":
-                    # Only keep the main CSV, skip WakeupAnalysis and other auxiliary files
                     files = [f for f in files if "WakeupAnalysis" not in f]
 
                 if files:
-                    logger.info(f"Found {len(files)} {agent} trace files")
+                    logger.info(f"Found {len(files)} {agent} trace files (via {'HTTP' if used_http else 'SSH'})")
 
                     # Create agent subdirectory
                     agent_dir = traces_dir / agent
@@ -479,12 +680,21 @@ class TracePuller:
                         remote_path = f"{remote_search_dir}\\{filename}"
                         local_path = str(agent_dir / filename)
 
-                        if self.pull_file(remote_path, local_path):
+                        # Try SCP first, then HTTP fallback
+                        pulled = False
+                        if ssh_available and not used_http:
+                            pulled = self.pull_file(remote_path, local_path)
+
+                        if not pulled:
+                            # HTTP fallback for file transfer
+                            pulled = self.pull_file_via_http(remote_path, local_path)
+
+                        if pulled:
                             agent_results["files"].append(filename)
 
                     agent_results["success"] = len(agent_results["files"]) > 0
                 else:
-                    logger.warning(f"No {agent} trace files found in {remote_search_dir}")
+                    logger.warning(f"No {agent} trace files found via SSH or HTTP")
 
             except Exception as e:
                 logger.error(f"Error pulling {agent} traces: {e}")
@@ -493,10 +703,13 @@ class TracePuller:
             results[agent] = agent_results
 
         # Summary
-        total_files = sum(len(r.get("files", [])) for r in results.values())
+        total_files = sum(len(r.get("files", [])) for r in results.values() if isinstance(r, dict))
         results["total_files"] = total_files
         results["success"] = total_files > 0
         results["storage_dir"] = str(traces_dir)
+        if not results["success"]:
+            agents_searched = [a for a in trace_agents if a in results]
+            results["error"] = f"No trace files found on SUT for agents: {', '.join(agents_searched)}"
 
         logger.info(f"Trace pulling complete: {total_files} files pulled to {traces_dir}")
 
@@ -506,7 +719,8 @@ class TracePuller:
 def pull_run_traces(sut_ip: str, run_id: str, game_name: str,
                     trace_output_dir: str, local_storage_dir: str,
                     trace_agents: List[str] = None, ssh_user: str = None,
-                    ssh_timeout: int = 60, max_retries: int = 3) -> dict:
+                    ssh_timeout: int = 60, max_retries: int = 3,
+                    agent_configs: dict = None) -> dict:
     """
     Convenience function to pull traces for a run.
 
@@ -520,13 +734,15 @@ def pull_run_traces(sut_ip: str, run_id: str, game_name: str,
         ssh_user: SSH username (optional)
         ssh_timeout: SSH connection timeout in seconds (default: 60)
         max_retries: Maximum retry attempts (default: 3)
+        agent_configs: Dict of agent YAML configs for fallback dirs (optional)
 
     Returns:
         Result dict with pulled files and status
     """
     puller = TracePuller(sut_ip, ssh_user, ssh_timeout=ssh_timeout, max_retries=max_retries)
     return puller.pull_traces(run_id, game_name, trace_output_dir,
-                              local_storage_dir, trace_agents)
+                              local_storage_dir, trace_agents,
+                              agent_configs=agent_configs)
 
 
 def diagnose_sut_ssh(sut_ip: str, ssh_user: str = None) -> dict:

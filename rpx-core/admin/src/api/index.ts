@@ -474,6 +474,29 @@ export async function getSutInstalledGamesViaProxy(deviceId: string): Promise<In
   return response.json();
 }
 
+export interface TracingAgentAvailability {
+  installed: boolean | null;
+  enabled: boolean;
+  description: string;
+  path: string;
+  file_size: number | null;
+}
+
+export interface TracingAgentsAvailabilityResponse {
+  status: string;
+  sut_ip: string;
+  agents: Record<string, TracingAgentAvailability>;
+  installed_count: number;
+  total_count: number;
+  error?: string;
+}
+
+export async function getTracingAgentsAvailability(sutIp: string): Promise<TracingAgentsAvailabilityResponse> {
+  return fetchJson<TracingAgentsAvailabilityResponse>(
+    `${API_BASE}/tracing/agents/check-availability?sut_ip=${encodeURIComponent(sutIp)}`
+  );
+}
+
 export async function takeSutScreenshot(deviceId: string): Promise<Blob> {
   const response = await fetchWithTimeout(`${API_BASE}/sut/${deviceId}/screenshot`, {
     timeout: TIMEOUTS.screenshot,
@@ -619,6 +642,17 @@ export async function stopCampaign(campaignId: string): Promise<{ status: string
   return fetchJson<{ status: string; message: string }>(`${API_BASE}/campaigns/${campaignId}/stop`, {
     method: 'POST',
   });
+}
+
+// Trace Download URL builders (browser-native download via window.open)
+export function getRunTracesDownloadUrl(runId: string, agent?: string): string {
+  const params = agent ? `?agent=${encodeURIComponent(agent)}` : '';
+  return `${API_BASE}/runs/${runId}/traces/download${params}`;
+}
+
+export function getCampaignTracesDownloadUrl(campaignId: string, agent?: string): string {
+  const params = agent ? `?agent=${encodeURIComponent(agent)}` : '';
+  return `${API_BASE}/campaigns/${campaignId}/traces/download${params}`;
 }
 
 // Branding APIs

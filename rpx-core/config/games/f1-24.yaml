@@ -22,7 +22,6 @@ metadata:
   results_pattern: "Benchmark_*.xml"
   tracing:
     enabled: true
-    agents: ["socwatch", "ptat"]
 
 steps:
   1:

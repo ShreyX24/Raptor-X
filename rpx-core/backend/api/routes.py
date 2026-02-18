@@ -6,6 +6,8 @@ REST API routes for the backend system
 import logging
 import json
 import os
+import io
+import zipfile
 import tempfile
 from flask import Blueprint, request, jsonify, send_file
 from typing import Dict, Any, Optional
@@ -1905,6 +1907,184 @@ class APIRoutes:
                 logger.error(f"Error getting screenshot {filename} for run {run_id}: {e}")
                 return jsonify({"error": str(e)}), 500
 
+        # =====================================================================
+        # Trace Download Endpoints
+        # =====================================================================
+
+        @app.route('/api/runs/<run_id>/traces', methods=['GET'])
+        def list_run_traces(run_id):
+            """List available trace files for a run"""
+            try:
+                if not hasattr(self, 'run_manager') or self.run_manager is None:
+                    return jsonify({"error": "Run manager not available"}), 500
+
+                from pathlib import Path
+                run_dir = self.run_manager.storage.get_run_dir(run_id)
+                if not run_dir:
+                    return jsonify({"error": f"Run {run_id} not found"}), 404
+
+                traces_dir = Path(run_dir) / "traces"
+                agents = {}
+                total_files = 0
+
+                if traces_dir.exists() and traces_dir.is_dir():
+                    for agent_dir in sorted(traces_dir.iterdir()):
+                        if agent_dir.is_dir():
+                            files = sorted([f.name for f in agent_dir.iterdir() if f.is_file()])
+                            if files:
+                                agents[agent_dir.name] = files
+                                total_files += len(files)
+
+                return jsonify({
+                    "has_traces": total_files > 0,
+                    "agents": agents,
+                    "total_files": total_files,
+                })
+
+            except Exception as e:
+                logger.error(f"Error listing traces for run {run_id}: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/runs/<run_id>/traces/download', methods=['GET'])
+        def download_run_traces(run_id):
+            """Download all traces for a run as a zip file"""
+            try:
+                if not hasattr(self, 'run_manager') or self.run_manager is None:
+                    return jsonify({"error": "Run manager not available"}), 500
+
+                from pathlib import Path
+                run_dir = self.run_manager.storage.get_run_dir(run_id)
+                if not run_dir:
+                    return jsonify({"error": f"Run {run_id} not found"}), 404
+
+                traces_dir = Path(run_dir) / "traces"
+                if not traces_dir.exists():
+                    return jsonify({"error": "No traces found for this run"}), 404
+
+                agent_filter = request.args.get('agent')
+                buf = io.BytesIO()
+                file_count = 0
+
+                with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+                    for agent_dir in sorted(traces_dir.iterdir()):
+                        if not agent_dir.is_dir():
+                            continue
+                        if agent_filter and agent_dir.name != agent_filter:
+                            continue
+                        for trace_file in sorted(agent_dir.iterdir()):
+                            if trace_file.is_file():
+                                arcname = f"traces/{agent_dir.name}/{trace_file.name}"
+                                zf.write(str(trace_file), arcname)
+                                file_count += 1
+
+                if file_count == 0:
+                    return jsonify({"error": "No trace files found"}), 404
+
+                buf.seek(0)
+                # Build a descriptive filename
+                manifest = self.run_manager.storage.get_manifest(run_id)
+                game_name = manifest.get('game_name', 'unknown') if manifest else 'unknown'
+                safe_game = game_name.replace(' ', '_').replace(':', '').replace("'", '')
+                zip_name = f"traces_{safe_game}_{run_id[:8]}.zip"
+
+                return send_file(buf, mimetype='application/zip', as_attachment=True, download_name=zip_name)
+
+            except Exception as e:
+                logger.error(f"Error downloading traces for run {run_id}: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/runs/<run_id>/traces/<agent>/<filename>', methods=['GET'])
+        def download_single_trace(run_id, agent, filename):
+            """Download a single trace file"""
+            try:
+                if not hasattr(self, 'run_manager') or self.run_manager is None:
+                    return jsonify({"error": "Run manager not available"}), 500
+
+                from pathlib import Path
+                run_dir = self.run_manager.storage.get_run_dir(run_id)
+                if not run_dir:
+                    return jsonify({"error": f"Run {run_id} not found"}), 404
+
+                trace_path = (Path(run_dir) / "traces" / agent / filename).resolve()
+                # Validate no path traversal
+                traces_root = (Path(run_dir) / "traces").resolve()
+                if not str(trace_path).startswith(str(traces_root)):
+                    return jsonify({"error": "Invalid path"}), 400
+
+                if not trace_path.exists() or not trace_path.is_file():
+                    return jsonify({"error": f"Trace file not found: {agent}/{filename}"}), 404
+
+                # Determine mimetype based on extension
+                suffix = trace_path.suffix.lower()
+                mimetype = 'text/csv' if suffix == '.csv' else 'application/octet-stream'
+
+                return send_file(str(trace_path), mimetype=mimetype, as_attachment=True, download_name=filename)
+
+            except Exception as e:
+                logger.error(f"Error downloading trace {agent}/{filename} for run {run_id}: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/campaigns/<campaign_id>/traces/download', methods=['GET'])
+        def download_campaign_traces(campaign_id):
+            """Download all traces for a campaign as a zip file"""
+            try:
+                if not hasattr(self, 'campaign_manager') or self.campaign_manager is None:
+                    return jsonify({"error": "Campaign manager not available"}), 500
+
+                # Find the campaign (active or history)
+                campaign = self.campaign_manager.get_campaign(campaign_id)
+                if not campaign:
+                    for c in self.campaign_manager.get_campaign_history():
+                        if c.campaign_id == campaign_id:
+                            campaign = c
+                            break
+
+                if not campaign:
+                    return jsonify({"error": f"Campaign {campaign_id} not found"}), 404
+
+                from pathlib import Path
+                agent_filter = request.args.get('agent')
+                buf = io.BytesIO()
+                file_count = 0
+
+                with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+                    for run_id in campaign.run_ids:
+                        run_dir = self.run_manager.storage.get_run_dir(run_id)
+                        if not run_dir:
+                            continue
+
+                        traces_dir = Path(run_dir) / "traces"
+                        if not traces_dir.exists():
+                            continue
+
+                        # Get game name for folder structure
+                        manifest = self.run_manager.storage.get_manifest(run_id)
+                        game_name = manifest.get('game_name', 'unknown') if manifest else 'unknown'
+                        safe_game = game_name.replace(' ', '_').replace(':', '').replace("'", '')
+
+                        for agent_dir in sorted(traces_dir.iterdir()):
+                            if not agent_dir.is_dir():
+                                continue
+                            if agent_filter and agent_dir.name != agent_filter:
+                                continue
+                            for trace_file in sorted(agent_dir.iterdir()):
+                                if trace_file.is_file():
+                                    arcname = f"{safe_game}/traces/{agent_dir.name}/{trace_file.name}"
+                                    zf.write(str(trace_file), arcname)
+                                    file_count += 1
+
+                if file_count == 0:
+                    return jsonify({"error": "No trace files found in this campaign"}), 404
+
+                buf.seek(0)
+                zip_name = f"traces_campaign_{campaign_id[:8]}.zip"
+
+                return send_file(buf, mimetype='application/zip', as_attachment=True, download_name=zip_name)
+
+            except Exception as e:
+                logger.error(f"Error downloading campaign traces for {campaign_id}: {e}")
+                return jsonify({"error": str(e)}), 500
+
         @app.route('/api/runs/stats', methods=['GET'])
         def get_runs_stats():
             """Get automation runs statistics"""
@@ -2467,6 +2647,93 @@ class APIRoutes:
                 logger.error(f"Error getting tracing agents: {e}")
                 return jsonify({"error": str(e)}), 500
 
+        @app.route('/api/tracing/agents/check-availability', methods=['GET'])
+        def check_tracing_agents_availability():
+            """Check which tracing agents are installed on a specific SUT."""
+            try:
+                import requests as http_requests
+                from modules.tracing_config import get_tracing_config
+
+                sut_ip = request.args.get('sut_ip')
+                if not sut_ip:
+                    return jsonify({"error": "sut_ip query parameter required"}), 400
+
+                config = get_tracing_config()
+                agents_config = config.agents or {}
+
+                # Build tools dict from config
+                tools = {}
+                for name, agent in agents_config.items():
+                    tools[name] = {
+                        "path": agent.get("path", ""),
+                        "description": agent.get("description", name),
+                    }
+
+                # Query SUT client
+                agents_result = {}
+                installed_count = 0
+                total_count = len(tools)
+                error_msg = None
+
+                try:
+                    response = http_requests.post(
+                        f"http://{sut_ip}:8080/installed_tools",
+                        json={"tools": tools},
+                        timeout=10
+                    )
+
+                    if response.status_code == 200:
+                        sut_data = response.json()
+                        sut_tools = sut_data.get("tools", {})
+                        installed_count = sut_data.get("installed_count", 0)
+
+                        for name, agent in agents_config.items():
+                            sut_tool = sut_tools.get(name, {})
+                            agents_result[name] = {
+                                "installed": sut_tool.get("installed", False),
+                                "enabled": agent.get("enabled", False),
+                                "description": agent.get("description", name),
+                                "path": agent.get("path", ""),
+                                "file_size": sut_tool.get("file_size"),
+                            }
+                    else:
+                        error_msg = f"SUT returned status {response.status_code}"
+                        for name, agent in agents_config.items():
+                            agents_result[name] = {
+                                "installed": None,
+                                "enabled": agent.get("enabled", False),
+                                "description": agent.get("description", name),
+                                "path": agent.get("path", ""),
+                                "file_size": None,
+                            }
+
+                except http_requests.exceptions.RequestException as e:
+                    error_msg = f"Could not connect to SUT: {str(e)}"
+                    for name, agent in agents_config.items():
+                        agents_result[name] = {
+                            "installed": None,
+                            "enabled": agent.get("enabled", False),
+                            "description": agent.get("description", name),
+                            "path": agent.get("path", ""),
+                            "file_size": None,
+                        }
+
+                result = {
+                    "status": "success",
+                    "sut_ip": sut_ip,
+                    "agents": agents_result,
+                    "installed_count": installed_count,
+                    "total_count": total_count,
+                }
+                if error_msg:
+                    result["error"] = error_msg
+
+                return jsonify(result)
+
+            except Exception as e:
+                logger.error(f"Error checking tracing agent availability: {e}")
+                return jsonify({"error": str(e)}), 500
+
         @app.route('/api/tracing/agents/<agent_name>', methods=['PUT'])
         def update_tracing_agent(agent_name):
             """Update a specific tracing agent's configuration."""
@@ -2660,4 +2927,183 @@ class APIRoutes:
                 })
             except Exception as e:
                 logger.error(f"Error testing SSH to {sut_ip}: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        # ── Tool deployment ──────────────────────────────────────────
+
+        @app.route('/api/tools/deploy/<sut_ip>', methods=['POST'])
+        def deploy_tools_to_sut(sut_ip: str):
+            """
+            Deploy tracing tools from master to a SUT.
+
+            Walks each tools/<agent>/ directory on master and uploads all files
+            to the agent's deploy_dir on the SUT, preserving subdirectory structure.
+
+            Optional JSON body:
+            {
+                "agents": ["presentmon"],  // Only deploy specific agents (default: all)
+                "force": false             // Re-deploy even if exe already exists
+            }
+            """
+            try:
+                import requests as http_requests
+                from modules.tracing_config import get_tracing_config
+
+                data = request.get_json() or {}
+                only_agents = data.get("agents")
+                force = data.get("force", False)
+
+                config = get_tracing_config()
+                agents_config = config.agents or {}
+                tools_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "tools")
+
+                deployed = {}
+                skipped = {}
+                failed = {}
+
+                for agent_name, agent_cfg in agents_config.items():
+                    if only_agents and agent_name not in only_agents:
+                        continue
+
+                    agent_path = agent_cfg.get("path", "")
+                    deploy_dir = agent_cfg.get("deploy_dir", "")
+                    if not agent_path or not deploy_dir:
+                        skipped[agent_name] = "no path or deploy_dir configured"
+                        continue
+
+                    # Local tool directory on master: tools/<agent_name>/
+                    local_dir = os.path.join(tools_dir, agent_name)
+                    if not os.path.isdir(local_dir):
+                        skipped[agent_name] = f"not bundled on master (no {local_dir})"
+                        continue
+
+                    # Check if main exe already installed on SUT (skip unless force)
+                    if not force:
+                        try:
+                            check_resp = http_requests.post(
+                                f"http://{sut_ip}:8080/installed_tools",
+                                json={"tools": {agent_name: {"path": agent_path}}},
+                                timeout=10
+                            )
+                            if check_resp.status_code == 200:
+                                tool_info = check_resp.json().get("tools", {}).get(agent_name, {})
+                                if tool_info.get("installed"):
+                                    exe_local = os.path.join(local_dir, os.path.relpath(agent_path, deploy_dir))
+                                    if os.path.isfile(exe_local):
+                                        local_size = os.path.getsize(exe_local)
+                                        remote_size = tool_info.get("file_size", 0)
+                                        if local_size == remote_size:
+                                            skipped[agent_name] = "already installed (same size)"
+                                            continue
+                        except Exception as e:
+                            logger.warning(f"Could not check {agent_name} on SUT: {e}")
+
+                    # Walk local tool directory and upload every file
+                    files_uploaded = 0
+                    total_size = 0
+                    agent_errors = []
+
+                    for root, dirs, files in os.walk(local_dir):
+                        for fname in files:
+                            local_path = os.path.join(root, fname)
+                            # Relative path from agent dir (e.g. "64/socwatch.exe")
+                            rel_path = os.path.relpath(local_path, local_dir)
+                            # Destination directory on SUT
+                            rel_dir = os.path.dirname(rel_path)
+                            if rel_dir:
+                                sut_dest_dir = deploy_dir + "\\" + rel_dir.replace("/", "\\")
+                            else:
+                                sut_dest_dir = deploy_dir
+
+                            try:
+                                with open(local_path, 'rb') as f:
+                                    upload_resp = http_requests.post(
+                                        f"http://{sut_ip}:8080/file_upload",
+                                        files={"file": (fname, f, "application/octet-stream")},
+                                        data={"path": sut_dest_dir},
+                                        timeout=120
+                                    )
+                                if upload_resp.status_code == 200:
+                                    result = upload_resp.json()
+                                    files_uploaded += 1
+                                    total_size += result.get("size", 0)
+                                else:
+                                    agent_errors.append(f"{rel_path}: {upload_resp.status_code}")
+                            except Exception as e:
+                                agent_errors.append(f"{rel_path}: {str(e)}")
+
+                    if agent_errors:
+                        failed[agent_name] = {
+                            "files_uploaded": files_uploaded,
+                            "errors": agent_errors
+                        }
+                    else:
+                        deployed[agent_name] = {
+                            "deploy_dir": deploy_dir,
+                            "files": files_uploaded,
+                            "total_size": total_size
+                        }
+                        logger.info(f"Deployed {agent_name} to {sut_ip}:{deploy_dir} ({files_uploaded} files, {total_size:,} bytes)")
+
+                return jsonify({
+                    "status": "success" if not failed else "partial",
+                    "sut_ip": sut_ip,
+                    "deployed": deployed,
+                    "skipped": skipped,
+                    "failed": failed
+                })
+
+            except Exception as e:
+                logger.error(f"Error deploying tools to {sut_ip}: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/tools/available', methods=['GET'])
+        def list_available_tools():
+            """
+            List tools available on master for deployment.
+
+            Returns which agent tools are bundled locally and ready to push.
+            """
+            try:
+                from modules.tracing_config import get_tracing_config
+
+                config = get_tracing_config()
+                agents_config = config.agents or {}
+                tools_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "tools")
+
+                tools = {}
+                for agent_name, agent_cfg in agents_config.items():
+                    agent_path = agent_cfg.get("path", "")
+                    deploy_dir = agent_cfg.get("deploy_dir", "")
+
+                    local_dir = os.path.join(tools_dir, agent_name)
+                    bundled = os.path.isdir(local_dir)
+
+                    # Count files and total size
+                    file_count = 0
+                    total_size = 0
+                    if bundled:
+                        for root, dirs, files in os.walk(local_dir):
+                            for f in files:
+                                file_count += 1
+                                total_size += os.path.getsize(os.path.join(root, f))
+
+                    tools[agent_name] = {
+                        "exe_name": os.path.basename(agent_path) if agent_path else "",
+                        "deploy_dir": deploy_dir,
+                        "dest_path": agent_path,
+                        "bundled": bundled,
+                        "file_count": file_count,
+                        "total_size": total_size,
+                        "description": agent_cfg.get("description", agent_name),
+                    }
+
+                return jsonify({
+                    "status": "success",
+                    "tools_dir": tools_dir,
+                    "tools": tools
+                })
+
+            except Exception as e:
+                logger.error(f"Error listing available tools: {e}")
                 return jsonify({"error": str(e)}), 500

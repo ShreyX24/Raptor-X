@@ -691,6 +691,216 @@ def create_app() -> Flask:
             logger.error(f"Error getting installed games: {e}")
             return jsonify({"success": False, "error": str(e)}), 500
 
+    @app.route('/installed_tools', methods=['POST'])
+    def installed_tools_route():
+        """
+        Check which tools/agents are installed on this SUT by verifying file existence.
+
+        Request body:
+        {
+            "tools": {
+                "socwatch": {"path": "C:\\OWR\\socwatch\\64\\socwatch.exe", "description": "Intel SoC Watch"},
+                "ptat": {"path": "C:\\Program Files\\Intel Corporation\\Intel(R)PTAT\\PTAT.exe", "description": "Intel PTAT"}
+            }
+        }
+
+        Response:
+        {
+            "success": true,
+            "tools": {
+                "socwatch": {"installed": true, "path": "...", "file_size": 1234567},
+                "ptat": {"installed": false, "path": "...", "file_size": null}
+            },
+            "installed_count": 1,
+            "total_count": 2
+        }
+        """
+        try:
+            data = request.get_json() or {}
+            tools = data.get('tools', {})
+
+            if not tools:
+                return jsonify({"success": False, "error": "tools dict is required"}), 400
+
+            results = {}
+            installed_count = 0
+
+            for tool_name, tool_info in tools.items():
+                path = tool_info.get('path', '')
+                if path and os.path.exists(path):
+                    file_size = os.path.getsize(path)
+                    results[tool_name] = {"installed": True, "path": path, "file_size": file_size}
+                    installed_count += 1
+                else:
+                    results[tool_name] = {"installed": False, "path": path, "file_size": None}
+
+            return jsonify({
+                "success": True,
+                "tools": results,
+                "installed_count": installed_count,
+                "total_count": len(tools)
+            })
+
+        except Exception as e:
+            logger.error(f"Error checking installed tools: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route('/list_directory', methods=['POST'])
+    def list_directory_route():
+        """
+        List files in a directory on this SUT, with optional glob filtering.
+
+        Request body:
+        {
+            "path": "C:\\Traces\\run-id-123",
+            "pattern": "*.csv"  // Optional, default "*"
+        }
+
+        Response:
+        {
+            "success": true,
+            "path": "C:\\Traces\\run-id-123",
+            "files": [
+                {"name": "trace.csv", "size": 12345, "modified": "2026-02-18T21:57:00"}
+            ],
+            "count": 1
+        }
+        """
+        import glob as glob_module
+        try:
+            data = request.get_json() or {}
+            dir_path = data.get('path', '')
+            pattern = data.get('pattern', '*')
+
+            if not dir_path:
+                return jsonify({"success": False, "error": "path is required"}), 400
+
+            # Expand environment variables
+            dir_path = os.path.expandvars(dir_path)
+
+            if not os.path.isdir(dir_path):
+                return jsonify({
+                    "success": True,
+                    "path": dir_path,
+                    "files": [],
+                    "count": 0,
+                    "error": f"Directory does not exist: {dir_path}"
+                })
+
+            # Use glob to match pattern
+            search_path = os.path.join(dir_path, pattern)
+            matched = glob_module.glob(search_path)
+
+            files = []
+            for filepath in matched:
+                if os.path.isfile(filepath):
+                    stat = os.stat(filepath)
+                    files.append({
+                        "name": os.path.basename(filepath),
+                        "size": stat.st_size,
+                        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat()
+                    })
+
+            return jsonify({
+                "success": True,
+                "path": dir_path,
+                "files": files,
+                "count": len(files)
+            })
+
+        except Exception as e:
+            logger.error(f"Error listing directory: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route('/file_download', methods=['POST'])
+    def file_download_route():
+        """
+        Download a file from this SUT via HTTP.
+
+        Request body:
+        {
+            "path": "C:\\Traces\\run-id-123\\trace.csv"
+        }
+
+        Response: The file content as an octet-stream attachment.
+        """
+        try:
+            data = request.get_json() or {}
+            file_path = data.get('path', '')
+
+            if not file_path:
+                return jsonify({"success": False, "error": "path is required"}), 400
+
+            # Expand environment variables
+            file_path = os.path.expandvars(file_path)
+
+            if not os.path.isfile(file_path):
+                return jsonify({
+                    "success": False,
+                    "error": f"File not found: {file_path}"
+                }), 404
+
+            filename = os.path.basename(file_path)
+            return send_file(
+                file_path,
+                as_attachment=True,
+                download_name=filename
+            )
+
+        except Exception as e:
+            logger.error(f"Error downloading file: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route('/file_upload', methods=['POST'])
+    def file_upload_route():
+        """
+        Upload a file to this SUT.
+
+        Used for deploying tools (PresentMon, etc.) from master to SUTs.
+
+        Multipart form data:
+            file: The file to upload
+            path: Destination directory on this SUT (e.g. "C:\\Tools\\TraceHelper\\PresentMon")
+
+        Response:
+        {
+            "success": true,
+            "path": "C:\\Tools\\TraceHelper\\PresentMon\\PresentMon-2.4.0-x64-internal.exe",
+            "size": 1026120
+        }
+        """
+        try:
+            if 'file' not in request.files:
+                return jsonify({"success": False, "error": "No file provided"}), 400
+
+            uploaded_file = request.files['file']
+            dest_dir = request.form.get('path', '')
+
+            if not dest_dir:
+                return jsonify({"success": False, "error": "'path' (destination directory) is required"}), 400
+
+            if not uploaded_file.filename:
+                return jsonify({"success": False, "error": "File has no filename"}), 400
+
+            # Expand environment variables and create directory if needed
+            dest_dir = os.path.expandvars(dest_dir)
+            os.makedirs(dest_dir, exist_ok=True)
+
+            dest_path = os.path.join(dest_dir, uploaded_file.filename)
+            uploaded_file.save(dest_path)
+            file_size = os.path.getsize(dest_path)
+
+            logger.info(f"File uploaded: {dest_path} ({file_size} bytes)")
+            return jsonify({
+                "success": True,
+                "path": dest_path,
+                "size": file_size
+            })
+
+        except Exception as e:
+            logger.error(f"Error uploading file: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
+
     @app.route('/find_standalone_game', methods=['POST'])
     def find_standalone_game_route():
         """

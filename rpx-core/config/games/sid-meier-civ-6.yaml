@@ -13,7 +13,6 @@ metadata:
   preset: "High"
   tracing:
     enabled: true
-    agents: ["socwatch", "ptat"]
 
 # Simple step-by-step workflow
 steps:

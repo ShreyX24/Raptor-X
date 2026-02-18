@@ -12,7 +12,6 @@ metadata:
   preset: "High"
   tracing:
     enabled: true
-    agents: ["socwatch", "ptat"]
 
 steps:
   1:

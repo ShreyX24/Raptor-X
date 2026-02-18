@@ -16,6 +16,8 @@ from modules.tracing_config import get_tracing_config, get_tracing_agents_dict
 
 logger = logging.getLogger(__name__)
 
+CMD_EXE = "C:\\Windows\\System32\\cmd.exe"
+
 
 def _get_tracing_agents():
     """Get tracing agents from centralized config (lazy load)."""
@@ -242,7 +244,7 @@ class SimpleAutomation:
                     try:
                         logger.info(f"Killing any existing {agent_exe} processes...")
                         self.network.execute_command(
-                            path="cmd.exe",
+                            path=CMD_EXE,
                             args=["/c", "taskkill", "/F", "/IM", agent_exe],
                             async_exec=False
                         )
@@ -252,19 +254,15 @@ class SimpleAutomation:
         # Create run-specific trace directory path on SUT
         trace_dir = f"{self.trace_output_dir}\\{self.run_id}"
 
-        # Check if any agent needs a trace directory on SUT
-        # (agents with output_filename_only write to their own fixed location)
-        needs_trace_dir = any(
-            name in tracing_agents and not tracing_agents[name].get("output_filename_only", False)
-            for name in agents
-        )
-
-        if needs_trace_dir:
+        # Always create the trace directory on SUT.
+        # Even agents with output_filename_only need it because their output
+        # is moved here after capture (see stop_tracing move step).
+        if agents:
             # Create the trace directory on SUT first
             try:
                 logger.info(f"Creating trace directory on SUT: {trace_dir}")
                 mkdir_result = self.network.execute_command(
-                    path="cmd.exe",
+                    path=CMD_EXE,
                     args=["/c", "mkdir", trace_dir],
                     async_exec=False
                 )
@@ -402,7 +400,8 @@ class SimpleAutomation:
             self._wait_for_tracing_completion(agents_with_duration, tracing_agents)
 
         # Move output files for agents that write to a fixed directory
-        # (e.g. PresentMon always writes next to its exe, not to the trace dir)
+        # (e.g. PTAT writes to %USERPROFILE%\Documents\iPTAT\log, not to the trace dir)
+        # Uses cmd.exe which correctly expands %USERPROFILE% in its arguments.
         trace_dir = f"{self.trace_output_dir}\\{self.run_id}"
         for agent_name, _pid in agents_with_duration:
             agent_config = tracing_agents.get(agent_name, {})
@@ -410,12 +409,61 @@ class SimpleAutomation:
             file_pattern = agent_config.get("output_file_pattern")
             if fixed_dir and file_pattern:
                 try:
+                    # List source directory BEFORE move to see what the agent produced
+                    try:
+                        list_result = self.network.execute_command(
+                            path=CMD_EXE,
+                            args=["/c", "dir", "/b", fixed_dir],
+                            async_exec=False
+                        )
+                        dir_stdout = list_result.get("stdout", "") if isinstance(list_result, dict) else ""
+                        dir_stderr = list_result.get("stderr", "") if isinstance(list_result, dict) else ""
+                        logger.info(f"[{agent_name}] Files in {fixed_dir} before move: {dir_stdout.strip() or '(empty)'}")
+                        if dir_stderr.strip():
+                            logger.info(f"[{agent_name}] dir stderr: {dir_stderr.strip()}")
+                    except Exception as e:
+                        logger.warning(f"[{agent_name}] Could not list source dir {fixed_dir}: {e}")
+
                     logger.info(f"Moving {agent_name} output from {fixed_dir}\\{file_pattern} to {trace_dir}")
-                    self.network.execute_command(
-                        path="cmd.exe",
+                    move_result = self.network.execute_command(
+                        path=CMD_EXE,
                         args=["/c", "move", f"{fixed_dir}\\{file_pattern}", trace_dir],
                         async_exec=False
                     )
+                    if isinstance(move_result, dict):
+                        move_stdout = move_result.get("stdout", "")
+                        move_stderr = move_result.get("stderr", "")
+                        move_exit = move_result.get("exit_code", "?")
+                        logger.info(f"[{agent_name}] Move result: exit_code={move_exit}, stdout={move_stdout.strip()}, stderr={move_stderr.strip()}")
+                        if move_exit != 0:
+                            logger.warning(f"[{agent_name}] Move command failed (exit {move_exit}). Trying broader patterns...")
+                            for fallback_pattern in [f"*{agent_name}*", "*.csv"]:
+                                try:
+                                    fb_result = self.network.execute_command(
+                                        path=CMD_EXE,
+                                        args=["/c", "move", f"{fixed_dir}\\{fallback_pattern}", trace_dir],
+                                        async_exec=False
+                                    )
+                                    fb_exit = fb_result.get("exit_code", 1) if isinstance(fb_result, dict) else 1
+                                    if fb_exit == 0:
+                                        fb_stdout = fb_result.get("stdout", "") if isinstance(fb_result, dict) else ""
+                                        logger.info(f"[{agent_name}] Fallback '{fallback_pattern}' succeeded: {fb_stdout.strip()}")
+                                        break
+                                except Exception:
+                                    pass
+
+                    # Verify files landed in trace directory
+                    try:
+                        verify_result = self.network.execute_command(
+                            path=CMD_EXE,
+                            args=["/c", "dir", "/b", trace_dir],
+                            async_exec=False
+                        )
+                        verify_stdout = verify_result.get("stdout", "") if isinstance(verify_result, dict) else ""
+                        logger.info(f"[{agent_name}] Files in trace dir after move: {verify_stdout.strip() or '(empty)'}")
+                    except Exception as e:
+                        logger.warning(f"[{agent_name}] Could not verify trace dir: {e}")
+
                 except Exception as e:
                     logger.warning(f"Failed to move {agent_name} output files: {e}")
 
@@ -1088,7 +1136,7 @@ class SimpleAutomation:
         # Save successful OCR configs for future reference
         self._save_successful_ocr_configs()
 
-        return current_step > len(steps)
+        return current_step > actual_end
     
     def _process_step_modular(self, step: Dict[str, Any], bounding_boxes: List[BoundingBox], step_num: int, retries: int = 0) -> bool:
         """Process a step using the new modular action system with enhanced logging."""

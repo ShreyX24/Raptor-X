@@ -5,7 +5,7 @@
  */
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { startRun, checkGameAvailability, getSutResolutions, createCampaign, getSutSystemInfoByIp, getGameSteps, type SUTSystemInfo, type GameStep } from '../api';
+import { startRun, checkGameAvailability, getSutResolutions, createCampaign, getSutSystemInfoByIp, getGameSteps, getTracingAgentsAvailability, type SUTSystemInfo, type GameStep } from '../api';
 import { getPresetMatrix, type PresetMatrixResponse } from '../api/presetManager';
 import type { SUT, GameConfig, SutDisplayResolution } from '../types';
 
@@ -1074,6 +1074,7 @@ export function QuickLaunchPanel({
               selectedQuality={selectedQuality}
               selectedResolution={selectedResolution}
               presetMatrix={presetMatrix}
+              selectedTracingAgents={tracingAgents}
             />
           </div>
         </div>
@@ -1307,6 +1308,7 @@ export function QuickLaunchPanel({
             selectedResolution={selectedResolution}
             presetMatrix={presetMatrix}
             isCampaign={isCampaign}
+            selectedTracingAgents={tracingAgents}
           />
         </div>
 
@@ -1540,6 +1542,7 @@ interface HorizontalPreflightChecksProps {
   selectedQuality: QualityLevel | null;
   selectedResolution: Resolution | null;
   presetMatrix: PresetMatrixResponse | null;
+  selectedTracingAgents: string[];
 }
 
 function HorizontalPreflightChecks({
@@ -1549,8 +1552,11 @@ function HorizontalPreflightChecks({
   selectedQuality,
   selectedResolution,
   presetMatrix,
+  selectedTracingAgents,
 }: HorizontalPreflightChecksProps) {
   const [omniparserOnline, setOmniparserOnline] = useState<boolean | null>(null);
+  const [tracerStatus, setTracerStatus] = useState<'checking' | 'all' | 'some' | 'none' | 'unknown' | null>(null);
+  const [tracerDetail, setTracerDetail] = useState<string>('');
 
   useEffect(() => {
     const check = async () => {
@@ -1571,14 +1577,57 @@ function HorizontalPreflightChecks({
     return () => clearInterval(interval);
   }, []);
 
+  // Check tracing agent availability on SUT
+  useEffect(() => {
+    if (!sut || sut.status !== 'online' || selectedTracingAgents.length === 0) {
+      setTracerStatus(selectedTracingAgents.length === 0 ? null : null);
+      setTracerDetail('');
+      return;
+    }
+
+    setTracerStatus('checking');
+    getTracingAgentsAvailability(sut.ip)
+      .then(result => {
+        const agents = result.agents || {};
+        // Check only the agents that are selected for this run
+        const selectedResults = selectedTracingAgents.map(id => ({
+          id,
+          installed: agents[id]?.installed,
+        }));
+        const installedCount = selectedResults.filter(a => a.installed === true).length;
+        const unknownCount = selectedResults.filter(a => a.installed === null).length;
+
+        if (unknownCount === selectedTracingAgents.length) {
+          setTracerStatus('unknown');
+          setTracerDetail(result.error || 'Could not check');
+        } else if (installedCount === selectedTracingAgents.length) {
+          setTracerStatus('all');
+          setTracerDetail(`${installedCount}/${selectedTracingAgents.length}`);
+        } else if (installedCount > 0) {
+          setTracerStatus('some');
+          const missing = selectedResults.filter(a => a.installed !== true).map(a => a.id);
+          setTracerDetail(`Missing: ${missing.join(', ')}`);
+        } else {
+          setTracerStatus('none');
+          setTracerDetail('None installed');
+        }
+      })
+      .catch(() => {
+        setTracerStatus('unknown');
+        setTracerDetail('Check failed');
+      });
+  }, [sut?.ip, sut?.status, selectedTracingAgents.join(',')]);
+
   // Calculate statuses
   const sutOk = sut && sut.status === 'online';
   const gameOk = selectedGames.length > 0;
   const installedOk = gameAvailable === true;
   const presetOk = selectedQuality && selectedResolution &&
     presetMatrix?.available_presets[selectedQuality]?.includes(selectedResolution);
+  const tracersOk = tracerStatus === 'all';
+  const tracersPending = tracerStatus === 'checking' || (selectedTracingAgents.length > 0 && tracerStatus === null);
 
-  const checks = [
+  const checks: { label: string; ok: boolean | null | undefined; pending: boolean }[] = [
     { label: 'SUT', ok: sutOk, pending: !sut },
     { label: 'Game', ok: gameOk, pending: false },
     { label: 'Installed', ok: installedOk, pending: gameAvailable === null && gameOk },
@@ -1586,13 +1635,22 @@ function HorizontalPreflightChecks({
     { label: 'OmniParser', ok: omniparserOnline === true, pending: omniparserOnline === null },
   ];
 
+  // Add Tracers check if any tracing agents are selected
+  if (selectedTracingAgents.length > 0) {
+    checks.push({
+      label: 'Tracers',
+      ok: tracersOk,
+      pending: tracersPending,
+    });
+  }
+
   const passedCount = checks.filter(c => c.ok).length;
   const allPassed = passedCount === checks.length;
 
   return (
     <div className="flex items-center gap-4">
       {checks.map((check, i) => (
-        <div key={i} className="flex items-center gap-1.5">
+        <div key={i} className="flex items-center gap-1.5" title={check.label === 'Tracers' ? tracerDetail : undefined}>
           <span
             className={`w-2 h-2 rounded-full flex-shrink-0 ${
               check.pending
@@ -1633,6 +1691,7 @@ interface CompactPreflightChecksProps {
   selectedResolution: Resolution | null;
   presetMatrix: PresetMatrixResponse | null;
   isCampaign: boolean;
+  selectedTracingAgents: string[];
 }
 
 interface CheckItem {
@@ -1650,8 +1709,11 @@ function CompactPreflightChecks({
   selectedResolution,
   presetMatrix,
   isCampaign,
+  selectedTracingAgents,
 }: CompactPreflightChecksProps) {
   const [omniparserStatus, setOmniparserStatus] = useState<'checking' | 'online' | 'offline'>('checking');
+  const [tracerStatus, setTracerStatus] = useState<'checking' | 'all' | 'some' | 'none' | 'unknown' | null>(null);
+  const [tracerDetail, setTracerDetail] = useState<string>('');
 
   // Check OmniParser status
   useEffect(() => {
@@ -1674,6 +1736,47 @@ function CompactPreflightChecks({
     const interval = setInterval(checkOmniparser, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  // Check tracing agent availability on SUT
+  useEffect(() => {
+    if (!sut || sut.status !== 'online' || selectedTracingAgents.length === 0) {
+      setTracerStatus(null);
+      setTracerDetail('');
+      return;
+    }
+
+    setTracerStatus('checking');
+    getTracingAgentsAvailability(sut.ip)
+      .then(result => {
+        const agents = result.agents || {};
+        const selectedResults = selectedTracingAgents.map(id => ({
+          id,
+          installed: agents[id]?.installed,
+        }));
+        const installedCount = selectedResults.filter(a => a.installed === true).length;
+        const unknownCount = selectedResults.filter(a => a.installed === null).length;
+
+        if (unknownCount === selectedTracingAgents.length) {
+          setTracerStatus('unknown');
+          setTracerDetail(result.error || 'Could not check');
+        } else if (installedCount === selectedTracingAgents.length) {
+          setTracerStatus('all');
+          setTracerDetail(`${installedCount}/${selectedTracingAgents.length} installed`);
+        } else if (installedCount > 0) {
+          setTracerStatus('some');
+          const missing = selectedResults.filter(a => a.installed !== true).map(a => a.id);
+          setTracerDetail(`Missing: ${missing.join(', ')}`);
+        } else {
+          setTracerStatus('none');
+          setTracerDetail('None installed on SUT');
+        }
+      })
+      .catch(() => {
+        setTracerStatus('unknown');
+        setTracerDetail('Check failed');
+      });
+  }, [sut?.ip, sut?.status, selectedTracingAgents.join(',')]);
+
 
   // Calculate campaign-specific issues - use actual preset folder check
   const gamesWithoutPresets = isCampaign
@@ -1725,6 +1828,20 @@ function CompactPreflightChecks({
       message: omniparserStatus === 'checking' ? 'Checking...' : omniparserStatus,
     },
   ];
+
+  // Add Tracers check if any tracing agents are selected
+  if (selectedTracingAgents.length > 0) {
+    checks.push({
+      id: 'tracers',
+      label: 'Tracers',
+      status: tracerStatus === 'all' ? 'pass'
+        : tracerStatus === 'some' ? 'warn'
+        : tracerStatus === 'none' ? 'fail'
+        : tracerStatus === 'unknown' ? 'warn'
+        : 'pending',
+      message: tracerStatus === 'checking' ? 'Checking...' : tracerDetail || 'Not checked',
+    });
+  }
 
   const passedCount = checks.filter(c => c.status === 'pass').length;
   const failedCount = checks.filter(c => c.status === 'fail').length;

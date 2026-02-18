@@ -17,7 +17,6 @@ metadata:
   graphics_api: DirectX 12
   tracing:
     enabled: true
-    agents: ["socwatch", "ptat"]
 steps:
   1:
     description: Press Any Key - to start

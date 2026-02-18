@@ -7,8 +7,10 @@ import type { SUT } from '../types';
 import {
   getSutSystemInfoByIp,
   getSutInstalledGames,
+  getTracingAgentsAvailability,
   type SUTSystemInfo,
   type InstalledGame,
+  type TracingAgentAvailability,
 } from '../api';
 import { restartSut } from '../api/workflowBuilder';
 
@@ -72,6 +74,13 @@ const GameIcon = () => (
   </svg>
 );
 
+const TracingIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+  </svg>
+);
+
 const CloseIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -125,6 +134,8 @@ function HardwareRow({ icon, label, value, subValue }: HardwareRowProps) {
 export function SUTDetailPanel({ sut, onClose }: SUTDetailPanelProps) {
   const [systemInfo, setSystemInfo] = useState<SUTSystemInfo | null>(null);
   const [installedGames, setInstalledGames] = useState<InstalledGame[]>([]);
+  const [tracingAgents, setTracingAgents] = useState<Record<string, TracingAgentAvailability> | null>(null);
+  const [tracingAgentCounts, setTracingAgentCounts] = useState<{ installed: number; total: number }>({ installed: 0, total: 0 });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [restarting, setRestarting] = useState(false);
@@ -150,6 +161,8 @@ export function SUTDetailPanel({ sut, onClose }: SUTDetailPanelProps) {
     if (!sut || sut.status !== 'online') {
       setSystemInfo(null);
       setInstalledGames([]);
+      setTracingAgents(null);
+      setTracingAgentCounts({ installed: 0, total: 0 });
       return;
     }
 
@@ -160,10 +173,11 @@ export function SUTDetailPanel({ sut, onClose }: SUTDetailPanelProps) {
       setError(null);
 
       try {
-        // Fetch system info and installed games in parallel
-        const [sysInfoResult, gamesResult] = await Promise.allSettled([
+        // Fetch system info, installed games, and tracing agents in parallel
+        const [sysInfoResult, gamesResult, tracingResult] = await Promise.allSettled([
           getSutSystemInfoByIp(sutIp),
           getSutInstalledGames(sutIp),
+          getTracingAgentsAvailability(sutIp),
         ]);
 
         if (sysInfoResult.status === 'fulfilled' && sysInfoResult.value) {
@@ -175,7 +189,15 @@ export function SUTDetailPanel({ sut, onClose }: SUTDetailPanelProps) {
           setInstalledGames(gamesResult.value.games || []);
         }
 
-        // Check if both failed
+        if (tracingResult.status === 'fulfilled') {
+          setTracingAgents(tracingResult.value.agents || {});
+          setTracingAgentCounts({
+            installed: tracingResult.value.installed_count,
+            total: tracingResult.value.total_count,
+          });
+        }
+
+        // Check if both sysInfo and games failed
         if (sysInfoResult.status === 'rejected' && gamesResult.status === 'rejected') {
           setError('Failed to fetch SUT details');
         }
@@ -417,6 +439,59 @@ export function SUTDetailPanel({ sut, onClose }: SUTDetailPanelProps) {
                     {game.exists !== false && (
                       <span className="ml-2 text-success text-xs">Installed</span>
                     )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tracing Agents */}
+        {!loading && (
+          <div>
+            <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2 flex items-center gap-2">
+              <TracingIcon />
+              Tracing Agents ({tracingAgentCounts.installed}/{tracingAgentCounts.total})
+            </h3>
+            {!tracingAgents || Object.keys(tracingAgents).length === 0 ? (
+              <div className="bg-surface-elevated rounded-lg p-4 text-center">
+                <p className="text-sm text-text-muted">
+                  {sut.status === 'online' ? 'No tracing agents configured' : 'SUT offline'}
+                </p>
+              </div>
+            ) : (
+              <div className="bg-surface-elevated rounded-lg divide-y divide-border">
+                {Object.entries(tracingAgents).map(([name, agent]) => (
+                  <div key={name} className="px-3 py-2 flex items-center justify-between hover:bg-surface-hover transition-colors">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-text-primary truncate" title={agent.path}>
+                        {name}
+                      </p>
+                      <p className="text-xs text-text-muted truncate" title={agent.description}>
+                        {agent.description}
+                      </p>
+                    </div>
+                    <div className="ml-2 flex items-center gap-1.5">
+                      {!agent.enabled ? (
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-surface-hover text-text-muted">
+                          Disabled
+                        </span>
+                      ) : agent.installed === null ? (
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-surface-hover text-text-muted">
+                          Unknown
+                        </span>
+                      ) : agent.installed ? (
+                        <span className="flex items-center gap-1 text-success text-xs">
+                          <CheckCircleIcon />
+                          Installed
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-danger text-xs">
+                          <XCircleIcon />
+                          Not Found
+                        </span>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

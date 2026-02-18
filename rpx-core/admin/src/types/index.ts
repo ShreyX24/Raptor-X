@@ -109,6 +109,7 @@ export interface AutomationRun {
   campaign_name?: string | null;  // Campaign name for grouping display
   quality?: string | null;  // 'low' | 'medium' | 'high' | 'ultra'
   resolution?: string | null;  // '720p' | '1080p' | '1440p' | '2160p'
+  tracing_agents?: string[] | null;
 }
 
 // Campaign types

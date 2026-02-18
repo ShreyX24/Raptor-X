@@ -396,23 +396,31 @@ class AutomationOrchestrator:
                 return False, None, f"SUT {run.sut_ip} not found"
 
             # Execute multiple iterations
-            # Check if game has tracing enabled in YAML config
+            # Determine tracing: game YAML opts in (enabled: true), centralized
+            # tracing.yaml defines which agents exist and are enabled globally.
             game_tracing_enabled = False
             game_tracing_agents = []
             try:
+                from modules.tracing_config import get_tracing_config
+                central_tracing = get_tracing_config()
+
+                # Game YAML only controls whether tracing is on/off for this game
                 with open(game_config.yaml_path, 'r') as f:
                     yaml_config = yaml.safe_load(f)
-                    tracing_config = yaml_config.get("metadata", {}).get("tracing", {})
-                    if isinstance(tracing_config, dict):
-                        game_tracing_enabled = tracing_config.get("enabled", False)
-                        game_tracing_agents = tracing_config.get("agents", ["socwatch", "ptat"])
-                    elif tracing_config:
-                        game_tracing_enabled = bool(tracing_config)
-                        game_tracing_agents = ["socwatch", "ptat"]
-            except Exception as e:
-                logger.warning(f"Could not read tracing config from YAML: {e}")
+                    tracing_flag = yaml_config.get("metadata", {}).get("tracing", {})
+                    if isinstance(tracing_flag, dict):
+                        game_tracing_enabled = tracing_flag.get("enabled", False)
+                    else:
+                        game_tracing_enabled = bool(tracing_flag)
 
-            # Override with run-specific tracing agents if provided
+                # Enabled agents come from the centralized config (single source of truth)
+                if game_tracing_enabled:
+                    game_tracing_agents = list(central_tracing.get_enabled_agents().keys())
+                    logger.info(f"Tracing enabled for {run.game_name}, agents from tracing.yaml: {game_tracing_agents}")
+            except Exception as e:
+                logger.warning(f"Could not read tracing config: {e}")
+
+            # Per-run override from frontend (e.g. user selected only ["ptat"])
             if run.tracing_agents is not None:
                 game_tracing_agents = run.tracing_agents
                 game_tracing_enabled = len(run.tracing_agents) > 0
@@ -582,21 +590,29 @@ class AutomationOrchestrator:
             if game_tracing_enabled and not run.disable_tracing and len(tracing_iterations) > 0:
                 try:
                     from .trace_puller import pull_run_traces
+                    from modules.tracing_config import get_tracing_config
 
-                    # Get trace output directory from YAML config
-                    trace_output_dir = tracing_config.get("output_dir", r"C:\Traces")
+                    # Load centralized tracing config (config/tracing.yaml)
+                    # NOT the game's metadata.tracing (which only has enabled + agent names list)
+                    central_tracing_cfg = get_tracing_config()
 
-                    # Get SSH settings from config
-                    ssh_config = tracing_config.get("ssh", {})
-                    ssh_user = ssh_config.get("user") or None
-                    ssh_timeout = ssh_config.get("timeout", 60)
-                    max_retries = ssh_config.get("max_retries", 3)
+                    # Get trace output directory from centralized config
+                    trace_output_dir = central_tracing_cfg.output_dir
+
+                    # Get SSH settings from centralized config
+                    ssh_user = central_tracing_cfg.ssh_user
+                    ssh_timeout = central_tracing_cfg.ssh_timeout
+                    max_retries = central_tracing_cfg.ssh_max_retries
 
                     # Get run storage directory
                     run_storage_dir = self._get_run_directory(run)
 
-                    logger.info(f"Pulling trace files from SUT {device.ip} (timeout={ssh_timeout}s, retries={max_retries})...")
+                    logger.info(f"Pulling trace files from SUT {device.ip} (ssh_user={ssh_user}, timeout={ssh_timeout}s, retries={max_retries})...")
                     timeline.info("Pulling trace files from SUT...")
+
+                    # Pass agent configs dict (with output_fixed_dir, output_file_pattern, etc.)
+                    # from the centralized config — NOT the game's agents list
+                    agent_configs = central_tracing_cfg.agents
 
                     pull_results = pull_run_traces(
                         sut_ip=device.ip,
@@ -607,7 +623,8 @@ class AutomationOrchestrator:
                         trace_agents=[t[0] for t in tracing_iterations],  # Only pull agents that were used
                         ssh_user=ssh_user,
                         ssh_timeout=ssh_timeout,
-                        max_retries=max_retries
+                        max_retries=max_retries,
+                        agent_configs=agent_configs
                     )
 
                     if pull_results.get("success"):

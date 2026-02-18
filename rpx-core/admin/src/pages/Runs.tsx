@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useRuns, useCampaigns } from '../hooks';
 import { LogViewer, RunTimeline } from '../components';
-import { getRunLogs } from '../api';
+import { getRunLogs, getRunTracesDownloadUrl, getCampaignTracesDownloadUrl } from '../api';
 import type { AutomationRun, LogEntry, Campaign } from '../types';
 
 // Expand icon component
@@ -572,6 +572,140 @@ function formatDuration(startedAt: string | null, completedAt: string | null | u
   }
 }
 
+// Download icon for trace buttons
+function DownloadIcon({ className = "w-3.5 h-3.5" }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+    </svg>
+  );
+}
+
+// Agent display names
+const AGENT_DISPLAY_NAMES: Record<string, string> = {
+  ptat: 'PTAT',
+  socwatch: 'SOCWatch',
+  presentmon: 'PresentMon',
+};
+
+function getAgentDisplayName(agent: string): string {
+  return AGENT_DISPLAY_NAMES[agent.toLowerCase()] || agent;
+}
+
+// Trace download dropdown menu for a single run
+function TraceDownloadMenu({ runId, agents, compact }: {
+  runId: string;
+  agents: string[];
+  compact?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative inline-block">
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+        className={compact
+          ? "p-1 text-text-muted hover:text-primary hover:bg-surface rounded transition-colors"
+          : "px-2 py-1 text-xs font-medium text-primary hover:text-primary/80 hover:bg-surface rounded transition-colors flex items-center gap-1"
+        }
+        title="Download trace files"
+      >
+        <DownloadIcon className={compact ? "w-3.5 h-3.5" : "w-3.5 h-3.5"} />
+        {!compact && 'Traces'}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 bg-surface-elevated border border-border rounded-lg shadow-lg z-50 min-w-[160px] py-1">
+          <button
+            className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-surface-hover transition-colors"
+            onClick={(e) => { e.stopPropagation(); window.open(getRunTracesDownloadUrl(runId), '_blank'); setOpen(false); }}
+          >
+            All Traces
+          </button>
+          {agents.map(agent => (
+            <button
+              key={agent}
+              className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-hover transition-colors"
+              onClick={(e) => { e.stopPropagation(); window.open(getRunTracesDownloadUrl(runId, agent), '_blank'); setOpen(false); }}
+            >
+              {getAgentDisplayName(agent)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Campaign-level trace download dropdown
+function CampaignTraceDownloadMenu({ campaignId, runs }: {
+  campaignId: string;
+  runs: AutomationRun[];
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  // Collect unique agents across all runs
+  const uniqueAgents = useMemo(() => {
+    const agentSet = new Set<string>();
+    runs.forEach(r => {
+      (r.tracing_agents || []).forEach(a => agentSet.add(a));
+    });
+    return Array.from(agentSet).sort();
+  }, [runs]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative inline-block">
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+        className="px-2 py-1 text-xs font-medium text-primary hover:text-primary/80 hover:bg-surface rounded transition-colors flex items-center gap-1"
+        title="Download campaign trace files"
+      >
+        <DownloadIcon />
+        Traces
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 bg-surface-elevated border border-border rounded-lg shadow-lg z-50 min-w-[180px] py-1">
+          <button
+            className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-surface-hover transition-colors"
+            onClick={(e) => { e.stopPropagation(); window.open(getCampaignTracesDownloadUrl(campaignId), '_blank'); setOpen(false); }}
+          >
+            Download All Traces
+          </button>
+          {uniqueAgents.map(agent => (
+            <button
+              key={agent}
+              className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-hover transition-colors"
+              onClick={(e) => { e.stopPropagation(); window.open(getCampaignTracesDownloadUrl(campaignId, agent), '_blank'); setOpen(false); }}
+            >
+              All {getAgentDisplayName(agent)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Runs() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { activeRunsList, history, loading, stop, pagination, loadMore, loadingMore } = useRuns();
@@ -1062,6 +1196,24 @@ export function Runs() {
                                       Story
                                     </button>
                                   )}
+                                  {/* Trace download - single run */}
+                                  {item.type === 'single' && item.run
+                                    && (item.status === 'completed' || item.status === 'stopped')
+                                    && item.run.tracing_agents && item.run.tracing_agents.length > 0 && (
+                                    <TraceDownloadMenu
+                                      runId={item.run.run_id}
+                                      agents={item.run.tracing_agents}
+                                    />
+                                  )}
+                                  {/* Trace download - campaign level */}
+                                  {item.type === 'campaign' && item.campaign
+                                    && (item.status === 'completed' || item.status === 'stopped' || item.status === 'partially_completed')
+                                    && item.campaignRuns?.some(r => r.tracing_agents && r.tracing_agents.length > 0) && (
+                                    <CampaignTraceDownloadMenu
+                                      campaignId={item.campaign.campaign_id}
+                                      runs={item.campaignRuns || []}
+                                    />
+                                  )}
                                   {/* Expand button for logs */}
                                   {currentTab === 'logs' && (
                                     <button
@@ -1097,9 +1249,18 @@ export function Runs() {
                                           <div key={run.run_id} className="border border-border rounded-lg overflow-hidden">
                                             <div className="bg-surface px-4 py-2 border-b border-border flex items-center justify-between">
                                               <span className="font-medium text-text-primary">{run.game_name}</span>
-                                              <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${getStatusBadge(run.status)}`}>
-                                                {run.status}
-                                              </span>
+                                              <div className="flex items-center gap-2">
+                                                {run.status === 'completed' && run.tracing_agents && run.tracing_agents.length > 0 && (
+                                                  <TraceDownloadMenu
+                                                    runId={run.run_id}
+                                                    agents={run.tracing_agents}
+                                                    compact
+                                                  />
+                                                )}
+                                                <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${getStatusBadge(run.status)}`}>
+                                                  {run.status}
+                                                </span>
+                                              </div>
                                             </div>
                                             {!isCollapsed && (
                                               <div className="p-4">
