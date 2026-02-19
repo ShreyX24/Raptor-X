@@ -90,6 +90,23 @@ const ACTION_TYPES = [
   { value: 'drag', label: 'Drag', description: 'Drag element to position' },
 ] as const;
 
+// Whimsical loading words shown during AI parsing
+const PARSING_WORDS = [
+  'Julienning', 'Reticulating', 'Sautéing', 'Caramelizing', 'Deglazing',
+  'Marinating', 'Flambéing', 'Blanching', 'Whisking', 'Braising',
+  'Fermenting', 'Kneading', 'Tempering', 'Simmering', 'Folding',
+  'Reducing', 'Emulsifying', 'Zesting', 'Proofing', 'Garnishing',
+  'Mincing', 'Basting', 'Transmogrifying', 'Discombobulating', 'Percolating',
+  'Amalgamating', 'Tessellating', 'Crystallizing', 'Synthesizing', 'Harmonizing',
+  'Calibrating', 'Interpolating', 'Coalescing', 'Bifurcating', 'Galvanizing',
+  'Ionizing', 'Permutating', 'Cogitating', 'Ruminating', 'Pontificating',
+  'Defragulating', 'Rasmatizing', 'Syncopating', 'Untangling', 'Refactoring',
+  'Decanting', 'Distilling', 'Perambulating', 'Recalibrating', 'Extrapolating',
+  'Massaging', 'Churning', 'Steeping', 'Aerating', 'Infusing',
+  'Pickling', 'Crunching', 'Wrangling', 'Pixelating', 'Dicing',
+  'Broiling', 'Poaching', 'Clarifying', 'Congealing', 'Precipitating',
+];
+
 // Key options for key actions
 const KEY_OPTIONS = [
   'enter', 'escape', 'tab', 'space', 'backspace', 'delete',
@@ -163,21 +180,27 @@ function ScreenshotCanvas({
   isParsing?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [parsingWord, setParsingWord] = useState('');
 
-  // Inject glow animation styles once
+  // Rotate loading words while parsing
   useEffect(() => {
-    const id = 'glow-spin-styles';
+    if (!isParsing) { setParsingWord(''); return; }
+    const pick = () => setParsingWord(PARSING_WORDS[Math.floor(Math.random() * PARSING_WORDS.length)]);
+    pick();
+    const id = setInterval(pick, 2000);
+    return () => clearInterval(id);
+  }, [isParsing]);
+
+  // Inject AI flow animation styles once
+  useEffect(() => {
+    const id = 'ai-flow-styles';
     if (document.getElementById(id)) return;
     const style = document.createElement('style');
     style.id = id;
     style.textContent = `
-      @property --glow-angle {
-        syntax: "<angle>";
-        initial-value: 0deg;
-        inherits: false;
-      }
-      @keyframes glow-spin {
-        to { --glow-angle: 360deg; }
+      @keyframes ai-flow-up {
+        0% { transform: translateY(0); }
+        100% { transform: translateY(-50%); }
       }
     `;
     document.head.appendChild(style);
@@ -227,18 +250,9 @@ function ScreenshotCanvas({
 
   return (
     <div className="h-full relative min-h-0">
-      {/* AI processing glow border */}
-      <div
-        className={`absolute -inset-[2px] rounded-lg pointer-events-none transition-opacity duration-500 ${showGlow ? 'opacity-100' : 'opacity-0'}`}
-        style={{
-          background: 'conic-gradient(from var(--glow-angle), #3b82f6, #8b5cf6, #ec4899, #f59e0b, #3b82f6)',
-          animation: showGlow ? 'glow-spin 3s linear infinite' : 'none',
-          boxShadow: '0 0 15px 3px rgba(139, 92, 246, 0.3), 0 0 30px 5px rgba(59, 130, 246, 0.15)',
-        }}
-      />
       <div
         ref={containerRef}
-        className={`relative h-full bg-gray-900 rounded ${showGlow ? 'border-2 border-transparent' : 'border border-gray-700'} ${showScrollbars ? 'overflow-auto' : 'overflow-hidden'}`}
+        className={`relative h-full bg-gray-900 rounded border border-gray-700 ${showScrollbars ? 'overflow-auto' : 'overflow-hidden'}`}
       >
       <div
         className="relative inline-block origin-top-left"
@@ -296,6 +310,40 @@ function ScreenshotCanvas({
           );
         })}
       </div>
+      </div>
+      {/* AI processing overlay — rainbow flow bottom→top, on top of screenshot */}
+      <div
+        className={`absolute inset-0 pointer-events-none z-20 overflow-hidden rounded transition-opacity duration-700 ${showGlow ? 'opacity-100' : 'opacity-0'}`}
+      >
+        <div
+          className="w-full"
+          style={{
+            height: '200%',
+            background: `linear-gradient(
+              to top,
+              rgba(56, 189, 248, 0.28),
+              rgba(99, 102, 241, 0.30) 10%,
+              rgba(139, 92, 246, 0.28) 20%,
+              rgba(168, 85, 247, 0.30) 30%,
+              rgba(236, 72, 153, 0.28) 40%,
+              rgba(244, 114, 182, 0.26) 50%,
+              rgba(251, 191, 36, 0.28) 60%,
+              rgba(245, 158, 11, 0.30) 70%,
+              rgba(52, 211, 153, 0.26) 80%,
+              rgba(34, 197, 94, 0.28) 90%,
+              rgba(56, 189, 248, 0.28)
+            )`,
+            animation: showGlow ? 'ai-flow-up 1.8s linear infinite' : 'none',
+          }}
+        />
+        {/* Whimsical loading text */}
+        {parsingWord && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="px-4 py-2 rounded-lg bg-black/40 backdrop-blur-sm">
+              <span className="text-sm font-bold text-white tracking-wide" style={{ fontFamily: "'Intel One Display', 'Intel Clear', 'Segoe UI', system-ui, sans-serif" }}>{parsingWord}...</span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
