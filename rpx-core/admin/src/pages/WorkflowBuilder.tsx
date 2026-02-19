@@ -141,6 +141,9 @@ interface DraftStep {
   verifyElements: Array<{ type: 'icon' | 'text' | 'any'; text: string; textMatch: string }>;
 }
 
+// Log entry for console panel
+type LogEntry = { ts: number; level: 'info' | 'warn' | 'error' | 'success'; msg: string };
+
 // Screenshot canvas with bounding box overlay - 16:9 aspect ratio, fit-to-container zoom
 function ScreenshotCanvas({
   imageUrl,
@@ -149,6 +152,7 @@ function ScreenshotCanvas({
   onElementClick,
   zoom,
   onZoomChange,
+  isParsing,
 }: {
   imageUrl: string | null;
   elements: BoundingBox[];
@@ -156,8 +160,28 @@ function ScreenshotCanvas({
   onElementClick: (element: BoundingBox) => void;
   zoom: number;
   onZoomChange?: (newZoom: number) => void;
+  isParsing?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Inject glow animation styles once
+  useEffect(() => {
+    const id = 'glow-spin-styles';
+    if (document.getElementById(id)) return;
+    const style = document.createElement('style');
+    style.id = id;
+    style.textContent = `
+      @property --glow-angle {
+        syntax: "<angle>";
+        initial-value: 0deg;
+        inherits: false;
+      }
+      @keyframes glow-spin {
+        to { --glow-angle: 360deg; }
+      }
+    `;
+    document.head.appendChild(style);
+  }, []);
 
   // Scroll wheel zoom handler - only zoom IN from 100% (fit)
   useEffect(() => {
@@ -184,7 +208,7 @@ function ScreenshotCanvas({
     return (
       <div
         ref={containerRef}
-        className="flex-1 flex items-center justify-center bg-gray-800/50 rounded border border-gray-700"
+        className="h-full flex items-center justify-center bg-gray-800/50 rounded border border-gray-700"
       >
         <div className="flex items-center justify-center bg-gray-900/50 rounded aspect-video w-full max-w-full">
           <div className="text-center text-gray-500">
@@ -199,12 +223,23 @@ function ScreenshotCanvas({
 
   // At 100% zoom, image fits container. Above 100% = zoomed in with scrollbars
   const showScrollbars = zoom > 100;
+  const showGlow = !!isParsing && !!imageUrl;
 
   return (
-    <div
-      ref={containerRef}
-      className={`flex-1 bg-gray-900 rounded border border-gray-700 ${showScrollbars ? 'overflow-auto' : 'overflow-hidden'}`}
-    >
+    <div className="h-full relative min-h-0">
+      {/* AI processing glow border */}
+      <div
+        className={`absolute -inset-[2px] rounded-lg pointer-events-none transition-opacity duration-500 ${showGlow ? 'opacity-100' : 'opacity-0'}`}
+        style={{
+          background: 'conic-gradient(from var(--glow-angle), #3b82f6, #8b5cf6, #ec4899, #f59e0b, #3b82f6)',
+          animation: showGlow ? 'glow-spin 3s linear infinite' : 'none',
+          boxShadow: '0 0 15px 3px rgba(139, 92, 246, 0.3), 0 0 30px 5px rgba(59, 130, 246, 0.15)',
+        }}
+      />
+      <div
+        ref={containerRef}
+        className={`relative h-full bg-gray-900 rounded ${showGlow ? 'border-2 border-transparent' : 'border border-gray-700'} ${showScrollbars ? 'overflow-auto' : 'overflow-hidden'}`}
+      >
       <div
         className="relative inline-block origin-top-left"
         style={{
@@ -260,6 +295,7 @@ function ScreenshotCanvas({
             />
           );
         })}
+      </div>
       </div>
     </div>
   );
@@ -1512,6 +1548,191 @@ function MetadataPanel({
   );
 }
 
+// Bottom panel with Elements and Console tabs
+function BottomPanel({
+  elements,
+  selectedElement,
+  onElementClick,
+  logs,
+  onClearLogs,
+}: {
+  elements: BoundingBox[];
+  selectedElement: BoundingBox | null;
+  onElementClick: (element: BoundingBox) => void;
+  logs: LogEntry[];
+  onClearLogs: () => void;
+}) {
+  const [activeTab, setActiveTab] = useState<'elements' | 'console'>('elements');
+  const [filter, setFilter] = useState('');
+  const [lastSeenLogCount, setLastSeenLogCount] = useState(0);
+  const consoleEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll console
+  useEffect(() => {
+    if (activeTab === 'console' && consoleEndRef.current) {
+      consoleEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [logs, activeTab]);
+
+  // Track unread logs
+  useEffect(() => {
+    if (activeTab === 'console') {
+      setLastSeenLogCount(logs.length);
+    }
+  }, [activeTab, logs.length]);
+
+  const unreadCount = activeTab !== 'console' ? logs.length - lastSeenLogCount : 0;
+
+  const filteredElements = filter
+    ? elements.filter(el => el.element_text.toLowerCase().includes(filter.toLowerCase()))
+    : elements;
+
+  return (
+    <div className="flex-[2] flex flex-col bg-gray-800/30 rounded border border-gray-700 min-h-0 mt-2">
+      {/* Tab bar */}
+      <div className="flex items-center gap-1 px-2 pt-1.5 pb-1 border-b border-gray-700 flex-shrink-0">
+        <button
+          onClick={() => setActiveTab('elements')}
+          className={`px-2.5 py-1 text-xs rounded-full transition-colors ${
+            activeTab === 'elements'
+              ? 'bg-blue-600 text-white'
+              : 'text-gray-400 hover:text-gray-300 hover:bg-gray-700/50'
+          }`}
+        >
+          Elements{elements.length > 0 && <span className="ml-1 opacity-70">({elements.length})</span>}
+        </button>
+        <button
+          onClick={() => setActiveTab('console')}
+          className={`px-2.5 py-1 text-xs rounded-full transition-colors flex items-center gap-1 ${
+            activeTab === 'console'
+              ? 'bg-blue-600 text-white'
+              : 'text-gray-400 hover:text-gray-300 hover:bg-gray-700/50'
+          }`}
+        >
+          Console
+          {unreadCount > 0 && (
+            <span className="px-1.5 py-0.5 text-[10px] bg-amber-500 text-white rounded-full min-w-[18px] text-center leading-none">
+              {unreadCount}
+            </span>
+          )}
+        </button>
+        {activeTab === 'console' && logs.length > 0 && (
+          <button
+            onClick={onClearLogs}
+            className="ml-auto text-[10px] text-gray-500 hover:text-gray-400"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
+      {/* Tab content */}
+      {activeTab === 'elements' ? (
+        <div className="flex-1 flex flex-col min-h-0">
+          {/* Filter */}
+          <div className="px-2 py-1 flex-shrink-0">
+            <input
+              type="text"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Filter elements..."
+              className="w-full bg-gray-700/50 border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 placeholder-gray-500"
+            />
+          </div>
+          {/* Table */}
+          <div className="flex-1 overflow-y-auto min-h-0">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-gray-800/90">
+                <tr className="text-gray-500 text-left">
+                  <th className="px-2 py-1 w-8">#</th>
+                  <th className="px-2 py-1 w-14">Type</th>
+                  <th className="px-2 py-1">Text</th>
+                  <th className="px-2 py-1 w-14 text-right">Conf</th>
+                  <th className="px-2 py-1 w-24 text-right">Position</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredElements.map((el, idx) => {
+                  const isSelected = selectedElement &&
+                    selectedElement.x === el.x &&
+                    selectedElement.y === el.y;
+                  return (
+                    <tr
+                      key={idx}
+                      onClick={() => onElementClick(el)}
+                      className={`cursor-pointer transition-colors ${
+                        isSelected
+                          ? 'bg-yellow-400/20 text-yellow-200'
+                          : 'hover:bg-gray-700/50 text-gray-300'
+                      }`}
+                    >
+                      <td className="px-2 py-1 text-gray-500">{idx + 1}</td>
+                      <td className="px-2 py-1">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                          el.element_type === 'icon'
+                            ? 'bg-blue-900/50 text-blue-400'
+                            : 'bg-emerald-900/50 text-emerald-400'
+                        }`}>
+                          {el.element_type}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1 truncate max-w-[200px] font-mono">{el.element_text}</td>
+                      <td className="px-2 py-1 text-right text-gray-500">
+                        {el.confidence != null ? `${(el.confidence * 100).toFixed(0)}%` : '-'}
+                      </td>
+                      <td className="px-2 py-1 text-right text-gray-500 font-mono text-[10px]">
+                        {el.x},{el.y}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {filteredElements.length === 0 && (
+              <div className="text-center py-4 text-gray-500 text-xs">
+                {elements.length === 0 ? 'No elements detected' : 'No matches'}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 overflow-y-auto min-h-0 px-2 py-1 font-mono text-xs space-y-0.5">
+          {logs.length === 0 ? (
+            <div className="text-center py-4 text-gray-500">No log entries</div>
+          ) : (
+            logs.map((entry, idx) => {
+              const time = new Date(entry.ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+              const levelColors: Record<string, string> = {
+                info: 'text-gray-400 bg-gray-700/50',
+                success: 'text-emerald-400 bg-emerald-900/30',
+                warn: 'text-amber-400 bg-amber-900/30',
+                error: 'text-red-400 bg-red-900/30',
+              };
+              return (
+                <div key={idx} className="flex items-start gap-2 py-0.5">
+                  <span className="text-gray-600 flex-shrink-0">{time}</span>
+                  <span className={`px-1 rounded text-[10px] flex-shrink-0 ${levelColors[entry.level]}`}>
+                    {entry.level.toUpperCase()}
+                  </span>
+                  <span className={`break-words ${
+                    entry.level === 'error' ? 'text-red-300' :
+                    entry.level === 'warn' ? 'text-amber-300' :
+                    entry.level === 'success' ? 'text-emerald-300' :
+                    'text-gray-300'
+                  }`}>
+                    {entry.msg}
+                  </span>
+                </div>
+              );
+            })
+          )}
+          <div ref={consoleEndRef} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Main WorkflowBuilder page
 export function WorkflowBuilder() {
   const { devices } = useDevices();
@@ -1587,6 +1808,12 @@ export function WorkflowBuilder() {
   const [isRunningFlow, setIsRunningFlow] = useState(false);
   const [currentFlowStep, setCurrentFlowStep] = useState<number | null>(null);
   const [verifyPickMode, setVerifyPickMode] = useState(false);
+
+  // Console log state
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const addLog = useCallback((level: LogEntry['level'], msg: string) => {
+    setLogs(prev => [...prev, { ts: Date.now(), level, msg }]);
+  }, []);
 
   // Workflow library state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -2172,13 +2399,14 @@ export function WorkflowBuilder() {
       await saveWorkflowYaml(currentWorkflow, yaml);
       setInitialYaml(yaml);
       setHasUnsavedChanges(false);
+      addLog('success', `Saved "${currentWorkflow}"`);
     } catch (err) {
       console.error('[handleSave] Save failed:', err);
-      alert(`Failed to save: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      addLog('error', `Failed to save: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setIsSaving(false);
     }
-  }, [currentWorkflow, generateYaml]);
+  }, [currentWorkflow, generateYaml, addLog]);
 
   // Handle capture and parse in one click
   const handleCaptureAndParse = useCallback(async () => {
@@ -2210,9 +2438,9 @@ export function WorkflowBuilder() {
       }
     } catch (err) {
       console.error('Re-parse failed:', err);
-      alert(`Failed to re-parse: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      addLog('error', `Re-parse failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
-  }, [screenshotBlob, draft, reparseWithOcrConfig]);
+  }, [screenshotBlob, draft, reparseWithOcrConfig, addLog]);
 
   // Handle game launch
   const handleLaunchGame = useCallback(async () => {
@@ -2223,15 +2451,17 @@ export function WorkflowBuilder() {
 
     try {
       setIsLaunching(true);
+      addLog('info', `Launching game (Steam ID: ${metadata.steam_app_id})...`);
       const processName = metadata.process_name || metadata.process_id || undefined;
       await launchGame(selectedSut.device_id, metadata.steam_app_id, processName);
       setIsGameRunning(true);
+      addLog('success', 'Game launched successfully');
     } catch (err) {
-      alert(`Failed to launch game: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      addLog('error', `Failed to launch game: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setIsLaunching(false);
     }
-  }, [selectedSut, metadata.steam_app_id, metadata.process_name, metadata.process_id]);
+  }, [selectedSut, metadata.steam_app_id, metadata.process_name, metadata.process_id, addLog]);
 
   // Handle game kill
   const handleKillGame = useCallback(async () => {
@@ -2243,14 +2473,16 @@ export function WorkflowBuilder() {
 
     try {
       setIsKilling(true);
+      addLog('info', `Killing process "${processToKill}"...`);
       await killProcess(selectedSut.device_id, processToKill);
       setIsGameRunning(false);
+      addLog('success', `Process "${processToKill}" killed`);
     } catch (err) {
-      alert(`Failed to kill game: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      addLog('error', `Failed to kill game: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setIsKilling(false);
     }
-  }, [selectedSut, metadata.process_name, metadata.process_id]);
+  }, [selectedSut, metadata.process_name, metadata.process_id, addLog]);
 
   // Handle element click
   const handleElementClick = useCallback((element: BoundingBox) => {
@@ -2552,21 +2784,24 @@ export function WorkflowBuilder() {
     }
 
     setIsTestingStep(index);
+    addLog('info', `Testing step ${index + 1}: "${step.description}"...`);
 
     try {
       const result = await testStepWithFind(selectedSut.device_id, step, metadata.ocr_config);
       console.log('[handleTestExistingStep] Result:', result);
 
-      if (!result.success) {
-        alert(`Step failed: ${result.message || result.error}`);
+      if (result.success) {
+        addLog('success', `Step ${index + 1} passed`);
+      } else {
+        addLog('error', `Step ${index + 1} failed: ${result.message || result.error}`);
       }
     } catch (err) {
       console.error('[handleTestExistingStep] Error:', err);
-      alert(`Test failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      addLog('error', `Step ${index + 1} test error: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setIsTestingStep(null);
     }
-  }, [selectedSut, steps, testStepWithFind, metadata.ocr_config]);
+  }, [selectedSut, steps, testStepWithFind, metadata.ocr_config, addLog]);
 
   // Run all steps in sequence (Flow) - uses hook's testStepWithFind
   const handleRunFlow = useCallback(async () => {
@@ -2583,6 +2818,7 @@ export function WorkflowBuilder() {
     }
 
     setIsRunningFlow(true);
+    addLog('info', `Starting flow with ${steps.length} steps...`);
 
     try {
       for (let i = 0; i < steps.length; i++) {
@@ -2590,11 +2826,11 @@ export function WorkflowBuilder() {
         setIsTestingStep(i);
 
         const step = steps[i];
-        console.log(`[handleRunFlow] Step ${i + 1}/${steps.length}:`, step.description);
+        addLog('info', `Step ${i + 1}/${steps.length}: "${step.description}"`);
 
         // Skip click steps without target (user may have added placeholder steps)
         if (['find_and_click', 'double_click', 'right_click'].includes(step.action_type) && !step.find?.text) {
-          console.warn(`[handleRunFlow] Step ${i + 1} has no target element, skipping`);
+          addLog('warn', `Step ${i + 1} has no target element, skipping`);
           continue;
         }
 
@@ -2604,30 +2840,32 @@ export function WorkflowBuilder() {
         if (!result.success) {
           // If optional step fails, continue; otherwise throw
           if (step.optional) {
-            console.warn(`[handleRunFlow] Optional step ${i + 1} failed, continuing:`, result.message);
+            addLog('warn', `Optional step ${i + 1} failed, continuing: ${result.message}`);
             continue;
           }
           throw new Error(result.message || result.error || 'Step failed');
         }
 
+        addLog('success', `Step ${i + 1} passed`);
+
         // Wait for expected_delay before next step
         if (step.expected_delay && i < steps.length - 1) {
-          console.log(`[handleRunFlow] Waiting ${step.expected_delay}s before next step`);
+          addLog('info', `Waiting ${step.expected_delay}s...`);
           await new Promise(resolve => setTimeout(resolve, step.expected_delay * 1000));
         }
       }
 
-      console.log('[handleRunFlow] Flow completed successfully');
+      addLog('success', `Flow completed successfully (${steps.length} steps)`);
     } catch (err) {
       const stepNum = (currentFlowStep ?? 0) + 1;
       console.error(`[handleRunFlow] Flow failed at step ${stepNum}:`, err);
-      alert(`Flow failed at step ${stepNum}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      addLog('error', `Flow failed at step ${stepNum}: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setIsRunningFlow(false);
       setCurrentFlowStep(null);
       setIsTestingStep(null);
     }
-  }, [selectedSut, steps, testStepWithFind, currentFlowStep, metadata.ocr_config]);
+  }, [selectedSut, steps, testStepWithFind, currentFlowStep, metadata.ocr_config, addLog]);
 
   return (
     <div className="flex h-screen bg-gray-900 text-gray-100 overflow-hidden">
@@ -2644,7 +2882,7 @@ export function WorkflowBuilder() {
       {/* Main Content - flex column, no overflow */}
       <div className="flex-1 flex flex-col p-3 gap-2 overflow-hidden">
         {/* Header - Top Bar with SUT controls (compact) */}
-        <div className="flex items-center justify-between gap-3 flex-shrink-0">
+        <div className="flex items-center justify-between gap-3 flex-shrink-0 relative z-10">
           {/* Left: Back button + Title + SUT Selector */}
           <div className="flex items-center gap-4 flex-1">
             <Link
@@ -2866,13 +3104,23 @@ export function WorkflowBuilder() {
               </button>
             </div>
           </div>
-          <ScreenshotCanvas
-            imageUrl={annotatedImageUrl || screenshotUrl}
+          <div className="flex-[3] min-h-0">
+            <ScreenshotCanvas
+              imageUrl={annotatedImageUrl || screenshotUrl}
+              elements={elements}
+              selectedElement={selectedElement}
+              onElementClick={handleElementClick}
+              zoom={zoom}
+              onZoomChange={setZoom}
+              isParsing={isParsing}
+            />
+          </div>
+          <BottomPanel
             elements={elements}
             selectedElement={selectedElement}
             onElementClick={handleElementClick}
-            zoom={zoom}
-            onZoomChange={setZoom}
+            logs={logs}
+            onClearLogs={() => setLogs([])}
           />
         </div>
 
