@@ -405,6 +405,16 @@ class RunManager:
                     run_directory=str(self.storage.base_dir / manifest.folder_name),
                 )
 
+            # Derive tracing_agents from disk if not already set
+            try:
+                traces_dir = self.storage.base_dir / manifest.folder_name / "traces"
+                if traces_dir.exists():
+                    agents = [d.name for d in traces_dir.iterdir() if d.is_dir() and any(d.iterdir())]
+                    if agents:
+                        run.tracing_agents = sorted(agents)
+            except Exception:
+                pass
+
             return run
         except Exception as e:
             logger.error(f"Error converting manifest to run: {e}")

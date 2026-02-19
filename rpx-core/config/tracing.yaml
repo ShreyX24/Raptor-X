@@ -66,4 +66,4 @@ agents:
     # After capture, automation moves the CSV to the trace directory.
     output_filename_only: true
     output_fixed_dir: C:\OWR\PresentMon
-    output_file_pattern: PresentMon-*.csv
+    output_file_pattern: "*_presentmon_*.csv"

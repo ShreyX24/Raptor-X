@@ -1945,45 +1945,71 @@ class APIRoutes:
                 logger.error(f"Error listing traces for run {run_id}: {e}")
                 return jsonify({"error": str(e)}), 500
 
-        @app.route('/api/runs/<run_id>/traces/download', methods=['GET'])
-        def download_run_traces(run_id):
-            """Download all traces for a run as a zip file"""
-            try:
-                if not hasattr(self, 'run_manager') or self.run_manager is None:
-                    return jsonify({"error": "Run manager not available"}), 500
+        def _package_traces(run_ids: list, agent_filter: str = None) -> tuple:
+            """Package trace files into a zip buffer.
 
-                from pathlib import Path
-                run_dir = self.run_manager.storage.get_run_dir(run_id)
-                if not run_dir:
-                    return jsonify({"error": f"Run {run_id} not found"}), 404
+            Collects traces from one or more runs into a consistent folder structure:
+                <Agent>/<Game>/<trace_file>
 
-                traces_dir = Path(run_dir) / "traces"
-                if not traces_dir.exists():
-                    return jsonify({"error": "No traces found for this run"}), 404
+            Args:
+                run_ids: List of run IDs to collect traces from.
+                agent_filter: Optional agent name to filter by.
 
-                agent_filter = request.args.get('agent')
-                buf = io.BytesIO()
-                file_count = 0
+            Returns:
+                (BytesIO buffer, file_count) — the zip buffer and number of files added.
+            """
+            from pathlib import Path
+            buf = io.BytesIO()
+            file_count = 0
 
-                with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for run_id in run_ids:
+                    run_dir = self.run_manager.storage.get_run_dir(run_id)
+                    if not run_dir:
+                        continue
+
+                    traces_dir = Path(run_dir) / "traces"
+                    if not traces_dir.exists():
+                        continue
+
+                    manifest = self.run_manager.storage.get_manifest(run_id)
+                    game_name = (manifest.config.games[0] if manifest and manifest.config and manifest.config.games else 'unknown')
+                    safe_game = game_name.replace(' ', '_').replace(':', '').replace("'", '')
+
                     for agent_dir in sorted(traces_dir.iterdir()):
                         if not agent_dir.is_dir():
                             continue
                         if agent_filter and agent_dir.name != agent_filter:
                             continue
+                        agent_display = agent_dir.name.capitalize()
                         for trace_file in sorted(agent_dir.iterdir()):
                             if trace_file.is_file():
-                                arcname = f"traces/{agent_dir.name}/{trace_file.name}"
+                                arcname = f"{agent_display}/{safe_game}/{trace_file.name}"
                                 zf.write(str(trace_file), arcname)
                                 file_count += 1
+
+            buf.seek(0)
+            return buf, file_count
+
+        @app.route('/api/runs/<run_id>/traces/download', methods=['GET'])
+        def download_run_traces(run_id):
+            """Download traces for a single run as a zip file"""
+            try:
+                if not hasattr(self, 'run_manager') or self.run_manager is None:
+                    return jsonify({"error": "Run manager not available"}), 500
+
+                run_dir = self.run_manager.storage.get_run_dir(run_id)
+                if not run_dir:
+                    return jsonify({"error": f"Run {run_id} not found"}), 404
+
+                agent_filter = request.args.get('agent')
+                buf, file_count = _package_traces([run_id], agent_filter)
 
                 if file_count == 0:
                     return jsonify({"error": "No trace files found"}), 404
 
-                buf.seek(0)
-                # Build a descriptive filename
                 manifest = self.run_manager.storage.get_manifest(run_id)
-                game_name = manifest.get('game_name', 'unknown') if manifest else 'unknown'
+                game_name = (manifest.config.games[0] if manifest and manifest.config and manifest.config.games else 'unknown')
                 safe_game = game_name.replace(' ', '_').replace(':', '').replace("'", '')
                 zip_name = f"traces_{safe_game}_{run_id[:8]}.zip"
 
@@ -2006,7 +2032,6 @@ class APIRoutes:
                     return jsonify({"error": f"Run {run_id} not found"}), 404
 
                 trace_path = (Path(run_dir) / "traces" / agent / filename).resolve()
-                # Validate no path traversal
                 traces_root = (Path(run_dir) / "traces").resolve()
                 if not str(trace_path).startswith(str(traces_root)):
                     return jsonify({"error": "Invalid path"}), 400
@@ -2014,7 +2039,6 @@ class APIRoutes:
                 if not trace_path.exists() or not trace_path.is_file():
                     return jsonify({"error": f"Trace file not found: {agent}/{filename}"}), 404
 
-                # Determine mimetype based on extension
                 suffix = trace_path.suffix.lower()
                 mimetype = 'text/csv' if suffix == '.csv' else 'application/octet-stream'
 
@@ -2026,12 +2050,11 @@ class APIRoutes:
 
         @app.route('/api/campaigns/<campaign_id>/traces/download', methods=['GET'])
         def download_campaign_traces(campaign_id):
-            """Download all traces for a campaign as a zip file"""
+            """Download traces for a campaign as a zip file"""
             try:
                 if not hasattr(self, 'campaign_manager') or self.campaign_manager is None:
                     return jsonify({"error": "Campaign manager not available"}), 500
 
-                # Find the campaign (active or history)
                 campaign = self.campaign_manager.get_campaign(campaign_id)
                 if not campaign:
                     for c in self.campaign_manager.get_campaign_history():
@@ -2042,43 +2065,13 @@ class APIRoutes:
                 if not campaign:
                     return jsonify({"error": f"Campaign {campaign_id} not found"}), 404
 
-                from pathlib import Path
                 agent_filter = request.args.get('agent')
-                buf = io.BytesIO()
-                file_count = 0
-
-                with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-                    for run_id in campaign.run_ids:
-                        run_dir = self.run_manager.storage.get_run_dir(run_id)
-                        if not run_dir:
-                            continue
-
-                        traces_dir = Path(run_dir) / "traces"
-                        if not traces_dir.exists():
-                            continue
-
-                        # Get game name for folder structure
-                        manifest = self.run_manager.storage.get_manifest(run_id)
-                        game_name = manifest.get('game_name', 'unknown') if manifest else 'unknown'
-                        safe_game = game_name.replace(' ', '_').replace(':', '').replace("'", '')
-
-                        for agent_dir in sorted(traces_dir.iterdir()):
-                            if not agent_dir.is_dir():
-                                continue
-                            if agent_filter and agent_dir.name != agent_filter:
-                                continue
-                            for trace_file in sorted(agent_dir.iterdir()):
-                                if trace_file.is_file():
-                                    arcname = f"{safe_game}/traces/{agent_dir.name}/{trace_file.name}"
-                                    zf.write(str(trace_file), arcname)
-                                    file_count += 1
+                buf, file_count = _package_traces(campaign.run_ids, agent_filter)
 
                 if file_count == 0:
                     return jsonify({"error": "No trace files found in this campaign"}), 404
 
-                buf.seek(0)
                 zip_name = f"traces_campaign_{campaign_id[:8]}.zip"
-
                 return send_file(buf, mimetype='application/zip', as_attachment=True, download_name=zip_name)
 
             except Exception as e:

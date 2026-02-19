@@ -647,7 +647,7 @@ function TraceDownloadMenu({ runId, agents, compact }: {
   );
 }
 
-// Campaign-level trace download dropdown
+// Campaign-level trace download dropdown — grouped by agent, then by game
 function CampaignTraceDownloadMenu({ campaignId, runs }: {
   campaignId: string;
   runs: AutomationRun[];
@@ -655,13 +655,22 @@ function CampaignTraceDownloadMenu({ campaignId, runs }: {
   const [open, setOpen] = useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
 
-  // Collect unique agents across all runs
-  const uniqueAgents = useMemo(() => {
-    const agentSet = new Set<string>();
+  // Build agent → runs map (only runs that have that agent)
+  const agentRunsMap = useMemo(() => {
+    const map = new Map<string, AutomationRun[]>();
     runs.forEach(r => {
-      (r.tracing_agents || []).forEach(a => agentSet.add(a));
+      (r.tracing_agents || []).forEach(agent => {
+        if (!map.has(agent)) map.set(agent, []);
+        map.get(agent)!.push(r);
+      });
     });
-    return Array.from(agentSet).sort();
+    // Sort agents alphabetically, sort runs by game name within each agent
+    const sorted = new Map(
+      Array.from(map.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([agent, agentRuns]) => [agent, agentRuns.sort((a, b) => a.game_name.localeCompare(b.game_name))])
+    );
+    return sorted;
   }, [runs]);
 
   useEffect(() => {
@@ -684,21 +693,34 @@ function CampaignTraceDownloadMenu({ campaignId, runs }: {
         Traces
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 bg-surface-elevated border border-border rounded-lg shadow-lg z-50 min-w-[180px] py-1">
+        <div className="absolute right-0 top-full mt-1 bg-surface-elevated border border-border rounded-lg shadow-lg z-50 min-w-[220px] py-1 max-h-[400px] overflow-y-auto">
           <button
-            className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-surface-hover transition-colors"
+            className="w-full text-left px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-surface-hover transition-colors"
             onClick={(e) => { e.stopPropagation(); window.open(getCampaignTracesDownloadUrl(campaignId), '_blank'); setOpen(false); }}
           >
             Download All Traces
           </button>
-          {uniqueAgents.map(agent => (
-            <button
-              key={agent}
-              className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-hover transition-colors"
-              onClick={(e) => { e.stopPropagation(); window.open(getCampaignTracesDownloadUrl(campaignId, agent), '_blank'); setOpen(false); }}
-            >
-              All {getAgentDisplayName(agent)}
-            </button>
+          {Array.from(agentRunsMap.entries()).map(([agent, agentRuns]) => (
+            <div key={agent}>
+              <div className="border-t border-border my-1" />
+              <button
+                className="w-full text-left px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-surface-hover transition-colors flex items-center justify-between"
+                onClick={(e) => { e.stopPropagation(); window.open(getCampaignTracesDownloadUrl(campaignId, agent), '_blank'); setOpen(false); }}
+                title={`Download all ${getAgentDisplayName(agent)} traces`}
+              >
+                {getAgentDisplayName(agent)}
+                <DownloadIcon className="w-3 h-3 text-text-muted" />
+              </button>
+              {agentRuns.map(run => (
+                <button
+                  key={`${agent}-${run.run_id}`}
+                  className="w-full text-left pl-6 pr-3 py-1 text-xs text-text-secondary hover:bg-surface-hover transition-colors"
+                  onClick={(e) => { e.stopPropagation(); window.open(getRunTracesDownloadUrl(run.run_id, agent), '_blank'); setOpen(false); }}
+                >
+                  {run.game_name}
+                </button>
+              ))}
+            </div>
           ))}
         </div>
       )}
