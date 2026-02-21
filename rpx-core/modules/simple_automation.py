@@ -1970,7 +1970,14 @@ class SimpleAutomation:
 
     
     def _verify_step_success(self, step: Dict[str, Any], step_num: int, retries: int = 0) -> bool:
-        """Verify step success with enhanced checking."""
+        """Verify step success with enhanced checking.
+
+        OCR config resolution (most specific wins):
+          verify_success[].ocr_config > step.ocr_config > game-level ocr_config > defaults
+
+        When any verify entry has its own ocr_config, re-parses the screenshot
+        with that config for accurate detection on the result screen.
+        """
         logger.info("Verifying step success...")
 
         # Include retry suffix to preserve all verification attempts for debugging
@@ -1980,23 +1987,71 @@ class SimpleAutomation:
             # Skip window focus when no_refocus is set (prevents cursor lock in FC6 etc.)
             screenshot_process = None if step.get("no_refocus") else self.process_id
             self.screenshot_mgr.capture(verify_path, process_name=screenshot_process)
-            verify_boxes = self.vision_model.detect_ui_elements(verify_path)
 
-            if self.annotator:
-                try:
-                    annotated_verify_path = f"{self.run_dir}/annotated/verify_{step_num}{retry_suffix}.png"
-                    self.annotator.draw_bounding_boxes(verify_path, verify_boxes, annotated_verify_path)
-                except Exception as e:
-                    logger.warning(f"Failed to create verification annotation: {str(e)}")
-            
-            success = True
-            for verify_element in step["verify_success"]:
-                if not self._find_matching_element(verify_element, verify_boxes):
-                    success = False
-                    logger.warning(f"Verification failed: {verify_element.get('text', 'Unknown element')} not found")
-            
-            return success
-            
+            # Base OCR config: game-level merged with step-level
+            step_ocr_config = step.get("ocr_config", {})
+            base_ocr_config = {**self.ocr_config, **step_ocr_config}
+
+            # Check if any verify entry needs its own OCR config
+            verify_entries = step["verify_success"]
+            has_custom_verify_ocr = any(v.get("ocr_config") for v in verify_entries)
+
+            if not has_custom_verify_ocr:
+                # Fast path: all entries share the same config, parse once
+                verify_boxes = self.vision_model.detect_ui_elements(
+                    verify_path,
+                    ocr_config=base_ocr_config if base_ocr_config else None
+                )
+
+                if self.annotator:
+                    try:
+                        annotated_verify_path = f"{self.run_dir}/annotated/verify_{step_num}{retry_suffix}.png"
+                        self.annotator.draw_bounding_boxes(verify_path, verify_boxes, annotated_verify_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to create verification annotation: {str(e)}")
+
+                success = True
+                for verify_element in verify_entries:
+                    if not self._find_matching_element(verify_element, verify_boxes):
+                        success = False
+                        logger.warning(f"Verification failed: {verify_element.get('text', 'Unknown element')} not found")
+                return success
+            else:
+                # Per-entry OCR config: cache parsed results by config to avoid redundant parses
+                parsed_cache = {}
+                annotation_boxes = None
+                success = True
+
+                for verify_element in verify_entries:
+                    entry_ocr = verify_element.get("ocr_config", {})
+                    effective_config = {**base_ocr_config, **entry_ocr}
+                    cache_key = tuple(sorted(effective_config.items()))
+
+                    if cache_key not in parsed_cache:
+                        if entry_ocr:
+                            logger.info(f"Verify element '{verify_element.get('text', '?')}' using custom OCR config: {entry_ocr}")
+                        parsed_cache[cache_key] = self.vision_model.detect_ui_elements(
+                            verify_path,
+                            ocr_config=effective_config if effective_config else None
+                        )
+                        # Use first parse for annotation
+                        if annotation_boxes is None:
+                            annotation_boxes = parsed_cache[cache_key]
+
+                    boxes = parsed_cache[cache_key]
+                    if not self._find_matching_element(verify_element, boxes):
+                        success = False
+                        logger.warning(f"Verification failed: {verify_element.get('text', 'Unknown element')} not found")
+
+                if self.annotator and annotation_boxes:
+                    try:
+                        annotated_verify_path = f"{self.run_dir}/annotated/verify_{step_num}{retry_suffix}.png"
+                        self.annotator.draw_bounding_boxes(verify_path, annotation_boxes, annotated_verify_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to create verification annotation: {str(e)}")
+
+                return success
+
         except Exception as e:
             logger.error(f"Failed during verification: {str(e)}")
             return False

@@ -155,7 +155,17 @@ interface DraftStep {
   useSideload: boolean; // Toggle to enable sideload for this step
   // Verify success (check expected screen state after action)
   useVerify: boolean;
-  verifyElements: Array<{ type: 'icon' | 'text' | 'any'; text: string; textMatch: string }>;
+  verifyElements: Array<{
+    type: 'icon' | 'text' | 'any';
+    text: string;
+    textMatch: string;
+    useCustomOcr: boolean;
+    ocrConfig?: {
+      use_paddleocr?: boolean;
+      text_threshold?: number;
+      box_threshold?: number;
+    };
+  }>;
 }
 
 // Log entry for console panel
@@ -653,44 +663,127 @@ function StepEditor({
         {draft.useVerify && (
           <div className="space-y-2 pl-4 border-l-2 border-cyan-500/30">
             {draft.verifyElements.map((ve, idx) => (
-              <div key={idx} className="flex items-center gap-2 p-1.5 bg-gray-800/50 rounded border border-gray-700">
-                <span className={`px-1.5 py-0.5 rounded text-[10px] flex-shrink-0 ${
-                  ve.type === 'icon' ? 'bg-blue-900/50 text-blue-400' : ve.type === 'text' ? 'bg-emerald-900/50 text-emerald-400' : 'bg-gray-700 text-gray-400'
-                }`}>
-                  {ve.type}
-                </span>
-                <input
-                  type="text"
-                  value={ve.text}
-                  onChange={(e) => {
-                    const updated = [...draft.verifyElements];
-                    updated[idx] = { ...updated[idx], text: e.target.value };
-                    onDraftChange({ ...draft, verifyElements: updated });
-                  }}
-                  className="flex-1 bg-gray-700 border border-gray-600 rounded px-2 py-0.5 text-xs text-gray-200 font-mono min-w-0"
-                />
-                <select
-                  value={ve.textMatch}
-                  onChange={(e) => {
-                    const updated = [...draft.verifyElements];
-                    updated[idx] = { ...updated[idx], textMatch: e.target.value };
-                    onDraftChange({ ...draft, verifyElements: updated });
-                  }}
-                  className="bg-gray-700 border border-gray-600 rounded px-1 py-0.5 text-[10px] text-gray-200"
-                >
-                  {TEXT_MATCH_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-                <button
-                  onClick={() => {
-                    const updated = draft.verifyElements.filter((_, i) => i !== idx);
-                    onDraftChange({ ...draft, verifyElements: updated });
-                  }}
-                  className="text-red-500 hover:text-red-400 text-xs flex-shrink-0"
-                >
-                  x
-                </button>
+              <div key={idx} className="space-y-0">
+                <div className="flex items-center gap-2 p-1.5 bg-gray-800/50 rounded border border-gray-700">
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] flex-shrink-0 ${
+                    ve.type === 'icon' ? 'bg-blue-900/50 text-blue-400' : ve.type === 'text' ? 'bg-emerald-900/50 text-emerald-400' : 'bg-gray-700 text-gray-400'
+                  }`}>
+                    {ve.type}
+                  </span>
+                  <input
+                    type="text"
+                    value={ve.text}
+                    onChange={(e) => {
+                      const updated = [...draft.verifyElements];
+                      updated[idx] = { ...updated[idx], text: e.target.value };
+                      onDraftChange({ ...draft, verifyElements: updated });
+                    }}
+                    className="flex-1 bg-gray-700 border border-gray-600 rounded px-2 py-0.5 text-xs text-gray-200 font-mono min-w-0"
+                  />
+                  <select
+                    value={ve.textMatch}
+                    onChange={(e) => {
+                      const updated = [...draft.verifyElements];
+                      updated[idx] = { ...updated[idx], textMatch: e.target.value };
+                      onDraftChange({ ...draft, verifyElements: updated });
+                    }}
+                    className="bg-gray-700 border border-gray-600 rounded px-1 py-0.5 text-[10px] text-gray-200"
+                  >
+                    {TEXT_MATCH_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => {
+                      const updated = [...draft.verifyElements];
+                      updated[idx] = { ...updated[idx], useCustomOcr: !ve.useCustomOcr, ocrConfig: !ve.useCustomOcr ? { use_paddleocr: true, text_threshold: 0.1, box_threshold: 0.05 } : undefined };
+                      onDraftChange({ ...draft, verifyElements: updated });
+                    }}
+                    className={`text-xs flex-shrink-0 px-1 py-0.5 rounded transition-colors ${
+                      ve.useCustomOcr ? 'bg-cyan-600/30 text-cyan-400 border border-cyan-500/50' : 'text-gray-500 hover:text-cyan-400'
+                    }`}
+                    title="Per-verify OCR config"
+                  >
+                    ⚙
+                  </button>
+                  <button
+                    onClick={() => {
+                      const updated = draft.verifyElements.filter((_, i) => i !== idx);
+                      onDraftChange({ ...draft, verifyElements: updated });
+                    }}
+                    className="text-red-500 hover:text-red-400 text-xs flex-shrink-0"
+                  >
+                    x
+                  </button>
+                </div>
+                {ve.useCustomOcr && ve.ocrConfig && (
+                  <div className="ml-4 mt-1 p-2 bg-gray-800/60 rounded border border-cyan-500/20 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">Text Threshold</label>
+                        <input
+                          type="number"
+                          value={ve.ocrConfig.text_threshold ?? 0.1}
+                          onChange={(e) => {
+                            const updated = [...draft.verifyElements];
+                            updated[idx] = { ...updated[idx], ocrConfig: { ...updated[idx].ocrConfig!, text_threshold: Number(e.target.value) } };
+                            onDraftChange({ ...draft, verifyElements: updated });
+                          }}
+                          min={0}
+                          max={1}
+                          step={0.1}
+                          className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-gray-200"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">Box Threshold</label>
+                        <input
+                          type="number"
+                          value={ve.ocrConfig.box_threshold ?? 0.05}
+                          onChange={(e) => {
+                            const updated = [...draft.verifyElements];
+                            updated[idx] = { ...updated[idx], ocrConfig: { ...updated[idx].ocrConfig!, box_threshold: Number(e.target.value) } };
+                            onDraftChange({ ...draft, verifyElements: updated });
+                          }}
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-gray-200"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="radio"
+                          name={`verify-ocr-engine-${idx}`}
+                          checked={ve.ocrConfig.use_paddleocr !== false}
+                          onChange={() => {
+                            const updated = [...draft.verifyElements];
+                            updated[idx] = { ...updated[idx], ocrConfig: { ...updated[idx].ocrConfig!, use_paddleocr: true } };
+                            onDraftChange({ ...draft, verifyElements: updated });
+                          }}
+                          className="text-cyan-500"
+                        />
+                        <span className="text-[10px] text-gray-400">PaddleOCR</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="radio"
+                          name={`verify-ocr-engine-${idx}`}
+                          checked={ve.ocrConfig.use_paddleocr === false}
+                          onChange={() => {
+                            const updated = [...draft.verifyElements];
+                            updated[idx] = { ...updated[idx], ocrConfig: { ...updated[idx].ocrConfig!, use_paddleocr: false } };
+                            onDraftChange({ ...draft, verifyElements: updated });
+                          }}
+                          className="text-cyan-500"
+                        />
+                        <span className="text-[10px] text-gray-400">EasyOCR</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
             <button
@@ -1961,6 +2054,7 @@ export function WorkflowBuilder() {
       let inStepOcrConfig = false;
       let inStepSideload = false;
       let inVerifySuccess = false;
+      let inVerifyOcrConfig = false;
 
       const parseValue = (line: string): string => {
         const colonIdx = line.indexOf(':');
@@ -2056,6 +2150,7 @@ export function WorkflowBuilder() {
             inStepOcrConfig = false;
             inStepSideload = false;
             inVerifySuccess = false;
+            inVerifyOcrConfig = false;
             continue;
           }
 
@@ -2065,6 +2160,7 @@ export function WorkflowBuilder() {
             inAction = false;
             inStepOcrConfig = false;
             inVerifySuccess = false;
+            inVerifyOcrConfig = false;
             if (currentStep) {
               currentStep.find = { type: 'any', text: '', text_match: 'contains' };
             }
@@ -2075,17 +2171,18 @@ export function WorkflowBuilder() {
             inFind = false;
             inStepOcrConfig = false;
             inVerifySuccess = false;
+            inVerifyOcrConfig = false;
             if (currentStep && !currentStep.action) {
               currentStep.action = { type: 'click' };
             }
             continue;
           }
-          if (trimmed === 'ocr_config:') {
+          if (trimmed === 'ocr_config:' && !inVerifySuccess) {
             inStepOcrConfig = true;
             inAction = false;
             inFind = false;
             inStepSideload = false;
-            inVerifySuccess = false;
+            inVerifyOcrConfig = false;
             if (currentStep) {
               currentStep.ocr_config = {};
             }
@@ -2097,6 +2194,7 @@ export function WorkflowBuilder() {
             inFind = false;
             inStepOcrConfig = false;
             inVerifySuccess = false;
+            inVerifyOcrConfig = false;
             if (currentStep) {
               currentStep.sideload = { path: '', timeout: 60, wait_for_completion: true };
             }
@@ -2104,6 +2202,7 @@ export function WorkflowBuilder() {
           }
           if (trimmed === 'verify_success:') {
             inVerifySuccess = true;
+            inVerifyOcrConfig = false;
             inAction = false;
             inFind = false;
             inStepOcrConfig = false;
@@ -2184,13 +2283,28 @@ export function WorkflowBuilder() {
                 // Parse verify_success list items
                 // "- type: any" starts a new entry
                 if (trimmed.startsWith('- type:')) {
+                  inVerifyOcrConfig = false;
                   const typeVal = trimmed.slice(trimmed.indexOf(':') + 1).trim().replace(/["']/g, '');
                   currentStep.verify_success.push({
                     type: typeVal as 'icon' | 'text' | 'any',
                     text: '',
                     text_match: 'contains',
                   });
+                } else if (trimmed === 'ocr_config:' && currentStep.verify_success.length > 0) {
+                  inVerifyOcrConfig = true;
+                  const lastV = currentStep.verify_success[currentStep.verify_success.length - 1];
+                  lastV.ocr_config = {};
+                } else if (inVerifyOcrConfig && currentStep.verify_success.length > 0) {
+                  const lastV = currentStep.verify_success[currentStep.verify_success.length - 1];
+                  if (lastV.ocr_config) {
+                    switch (key) {
+                      case 'use_paddleocr': lastV.ocr_config.use_paddleocr = value === 'true'; break;
+                      case 'text_threshold': lastV.ocr_config.text_threshold = parseFloat(value); break;
+                      case 'box_threshold': lastV.ocr_config.box_threshold = parseFloat(value); break;
+                    }
+                  }
                 } else if (currentStep.verify_success.length > 0) {
+                  inVerifyOcrConfig = false;
                   const lastV = currentStep.verify_success[currentStep.verify_success.length - 1];
                   switch (key) {
                     case 'text': lastV.text = value; break;
@@ -2420,6 +2534,15 @@ export function WorkflowBuilder() {
           yaml += `      - type: ${escapeYamlString(v.type)}\n`;
           yaml += `        text: ${escapeYamlString(v.text)}\n`;
           yaml += `        text_match: ${escapeYamlString(v.text_match)}\n`;
+          if (v.ocr_config) {
+            yaml += `        ocr_config:\n`;
+            if (v.ocr_config.use_paddleocr !== undefined)
+              yaml += `          use_paddleocr: ${v.ocr_config.use_paddleocr}\n`;
+            if (v.ocr_config.text_threshold !== undefined)
+              yaml += `          text_threshold: ${v.ocr_config.text_threshold}\n`;
+            if (v.ocr_config.box_threshold !== undefined)
+              yaml += `          box_threshold: ${v.ocr_config.box_threshold}\n`;
+          }
         });
       }
 
@@ -2546,6 +2669,7 @@ export function WorkflowBuilder() {
             type: element.element_type,
             text: element.element_text,
             textMatch: 'contains',
+            useCustomOcr: false,
           },
         ],
       }));
@@ -2627,6 +2751,7 @@ export function WorkflowBuilder() {
         type: ve.type,
         text: ve.text,
         text_match: ve.textMatch as 'contains' | 'exact' | 'startswith' | 'endswith',
+        ...(ve.useCustomOcr && ve.ocrConfig ? { ocr_config: ve.ocrConfig } : {}),
       }));
     }
 
@@ -2721,6 +2846,8 @@ export function WorkflowBuilder() {
           type: v.type,
           text: v.text,
           textMatch: v.text_match,
+          useCustomOcr: !!v.ocr_config,
+          ocrConfig: v.ocr_config,
         })) ?? [],
       });
     }
@@ -2790,6 +2917,7 @@ export function WorkflowBuilder() {
         type: ve.type,
         text: ve.text,
         text_match: ve.textMatch as 'contains' | 'exact' | 'startswith' | 'endswith',
+        ...(ve.useCustomOcr && ve.ocrConfig ? { ocr_config: ve.ocrConfig } : {}),
       }));
     }
 

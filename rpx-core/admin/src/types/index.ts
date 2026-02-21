@@ -419,6 +419,11 @@ export interface WorkflowStep {
     type: 'icon' | 'text' | 'any';
     text: string;
     text_match: 'contains' | 'exact' | 'startswith' | 'endswith';
+    ocr_config?: {
+      use_paddleocr?: boolean;
+      text_threshold?: number;
+      box_threshold?: number;
+    };
   }>;
   expected_delay: number;
   timeout: number;

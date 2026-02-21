@@ -94,6 +94,10 @@ steps:
       - type: any
         text: QUIT
         text_match: contains
+        ocr_config:
+          use_paddleocr: false
+          text_threshold: 0.1
+          box_threshold: 0.05
 
   6:
     description: Click on quit button
@@ -113,8 +117,8 @@ steps:
       text_threshold: 0.1
       box_threshold: 0.05
 
-fallbacks:
-  general:
-    action: key
-    key: escape
-    expected_delay: 1
+# fallbacks:
+#   general:
+#     action: key
+#     key: escape
+#     expected_delay: 1
