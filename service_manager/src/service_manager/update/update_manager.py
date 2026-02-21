@@ -379,6 +379,41 @@ class UpdateManager:
         except Exception as e:
             return False, str(e)
 
+    def deploy_to_suts(self, sut_ips: Optional[List[str]] = None) -> Tuple[bool, str]:
+        """Push sut_client update to SUTs via the backend deploy API.
+
+        Args:
+            sut_ips: Specific SUT IPs to deploy to, or None for all online paired SUTs.
+
+        Returns:
+            (success, message)
+        """
+        import requests
+
+        try:
+            payload: Dict = {}
+            if sut_ips:
+                payload["sut_ips"] = sut_ips
+
+            response = requests.post(
+                "http://localhost:5001/api/deploy/start",
+                json=payload,
+                timeout=15,
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                return True, f"Deployment started: {data.get('status', 'ok')}"
+            else:
+                return False, f"HTTP {response.status_code}: {response.text}"
+
+        except requests.exceptions.ConnectionError:
+            return False, "Backend not running (cannot reach deploy API)"
+        except requests.exceptions.Timeout:
+            return False, "Request timed out"
+        except Exception as e:
+            return False, str(e)
+
     def get_local_ip(self) -> str:
         """Get local IP address for SUT notification"""
         import socket

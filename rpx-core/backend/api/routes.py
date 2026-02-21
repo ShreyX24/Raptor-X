@@ -7,6 +7,7 @@ import logging
 import json
 import os
 import io
+import threading
 import zipfile
 import tempfile
 from flask import Blueprint, request, jsonify, send_file
@@ -3100,3 +3101,103 @@ class APIRoutes:
             except Exception as e:
                 logger.error(f"Error listing available tools: {e}")
                 return jsonify({"error": str(e)}), 500
+
+        # ── Deployment management ────────────────────────────────────────
+
+        @app.route('/api/deploy/start', methods=['POST'])
+        def start_deployment():
+            """Trigger SUT client deployment to SUTs.
+
+            Body: { "sut_ips": [...] | null, "post_update_delay": 0 }
+            Runs deployment in a background thread and returns immediately.
+            """
+            try:
+                data = request.get_json(silent=True) or {}
+                sut_ips = data.get('sut_ips')
+                post_update_delay = data.get('post_update_delay', 0)
+
+                dm = getattr(self, 'deployment_manager', None)
+                if not dm:
+                    return jsonify({"error": "Deployment manager not initialized"}), 503
+
+                # Run in background thread
+                deploy_result = {}
+
+                def _run():
+                    try:
+                        job = dm.deploy_to_all(
+                            sut_ips=sut_ips,
+                            post_update_delay=post_update_delay,
+                        )
+                        deploy_result['job'] = job.to_dict()
+                    except Exception as ex:
+                        logger.error(f"Deployment error: {ex}", exc_info=True)
+
+                t = threading.Thread(target=_run, name="Deployment", daemon=True)
+                t.start()
+
+                # Return immediately with deploy status
+                import time as _time
+                _time.sleep(0.3)  # Brief wait so job object is created
+                status = dm.get_deploy_status()
+                return jsonify({
+                    "status": "started",
+                    "deploy": status,
+                })
+
+            except Exception as e:
+                logger.error(f"Error starting deployment: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/deploy/status', methods=['GET'])
+        def get_deploy_status():
+            """Get current deployment job status."""
+            dm = getattr(self, 'deployment_manager', None)
+            if not dm:
+                return jsonify({"error": "Deployment manager not initialized"}), 503
+
+            status = dm.get_deploy_status()
+            if status is None:
+                return jsonify({"deploy": None, "message": "No deployment in progress"})
+            return jsonify({"deploy": status})
+
+        # ── Run lock management ──────────────────────────────────────────
+
+        @app.route('/api/runs/lock', methods=['POST'])
+        def lock_runs():
+            """Lock all runs (maintenance mode).
+
+            Body: { "reason": "..." }
+            """
+            rm = getattr(self, 'run_manager', None)
+            if not rm:
+                return jsonify({"error": "Run manager not initialized"}), 503
+
+            data = request.get_json(silent=True) or {}
+            reason = data.get('reason', 'Manual lock')
+            rm.lock_runs(reason)
+            return jsonify({"status": "locked", "reason": reason})
+
+        @app.route('/api/runs/unlock', methods=['POST'])
+        def unlock_runs():
+            """Unlock all runs."""
+            rm = getattr(self, 'run_manager', None)
+            if not rm:
+                return jsonify({"error": "Run manager not initialized"}), 503
+
+            rm.unlock_runs()
+            return jsonify({"status": "unlocked"})
+
+        @app.route('/api/runs/lock', methods=['GET'])
+        def get_run_lock_status():
+            """Get current run lock status."""
+            rm = getattr(self, 'run_manager', None)
+            if not rm:
+                return jsonify({"error": "Run manager not initialized"}), 503
+
+            locked, reason, locked_at = rm.get_lock_status()
+            return jsonify({
+                "locked": locked,
+                "reason": reason,
+                "locked_at": locked_at.isoformat() if locked_at else None,
+            })

@@ -44,6 +44,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Self-update state (module-level for persistence across requests)
+_update_lock = threading.Lock()
+_update_in_progress = False
+_last_update_time: Optional[str] = None
+_last_update_result: Optional[str] = None
+
 
 def create_app() -> Flask:
     """Create Flask application"""
@@ -1941,6 +1947,157 @@ def create_app() -> Flask:
         except Exception as e:
             logger.error(f"Error getting current Steam user: {e}")
             return jsonify({"status": "error", "message": str(e)}), 500
+
+    @app.route('/self-update', methods=['POST'])
+    def self_update():
+        """Receive and apply a sut_client update archive.
+
+        Accepts a zip archive of the sut_client source tree, extracts it over
+        the existing install, runs pip install -e ., clears pycache, and
+        triggers restart via restarter.bat.
+
+        Request: multipart/form-data with 'archive' (zip file) and 'version' (string)
+        """
+        import shutil
+        import subprocess
+        import tempfile
+        import zipfile
+
+        global _update_in_progress, _last_update_time, _last_update_result
+
+        if not _update_lock.acquire(blocking=False):
+            return jsonify({
+                "status": "error",
+                "message": "Another update is already in progress"
+            }), 409
+
+        try:
+            _update_in_progress = True
+
+            # Validate request
+            if 'archive' not in request.files:
+                return jsonify({
+                    "status": "error",
+                    "message": "Missing 'archive' file in request"
+                }), 400
+
+            version = request.form.get('version', 'unknown')
+            archive_file = request.files['archive']
+
+            # Package dir is the sut_client root (contains src/, pyproject.toml)
+            package_dir = Path(__file__).resolve().parent.parent.parent
+
+            logger.info(f"Self-update started: version={version}, package_dir={package_dir}")
+
+            # Save archive to temp file
+            temp_dir = tempfile.mkdtemp(prefix="sut_update_")
+            archive_path = Path(temp_dir) / "update.zip"
+
+            try:
+                archive_file.save(str(archive_path))
+                logger.info(f"Archive saved: {archive_path} ({archive_path.stat().st_size} bytes)")
+
+                # Extract zip
+                extract_dir = Path(temp_dir) / "extracted"
+                with zipfile.ZipFile(str(archive_path), 'r') as zf:
+                    zf.extractall(str(extract_dir))
+
+                # Validate archive contents - must contain src/sut_client/ and pyproject.toml
+                if not (extract_dir / "src" / "sut_client").is_dir():
+                    _last_update_result = "failed: invalid archive (missing src/sut_client/)"
+                    _last_update_time = datetime.now().isoformat()
+                    return jsonify({
+                        "status": "error",
+                        "message": "Invalid archive: missing src/sut_client/ directory"
+                    }), 400
+
+                if not (extract_dir / "pyproject.toml").is_file():
+                    _last_update_result = "failed: invalid archive (missing pyproject.toml)"
+                    _last_update_time = datetime.now().isoformat()
+                    return jsonify({
+                        "status": "error",
+                        "message": "Invalid archive: missing pyproject.toml"
+                    }), 400
+
+                # Overwrite existing source
+                logger.info(f"Copying updated files to {package_dir}")
+                shutil.copytree(str(extract_dir), str(package_dir), dirs_exist_ok=True)
+
+                # Run pip install -e .
+                logger.info("Running pip install -e .")
+                pip_result = subprocess.run(
+                    ["pip", "install", "-e", "."],
+                    cwd=str(package_dir),
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+
+                if pip_result.returncode != 0:
+                    error_msg = pip_result.stderr[:500] if pip_result.stderr else "unknown error"
+                    logger.error(f"pip install failed: {error_msg}")
+                    _last_update_result = f"failed: pip install error"
+                    _last_update_time = datetime.now().isoformat()
+                    return jsonify({
+                        "status": "error",
+                        "message": f"pip install -e . failed: {error_msg}"
+                    }), 500
+
+                logger.info("pip install -e . succeeded")
+
+                # Clear all __pycache__ dirs
+                for cache_dir in package_dir.rglob("__pycache__"):
+                    try:
+                        shutil.rmtree(str(cache_dir))
+                    except Exception as e:
+                        logger.warning(f"Failed to remove {cache_dir}: {e}")
+
+                _last_update_result = "success"
+                _last_update_time = datetime.now().isoformat()
+
+                # Spawn restarter in background (same pattern as /restart)
+                restarter = package_dir / "restarter.bat"
+                if restarter.exists():
+                    logger.info(f"Update applied - launching restarter: {restarter}")
+                    subprocess.Popen(
+                        ["cmd", "/c", str(restarter)],
+                        creationflags=subprocess.CREATE_NEW_CONSOLE,
+                        close_fds=True,
+                    )
+                else:
+                    logger.warning(f"restarter.bat not found at {restarter} - update applied but no restart")
+
+                return jsonify({
+                    "status": "success",
+                    "message": f"Update to {version} applied, restarting",
+                    "version": version,
+                })
+
+            finally:
+                # Clean up temp dir
+                try:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                except Exception:
+                    pass
+
+        except Exception as e:
+            logger.error(f"Self-update error: {e}", exc_info=True)
+            _last_update_result = f"failed: {str(e)}"
+            _last_update_time = datetime.now().isoformat()
+            return jsonify({"status": "error", "message": str(e)}), 500
+        finally:
+            _update_in_progress = False
+            _update_lock.release()
+
+    @app.route('/self-update/status', methods=['GET'])
+    def self_update_status():
+        """Return current version, update state, and last update info."""
+        return jsonify({
+            "version": __version__,
+            "update_in_progress": _update_in_progress,
+            "last_update": _last_update_time,
+            "last_update_result": _last_update_result,
+        })
 
     @app.route('/restart', methods=['POST'])
     def restart():

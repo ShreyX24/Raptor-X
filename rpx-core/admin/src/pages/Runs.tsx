@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useRuns, useCampaigns } from '../hooks';
 import { LogViewer, RunTimeline } from '../components';
-import { getRunLogs, getRunTracesDownloadUrl, getCampaignTracesDownloadUrl } from '../api';
+import { getRunLogs, getRunTracesDownloadUrl, getCampaignTracesDownloadUrl, getRunLockStatus, lockRuns, unlockRuns } from '../api';
 import type { AutomationRun, LogEntry, Campaign } from '../types';
 
 // Expand icon component
@@ -734,6 +734,50 @@ export function Runs() {
   const { activeCampaigns, historyCampaigns, stop: stopCampaign } = useCampaigns();
   const [isClearing, setIsClearing] = useState(false);
 
+  // Run lock state
+  const [runLocked, setRunLocked] = useState(false);
+  const [lockReason, setLockReason] = useState('');
+  const [lockTogglingInProgress, setLockTogglingInProgress] = useState(false);
+
+  // Fetch lock status on mount and periodically
+  useEffect(() => {
+    let cancelled = false;
+    const fetchLock = async () => {
+      try {
+        const status = await getRunLockStatus();
+        if (!cancelled) {
+          setRunLocked(status.locked);
+          setLockReason(status.reason || '');
+        }
+      } catch {
+        // ignore
+      }
+    };
+    fetchLock();
+    const interval = setInterval(fetchLock, 10000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  const handleToggleLock = async () => {
+    setLockTogglingInProgress(true);
+    try {
+      if (runLocked) {
+        await unlockRuns();
+        setRunLocked(false);
+        setLockReason('');
+      } else {
+        const reason = window.prompt('Lock reason (optional):') || 'Manual lock';
+        await lockRuns(reason);
+        setRunLocked(true);
+        setLockReason(reason);
+      }
+    } catch (e) {
+      console.error('Failed to toggle run lock:', e);
+    } finally {
+      setLockTogglingInProgress(false);
+    }
+  };
+
   // Sort state
   const [sortField, setSortField] = useState<SortField>('started_at');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
@@ -1003,10 +1047,31 @@ export function Runs() {
   return (
     <div className="space-y-6 p-4 lg:p-6">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-text-primary">Automation Runs</h1>
-        <p className="text-text-muted">Monitor active and past automation runs</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-text-primary">Automation Runs</h1>
+          <p className="text-text-muted">Monitor active and past automation runs</p>
+        </div>
+        <button
+          onClick={handleToggleLock}
+          disabled={lockTogglingInProgress}
+          className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
+            runLocked
+              ? 'bg-danger/20 text-danger hover:bg-danger/30 border border-danger/30'
+              : 'bg-surface-elevated text-text-muted hover:bg-surface-elevated/80 border border-border'
+          } disabled:opacity-50`}
+        >
+          {lockTogglingInProgress ? '...' : runLocked ? 'Unlock Runs' : 'Lock Runs'}
+        </button>
       </div>
+
+      {/* Lock Banner */}
+      {runLocked && (
+        <div className="bg-danger/10 border border-danger/30 rounded-lg px-4 py-3 flex items-center gap-3">
+          <span className="text-danger font-bold text-sm uppercase tracking-wide">Runs Locked</span>
+          {lockReason && <span className="text-text-muted text-sm">{lockReason}</span>}
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">

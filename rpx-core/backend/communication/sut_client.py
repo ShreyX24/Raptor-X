@@ -554,6 +554,115 @@ class SUTClient:
                 error=str(e)
             )
 
+    def push_update(self, ip: str, port: int, archive_path: str, version: str) -> ActionResult:
+        """Push a sut_client update archive to a SUT.
+
+        Args:
+            ip: SUT IP address
+            port: SUT port
+            archive_path: Path to the zip archive file
+            version: Expected version string
+
+        Returns:
+            ActionResult with push outcome
+        """
+        try:
+            with open(archive_path, 'rb') as f:
+                # Use a fresh request without the default JSON content-type
+                response = requests.post(
+                    f"http://{ip}:{port}/self-update",
+                    files={'archive': ('sut_client.zip', f, 'application/zip')},
+                    data={'version': version},
+                    timeout=180,  # pip install can be slow
+                )
+
+            if response.status_code == 200:
+                data = response.json()
+                return ActionResult(
+                    success=True,
+                    data=data,
+                    response_time=response.elapsed.total_seconds()
+                )
+            else:
+                error_msg = f"HTTP {response.status_code}"
+                try:
+                    error_data = response.json()
+                    if 'message' in error_data:
+                        error_msg += f": {error_data['message']}"
+                except Exception:
+                    error_msg += f": {response.text}"
+                return ActionResult(success=False, error=error_msg)
+
+        except requests.RequestException as e:
+            return ActionResult(success=False, error=str(e))
+
+    def get_update_status(self, ip: str, port: int = 8080) -> ActionResult:
+        """Get self-update status from a SUT.
+
+        Returns:
+            ActionResult with version info in data
+        """
+        try:
+            response = self.session.get(
+                f"http://{ip}:{port}/self-update/status",
+                timeout=self.timeout,
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                return ActionResult(
+                    success=True,
+                    data=data,
+                    response_time=response.elapsed.total_seconds()
+                )
+            else:
+                return ActionResult(
+                    success=False,
+                    error=f"HTTP {response.status_code}: {response.text}"
+                )
+
+        except requests.RequestException as e:
+            return ActionResult(success=False, error=str(e))
+
+    def wait_for_sut_ready(self, ip: str, port: int = 8080, timeout: int = 120, interval: int = 5) -> ActionResult:
+        """Poll /health until SUT responds or timeout.
+
+        Args:
+            ip: SUT IP address
+            port: SUT port
+            timeout: Max seconds to wait
+            interval: Seconds between polls
+
+        Returns:
+            ActionResult with wait duration in data
+        """
+        start = time.time()
+        last_error = None
+
+        while time.time() - start < timeout:
+            try:
+                response = self.session.get(
+                    f"http://{ip}:{port}/health",
+                    timeout=5,
+                )
+                if response.status_code == 200:
+                    elapsed = round(time.time() - start, 1)
+                    return ActionResult(
+                        success=True,
+                        data={"wait_seconds": elapsed},
+                        response_time=response.elapsed.total_seconds()
+                    )
+            except requests.RequestException as e:
+                last_error = str(e)
+
+            time.sleep(interval)
+
+        elapsed = round(time.time() - start, 1)
+        return ActionResult(
+            success=False,
+            error=f"SUT {ip} did not become ready within {timeout}s (last error: {last_error})"
+        )
+
     def close(self):
         """Close the session"""
         self.session.close()

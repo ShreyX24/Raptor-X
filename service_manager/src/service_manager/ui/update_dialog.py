@@ -86,13 +86,19 @@ class UpdateWorker(QThread):
                 for error in errors:
                     self.log.emit(f"  [WARN] {error}")
 
-            # Phase 4: Notify SUTs
-            self.log.emit("\n--- Notifying SUTs ---")
-            self.progress.emit("Notifying SUTs...", 3, 4)
+            # Phase 4: Deploy to SUTs (push-based), fallback to notify
+            self.log.emit("\n--- Deploying to SUTs ---")
+            self.progress.emit("Deploying to SUTs...", 3, 4)
 
-            master_ip = self.update_manager.get_local_ip()
-            notify_success, notify_msg = self.update_manager.notify_suts(master_ip)
-            self.log.emit(f"  {notify_msg}")
+            deploy_success, deploy_msg = self.update_manager.deploy_to_suts()
+            if deploy_success:
+                self.log.emit(f"  [DEPLOY] {deploy_msg}")
+            else:
+                self.log.emit(f"  [DEPLOY FAILED] {deploy_msg}")
+                self.log.emit("  Falling back to WebSocket notification...")
+                master_ip = self.update_manager.get_local_ip()
+                notify_success, notify_msg = self.update_manager.notify_suts(master_ip)
+                self.log.emit(f"  {notify_msg}")
 
             self.progress.emit("Update complete!", 4, 4)
             self.finished.emit(True, "Update completed successfully")

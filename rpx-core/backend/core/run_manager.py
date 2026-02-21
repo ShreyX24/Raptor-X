@@ -10,7 +10,7 @@ import threading
 import time
 import uuid
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 import queue
@@ -190,6 +190,14 @@ class RunManager:
 
         # Per-SUT tracking for parallel execution
         self._sut_current_run: Dict[str, str] = {}  # sut_ip -> run_id currently executing
+
+        # Global run lock (maintenance mode)
+        self._runs_locked: bool = False
+        self._runs_lock_reason: str = ""
+        self._runs_locked_at: Optional[datetime] = None
+
+        # Per-SUT pause (for deployments)
+        self._paused_suts: Set[str] = set()
 
         # Account scheduler for Steam account coordination
         from .account_scheduler import get_account_scheduler
@@ -429,6 +437,59 @@ class RunManager:
         self.orchestrator = orchestrator
     
     
+    # ── Global lock & per-SUT pause (for deployments / maintenance) ────────
+
+    def lock_runs(self, reason: str = ""):
+        """Lock all runs globally. Workers will requeue items instead of executing."""
+        with self._lock:
+            self._runs_locked = True
+            self._runs_lock_reason = reason
+            self._runs_locked_at = datetime.now()
+            logger.info(f"Runs LOCKED: {reason}")
+
+    def unlock_runs(self):
+        """Unlock all runs. Workers resume normal execution."""
+        with self._lock:
+            self._runs_locked = False
+            self._runs_lock_reason = ""
+            self._runs_locked_at = None
+            logger.info("Runs UNLOCKED")
+
+    def get_lock_status(self) -> Tuple[bool, str, Optional[datetime]]:
+        """Return (locked, reason, locked_at)."""
+        with self._lock:
+            return self._runs_locked, self._runs_lock_reason, self._runs_locked_at
+
+    def pause_sut(self, sut_ip: str):
+        """Pause runs on a specific SUT (e.g. during deployment)."""
+        with self._lock:
+            self._paused_suts.add(sut_ip)
+            logger.info(f"SUT {sut_ip} PAUSED for deployment")
+
+    def resume_sut(self, sut_ip: str):
+        """Resume runs on a specific SUT."""
+        with self._lock:
+            self._paused_suts.discard(sut_ip)
+            logger.info(f"SUT {sut_ip} RESUMED")
+
+    def is_sut_idle(self, sut_ip: str) -> bool:
+        """Check if a SUT has no active run."""
+        with self._lock:
+            return sut_ip not in self._sut_current_run
+
+    def wait_for_sut_idle(self, sut_ip: str, timeout: int = 300) -> bool:
+        """Poll until SUT has no active run or timeout.
+
+        Returns:
+            True if idle within timeout, False if timed out.
+        """
+        start = time.time()
+        while time.time() - start < timeout:
+            if self.is_sut_idle(sut_ip):
+                return True
+            time.sleep(2)
+        return False
+
     def start(self):
         """Start the run manager worker threads"""
         if self.running:
@@ -911,6 +972,22 @@ class RunManager:
                     if run_id not in self.active_runs:
                         continue
                     run = self.active_runs[run_id]
+
+                    # Check 0a: Global run lock (maintenance mode)
+                    if self._runs_locked:
+                        if run_id not in requeued_runs:
+                            logger.debug(f"Runs locked ({self._runs_lock_reason}), requeueing {run_id[:8]}")
+                            requeued_runs.add(run_id)
+                        self.run_queue.put(run_id)
+                        continue
+
+                    # Check 0b: Per-SUT pause (deployment in progress)
+                    if run.sut_ip in self._paused_suts:
+                        if run_id not in requeued_runs:
+                            logger.debug(f"SUT {run.sut_ip} paused for deployment, requeueing {run_id[:8]}")
+                            requeued_runs.add(run_id)
+                        self.run_queue.put(run_id)
+                        continue
 
                     # Check 1: Is another run already executing on this SUT?
                     current_run_on_sut = self._sut_current_run.get(run.sut_ip)

@@ -671,6 +671,61 @@ export async function updateBranding(gradient: number[]): Promise<{ status: stri
   });
 }
 
+// ── Deployment APIs ──────────────────────────────────────────────────────
+
+export interface DeployStatus {
+  deploy_id: string;
+  status: string;
+  version: string | null;
+  created_at: string;
+  suts: Record<string, {
+    sut_ip: string;
+    device_id: string;
+    status: string;
+    error: string | null;
+    old_version: string | null;
+    new_version: string | null;
+    started_at: string | null;
+    completed_at: string | null;
+  }>;
+}
+
+export async function startDeploy(sutIps?: string[], postUpdateDelay?: number): Promise<{ status: string; deploy: DeployStatus | null }> {
+  return fetchJson<{ status: string; deploy: DeployStatus | null }>(`${API_BASE}/deploy/start`, {
+    method: 'POST',
+    body: JSON.stringify({ sut_ips: sutIps || null, post_update_delay: postUpdateDelay || 0 }),
+  });
+}
+
+export async function getDeployStatus(): Promise<{ deploy: DeployStatus | null }> {
+  return fetchJson<{ deploy: DeployStatus | null }>(`${API_BASE}/deploy/status`);
+}
+
+// ── Run Lock APIs ───────────────────────────────────────────────────────
+
+export interface RunLockStatus {
+  locked: boolean;
+  reason: string;
+  locked_at: string | null;
+}
+
+export async function lockRuns(reason: string): Promise<{ status: string; reason: string }> {
+  return fetchJson<{ status: string; reason: string }>(`${API_BASE}/runs/lock`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function unlockRuns(): Promise<{ status: string }> {
+  return fetchJson<{ status: string }>(`${API_BASE}/runs/unlock`, {
+    method: 'POST',
+  });
+}
+
+export async function getRunLockStatus(): Promise<RunLockStatus> {
+  return fetchJson<RunLockStatus>(`${API_BASE}/runs/lock`);
+}
+
 export { ApiError, TimeoutError };
 
 // Re-export service-specific APIs

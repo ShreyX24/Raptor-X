@@ -135,6 +135,14 @@ class BackendController:
         # Set campaign_manager reference on run_manager for storage
         self.run_manager.campaign_manager = self.campaign_manager
 
+        # Initialize deployment manager for push-based SUT updates
+        from .deployment_manager import DeploymentManager
+        self.deployment_manager = DeploymentManager(
+            run_manager=self.run_manager,
+            sut_client=self.sut_client,
+            device_registry=self.device_registry,
+        )
+
         # Set up run manager callbacks for WebSocket events
         self.run_manager.on_run_started = self._on_run_started
         self.run_manager.on_run_progress = self._on_run_progress
@@ -161,9 +169,10 @@ class BackendController:
         self.api_routes.queue_client = getattr(self, 'queue_client', None)
         self.api_routes.preset_manager_client = getattr(self, 'preset_manager_client', None)
 
-        # Pass run manager and campaign manager to API routes
+        # Pass run manager, campaign manager, and deployment manager to API routes
         self.api_routes.run_manager = self.run_manager
         self.api_routes.campaign_manager = self.campaign_manager
+        self.api_routes.deployment_manager = self.deployment_manager
 
         # Register API routes with Flask app
         self.api_routes.register_routes(self.app)
